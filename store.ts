@@ -163,6 +163,10 @@ interface FlowmateState {
     currentUser: User | null;
     isCloudSyncEnabled: boolean;
 
+    // Offline Support
+    isOnline: boolean;
+    offlineQueue: { id: string; message: string; timestamp: string }[];
+
     // UI State
     isZenMode: boolean;
     toasts: Toast[];
@@ -217,6 +221,12 @@ interface FlowmateState {
     setCloudSyncEnabled: (enabled: boolean) => void;
     syncToCloud: () => Promise<void>;
     loadFromCloud: () => Promise<void>;
+
+    // Offline Queue
+    setOnline: (status: boolean) => void;
+    addToOfflineQueue: (message: string) => void;
+    removeFromOfflineQueue: (id: string) => void;
+    getOfflineQueue: () => { id: string; message: string; timestamp: string }[];
 }
 
 export const useStore = create<FlowmateState>()(
@@ -258,6 +268,24 @@ export const useStore = create<FlowmateState>()(
             currentUser: null,
             isCloudSyncEnabled: false,
 
+            // Offline Support
+            isOnline: navigator.onLine,
+            offlineQueue: [],
+
+            // Offline Queue Actions
+            setOnline: (status) => set({ isOnline: status }),
+            addToOfflineQueue: (message) => set(state => ({
+                offlineQueue: [...state.offlineQueue, {
+                    id: uuidv4(),
+                    message,
+                    timestamp: new Date().toISOString()
+                }]
+            })),
+            removeFromOfflineQueue: (id) => set(state => ({
+                offlineQueue: state.offlineQueue.filter(q => q.id !== id)
+            })),
+            getOfflineQueue: () => get().offlineQueue,
+
             // Auth Actions
             setCurrentUser: (user) => set({ currentUser: user }),
 
@@ -283,19 +311,28 @@ export const useStore = create<FlowmateState>()(
             },
 
             loadFromCloud: async () => {
-                const { currentUser, addDebugLog, addToast } = get();
+                const { currentUser, entities, relationships, addDebugLog, addToast } = get();
                 if (!currentUser) return;
 
                 try {
+                    const { mergeData } = await import('./services/firestoreSync');
                     const data = await loadUserData(currentUser.uid);
                     if (data) {
+                        // FIXED: Merge instead of overwrite to preserve newer local changes
+                        const merged = mergeData(
+                            { entities, relationships },
+                            { entities: data.entities, relationships: data.relationships }
+                        );
                         set({
-                            entities: data.entities,
-                            relationships: data.relationships,
+                            entities: merged.entities,
+                            relationships: merged.relationships,
                             universalTags: data.universalTags
                         });
-                        addDebugLog('sync', 'Loaded from Firestore', { entityCount: data.entities.length });
-                        addToast('Loaded from cloud', 'success');
+                        addDebugLog('sync', 'Merged from Firestore', {
+                            cloudCount: data.entities.length,
+                            mergedCount: merged.entities.length
+                        });
+                        addToast('Synced with cloud', 'success');
                     }
                 } catch (err) {
                     console.error('Cloud load failed:', err);
@@ -492,7 +529,26 @@ export const useStore = create<FlowmateState>()(
 
                 for (const item of pending) {
                     try {
-                        const result = await GoogleCalendarAdapter.syncEvent(item.op, settings, entities);
+                        // Skip non-EVENT entities
+                        if (item.op.type !== 'create_entity' || item.op.payload.kind !== 'EVENT') {
+                            set(state => ({
+                                syncQueue: state.syncQueue.map(i =>
+                                    i.id === item.id ? { ...i, status: 'done' } : i
+                                )
+                            }));
+                            continue;
+                        }
+
+                        // Create a mock entity for the sync call
+                        const mockEntity = entities.find(e => e.title === item.op.payload.title) || {
+                            id: item.op.payload.id || '',
+                            title: item.op.payload.title,
+                            kind: 'EVENT',
+                            start_time: item.op.payload.start_time,
+                            end_time: item.op.payload.end_time,
+                            description: item.op.payload.description
+                        } as any;
+                        const result = await GoogleCalendarAdapter.createEvent(mockEntity, settings);
 
                         if (result.success) {
                             addDebugLog('sync', `Synced ${item.op.type}`, { externalId: result.externalId });
@@ -578,6 +634,26 @@ export const useStore = create<FlowmateState>()(
                                                 usage_count: 0
                                             });
                                         }
+                                    }
+
+                                    // Google Calendar Sync: If entity is EVENT, sync to Google Calendar
+                                    const storeSettings = get().settings;
+                                    if (entity.kind === EntityKind.EVENT && storeSettings.sync_enabled) {
+                                        GoogleCalendarAdapter.createEvent(entity, storeSettings).then(result => {
+                                            if (result.success && result.externalId) {
+                                                // Store external ID in metadata for future updates
+                                                set(state => ({
+                                                    entities: state.entities.map(e =>
+                                                        e.id === entity.id
+                                                            ? { ...e, metadata: { ...e.metadata, gcal_id: result.externalId } }
+                                                            : e
+                                                    )
+                                                }));
+                                                addDebugLog('sync', 'Synced to Google Calendar', { id: entity.id, gcal_id: result.externalId });
+                                            }
+                                        }).catch(err => {
+                                            addDebugLog('system', 'Calendar sync failed', { error: err.message });
+                                        });
                                     }
                                     break;
                                 }
@@ -723,6 +799,36 @@ export const useStore = create<FlowmateState>()(
                                 }
 
                                 case 'unlink_entities': {
+                                    // Support deletion by relationship ID directly
+                                    if (payload.id) {
+                                        const relToRemove = newRelationships.find(r => r.id === payload.id);
+                                        if (relToRemove) {
+                                            newRelationships = newRelationships.filter(r => r.id !== payload.id);
+
+                                            // SYNC TAGS: If type is TAGGED_WITH, remove from canonical_tags
+                                            if (relToRemove.type === RelationshipType.TAGGED_WITH) {
+                                                const targetEntity = newEntities.find(e => e.id === relToRemove.to);
+                                                if (targetEntity) {
+                                                    newEntities = newEntities.map(e => {
+                                                        if (e.id === relToRemove.from) {
+                                                            return {
+                                                                ...e,
+                                                                canonical_tags: (e.canonical_tags || []).filter(t => t !== targetEntity.title)
+                                                            };
+                                                        }
+                                                        return e;
+                                                    });
+                                                    newUniversalTags = newUniversalTags.map(t =>
+                                                        t.id === relToRemove.to ? { ...t, usage_count: Math.max(0, (t.usage_count || 0) - 1) } : t
+                                                    );
+                                                }
+                                            }
+                                            addDebugLog('system', 'Removed relationship', { id: payload.id });
+                                        }
+                                        break;
+                                    }
+
+                                    // Legacy: match by from/to/type
                                     if (!payload.from || !payload.to) break;
 
                                     const fromId = resolveEntityId(payload.from, newEntities);

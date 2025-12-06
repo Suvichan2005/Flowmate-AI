@@ -1,7 +1,14 @@
-import { ToonOperation, UserSettings, Entity, EntityKind } from "../types";
+import { Entity, EntityKind, UserSettings } from "../types";
+import { getGoogleAccessToken } from "./firebase";
 
-// Simulated delay to mimic Google API latency
-const SIMULATED_LATENCY_MS = 800;
+const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
+
+interface CalendarEvent {
+  summary: string;
+  description?: string;
+  start: { dateTime: string; timeZone: string };
+  end: { dateTime: string; timeZone: string };
+}
 
 interface SyncResult {
   success: boolean;
@@ -11,64 +18,186 @@ interface SyncResult {
 
 export const GoogleCalendarAdapter = {
   /**
-   * Applies a schedule_event operation to the external calendar.
-   * In a real implementation, this would use the Google Calendar API.
+   * Check if we have a valid access token for Calendar API
    */
-  syncEvent: async (op: ToonOperation, settings: UserSettings, entities: Entity[]): Promise<SyncResult> => {
-    // 1. Check if sync is enabled
+  isConnected: (): boolean => {
+    return !!getGoogleAccessToken();
+  },
+
+  /**
+   * Create an event in Google Calendar
+   */
+  createEvent: async (entity: Entity, settings: UserSettings): Promise<SyncResult> => {
+    const accessToken = getGoogleAccessToken();
+
+    if (!accessToken) {
+      return { success: false, error: 'Not connected to Google Calendar. Sign in with Google first.' };
+    }
+
     if (!settings.sync_enabled) {
-      return { success: true }; // Skipped, but technically "handled" locally
+      return { success: true }; // Sync disabled, skip
     }
 
-    // 2. Identify if this operation affects an EVENT
-    let isEventOp = false;
+    try {
+      const startTime = entity.start_time || new Date().toISOString();
+      const endTime = entity.end_time || new Date(new Date(startTime).getTime() + 60 * 60 * 1000).toISOString();
 
-    if (op.type === 'schedule_event') {
-        isEventOp = true;
-    } else if (op.type === 'delete_entity') {
-        // Check if the deleted entity was an EVENT
-        // Note: The entity might be gone from the store if we processed the op already locally?
-        // Actually, sync is async/background. The entity might be deleted from local store before sync runs?
-        // store.ts processes sync AFTER applying ops. So entity is gone.
-        // For delete, we assume we just send the delete command for the ID.
-        // We can't check kind easily unless we store "deleted" tombstone.
-        // For MVP simulation, we'll allow delete pass through.
-        isEventOp = true; 
-    } else if (op.type === 'update_entity') {
-        // Check if the target entity is an EVENT
-        const target = entities.find(e => e.id === op.payload.id);
-        if (target && target.kind === EntityKind.EVENT) {
-            isEventOp = true;
+      const event: CalendarEvent = {
+        summary: entity.title,
+        description: entity.description || `Created by Flowmate\n\nID: ${entity.id}`,
+        start: {
+          dateTime: startTime,
+          timeZone: settings.timezone || 'Asia/Kolkata'
+        },
+        end: {
+          dateTime: endTime,
+          timeZone: settings.timezone || 'Asia/Kolkata'
         }
+      };
+
+      // Add colorId if specified (Google Calendar uses 1-11)
+      if (entity.metadata?.calendar_color) {
+        (event as any).colorId = entity.metadata.calendar_color;
+      }
+
+      // Add location if specified (for room numbers like C25-B-107)
+      if (entity.metadata?.location) {
+        (event as any).location = entity.metadata.location;
+      }
+
+      const response = await fetch(`${CALENDAR_API_BASE}/calendars/primary/events`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(event)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('[GoogleSync] Create failed:', errorData);
+        return { success: false, error: errorData.error?.message || 'Failed to create event' };
+      }
+
+      const data = await response.json();
+      console.log(`[GoogleSync] Created event: ${data.id}`);
+
+      return { success: true, externalId: data.id };
+    } catch (error: any) {
+      console.error('[GoogleSync] Error:', error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Update an existing event in Google Calendar
+   */
+  updateEvent: async (entity: Entity, externalId: string, settings: UserSettings): Promise<SyncResult> => {
+    const accessToken = getGoogleAccessToken();
+
+    if (!accessToken || !settings.sync_enabled) {
+      return { success: true };
     }
 
-    if (!isEventOp) {
-      return { success: true }; 
-    }
-
-    // 3. Simulate API Call
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        // Randomly simulate a failure if debug mode is on (10% chance)
-        if (settings.debug_mode && Math.random() < 0.1) {
-            console.warn("[GoogleSync] Simulated API Failure");
-            resolve({ 
-                success: false, 
-                error: "Google API: Rate limit exceeded (Simulated)" 
-            });
-            return;
+    try {
+      const event: CalendarEvent = {
+        summary: entity.title,
+        description: entity.description || '',
+        start: {
+          dateTime: entity.start_time || new Date().toISOString(),
+          timeZone: settings.timezone || 'Asia/Kolkata'
+        },
+        end: {
+          dateTime: entity.end_time || new Date().toISOString(),
+          timeZone: settings.timezone || 'Asia/Kolkata'
         }
+      };
 
-        const payload = op.payload;
-        
-        // Log for developer visibility
-        console.log(`[GoogleSync] Processed ${op.type} for "${payload.title || payload.id}"`);
-        
-        resolve({ 
-            success: true, 
-            externalId: `gcal-${Math.random().toString(36).substr(2, 9)}` 
-        });
-      }, SIMULATED_LATENCY_MS);
-    });
+      const response = await fetch(`${CALENDAR_API_BASE}/calendars/primary/events/${externalId}`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(event)
+      });
+
+      if (!response.ok) {
+        return { success: false, error: 'Failed to update event' };
+      }
+
+      return { success: true, externalId };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Delete an event from Google Calendar
+   */
+  deleteEvent: async (externalId: string): Promise<SyncResult> => {
+    const accessToken = getGoogleAccessToken();
+
+    if (!accessToken) {
+      return { success: true }; // Can't delete if not connected
+    }
+
+    try {
+      const response = await fetch(`${CALENDAR_API_BASE}/calendars/primary/events/${externalId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`
+        }
+      });
+
+      if (!response.ok && response.status !== 404) {
+        return { success: false, error: 'Failed to delete event' };
+      }
+
+      console.log(`[GoogleSync] Deleted event: ${externalId}`);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  /**
+   * Fetch events from Google Calendar (for import/two-way sync)
+   */
+  fetchEvents: async (timeMin: string, timeMax: string): Promise<any[]> => {
+    const accessToken = getGoogleAccessToken();
+
+    if (!accessToken) {
+      return [];
+    }
+
+    try {
+      const params = new URLSearchParams({
+        timeMin,
+        timeMax,
+        singleEvents: 'true',
+        orderBy: 'startTime'
+      });
+
+      const response = await fetch(`${CALENDAR_API_BASE}/calendars/primary/events?${params}`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`
+        }
+      });
+
+      if (!response.ok) {
+        console.error('[GoogleSync] Fetch failed');
+        return [];
+      }
+
+      const data = await response.json();
+      console.log(`[GoogleSync] Fetched ${data.items?.length || 0} events`);
+
+      return data.items || [];
+    } catch (error) {
+      console.error('[GoogleSync] Fetch error:', error);
+      return [];
+    }
   }
 };

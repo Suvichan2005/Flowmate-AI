@@ -23,6 +23,7 @@ import ToastNotification from './components/ToastNotification';
 import Confetti from './components/Confetti';
 import AuthModal from './components/AuthModal';
 import AnalyticsView from './components/AnalyticsView';
+import UnifiedChatInput from './components/UnifiedChatInput';
 import { EntityKind, ToonOperation } from './types';
 
 const App: React.FC = () => {
@@ -383,19 +384,35 @@ const App: React.FC = () => {
       {/* Mobile Header Bar */}
       {isMobile && (
         <div className="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 shrink-0 z-30">
+          {/* Left: Always hamburger menu */}
           <button
             onClick={() => setIsMobileSidebarOpen(true)}
             className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 transition-colors"
           >
             <Menu size={22} />
           </button>
-          <span className="font-bold text-lg text-slate-100">Flowmate</span>
-          <button
-            onClick={() => setIsChatOpen(!isChatOpen)}
-            className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 transition-colors"
-          >
-            <MessageSquare size={22} className={isChatOpen ? 'text-indigo-400' : ''} />
-          </button>
+
+          {/* Center: Title */}
+          <span className="font-bold text-lg text-slate-100">
+            {isChatOpen ? 'Chat' : 'Flowmate'}
+          </span>
+
+          {/* Right: Chat button or Back button */}
+          {isChatOpen ? (
+            <button
+              onClick={() => setIsChatOpen(false)}
+              className="p-2 hover:bg-slate-800 rounded-lg text-indigo-400 transition-colors"
+            >
+              <X size={22} />
+            </button>
+          ) : (
+            <button
+              onClick={() => setIsChatOpen(true)}
+              className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 transition-colors"
+            >
+              <MessageSquare size={22} />
+            </button>
+          )}
         </div>
       )}
 
@@ -517,7 +534,7 @@ const App: React.FC = () => {
               <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
                 {(messages || []).map((msg) => (
                   <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 self-start mt-0.5 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
                       {msg.role === 'user' ? <User size={14} /> : <Bot size={14} />}
                     </div>
                     <div className={`flex flex-col max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
@@ -547,58 +564,42 @@ const App: React.FC = () => {
                 )}
               </div>
 
-              {/* Desktop Chat Input */}
+              {/* Desktop Chat Input - Unified ChatGPT-style */}
               <div className="p-3 bg-slate-900 border-t border-slate-800 shrink-0">
-                {selectedAttachment && (
-                  <div className="mb-2 flex items-start">
-                    <div className="relative bg-slate-800 rounded-lg p-1.5 border border-slate-700">
-                      {attachmentType === 'audio' ? (
-                        <div className="flex items-center gap-1.5 px-2 py-0.5 text-indigo-400 text-xs"><FileAudio size={14} /> Audio</div>
-                      ) : (
-                        <img src={selectedAttachment} alt="Preview" className="h-12 w-12 object-cover rounded" />
-                      )}
-                      <button onClick={handleRemoveAttachment} className="absolute -top-1 -right-1 bg-slate-800 border border-slate-600 text-slate-400 rounded-full p-0.5 hover:text-white">
-                        <X size={10} />
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <form onSubmit={handleSubmit} className="flex items-end gap-2">
-                  <input type="file" accept="image/*,audio/*" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
-                  <button type="button" onClick={() => setIsLiveMode(true)} className="p-2 bg-slate-800 text-purple-400 hover:bg-slate-700 rounded-lg" title="Voice"><Mic size={18} /></button>
-                  <button type="button" onClick={() => fileInputRef.current?.click()} className="p-2 bg-slate-800 text-slate-400 hover:bg-slate-700 rounded-lg" title="Attach"><Paperclip size={18} /></button>
-                  <div className="flex-1 relative">
-                    <textarea
-                      ref={textareaRef}
-                      value={input}
-                      onChange={(e) => setInput(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      placeholder="Message..."
-                      rows={1}
-                      className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-xl py-2.5 pl-3 pr-10 focus:ring-2 focus:ring-indigo-500/50 outline-none resize-none overflow-hidden min-h-[40px] text-sm"
-                    />
-                    <button type="submit" disabled={!input.trim() && !selectedAttachment} className="absolute right-2 bottom-1.5 p-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:bg-slate-700 text-white rounded-lg">
-                      <Send size={14} />
-                    </button>
-                  </div>
-                </form>
+                <UnifiedChatInput
+                  onSend={(msg) => {
+                    if (msg.trim() || selectedAttachment) {
+                      setInput(msg);
+                      // Use setTimeout to let state update before submit
+                      setTimeout(() => handleSubmit(), 0);
+                    }
+                  }}
+                  onAttach={(file) => processFile(file)}
+                  loading={loading}
+                  placeholder="Ask AI anything..."
+                  attachment={selectedAttachment}
+                  onRemoveAttachment={handleRemoveAttachment}
+                  isMobile={false}
+                />
               </div>
             </div>
           )}
 
-          {/* Chat Toggle Button */}
+          {/* Chat Toggle Column */}
           {!isChatOpen && !isZenMode && (
-            <button
-              onClick={() => setIsChatOpen(true)}
-              className="absolute top-4 left-4 z-30 p-2 rounded-xl bg-slate-900/90 border border-slate-700 text-slate-400 hover:text-indigo-400 transition-all shadow-lg"
-              title="Open Chat (Cmd+B)"
-            >
-              <PanelLeftOpen size={20} />
-            </button>
+            <div className="w-10 shrink-0 h-full flex flex-col items-center pt-4 bg-slate-950">
+              <button
+                onClick={() => setIsChatOpen(true)}
+                className="p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-indigo-400 hover:bg-slate-700 transition-all"
+                title="Open Chat (Cmd+B)"
+              >
+                <PanelLeftOpen size={16} />
+              </button>
+            </div>
           )}
 
           {/* Desktop Main Content */}
-          <div className="flex-1 overflow-auto">
+          <div className="flex-1 overflow-auto relative">
             {renderMainContent()}
           </div>
         </main>
@@ -607,18 +608,9 @@ const App: React.FC = () => {
       {/* Mobile Layout: Full Content + Bottom Chat Bar */}
       {isMobile && (
         <>
-          {/* Mobile Full-Screen Chat */}
+          {/* Mobile Full-Screen Chat - No header, direct messages */}
           {isChatOpen ? (
             <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
-              <div className="h-14 border-b border-slate-800 flex items-center px-4 shrink-0">
-                <button onClick={() => setIsChatOpen(false)} className="p-2 hover:bg-slate-800 rounded-lg mr-2">
-                  <ChevronLeft size={20} />
-                </button>
-                <h1 className="font-semibold flex items-center gap-2">
-                  <MessageSquare size={16} className="text-indigo-400" />
-                  Orchestrator
-                </h1>
-              </div>
 
               <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={!isMobile ? undefined : scrollRef}>
                 {(messages || []).map((msg) => (

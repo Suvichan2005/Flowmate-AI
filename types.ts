@@ -13,10 +13,15 @@ export enum EntityKind {
   TAG = 'TAG',
   NOTE = 'NOTE',
   CONTEXT = 'CONTEXT',
+  // Flowmate 2.5 — Brain Entities
+  PERSON = 'PERSON',
+  PROMISE = 'PROMISE',
+  OPPORTUNITY = 'OPPORTUNITY',
+  MINI_STREAK = 'MINI_STREAK', // Quick one-tap streaks (Duolingo, Snapchat, etc.)
 }
 
 export type HabitType = 'GOOD' | 'BAD';
-export type HabitFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY'; // Goal frequency
+export type HabitFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 
 // Specific Metadata for Habits
 export interface HabitMetadata {
@@ -24,13 +29,43 @@ export interface HabitMetadata {
   streak_best: number;
   total_completions: number;
   habit_type: HabitType;
-  frequency_goal: number; // e.g. 3 times per...
+  frequency_goal: number;
   frequency_period: HabitFrequency;
-  last_completed_at?: string; // ISO Date of last check-in
+  last_completed_at?: string;
+  time_spent_minutes?: number;
+  limit_minutes?: number;
+}
 
-  // For Bad Habits (Reduction goals)
-  time_spent_minutes?: number; // Total time spent doing this bad habit
-  limit_minutes?: number; // Daily/Weekly limit
+// Flowmate 2.5 — Person Metadata (Relationship Radar)
+export interface PersonMetadata {
+  category: 'mentor' | 'peer' | 'professional' | 'family' | 'friend';
+  organization?: string;
+  last_interaction?: string;
+  interaction_count: number;
+  notes?: string[];
+  email?: string;
+  phone?: string;
+}
+
+// Flowmate 2.5 — Promise Metadata (Promise Tracker)
+export interface PromiseMetadata {
+  original_statement: string;
+  to_person_id?: string;
+  to_person_name?: string;
+  detected_at: string;
+  due_date?: string;
+  fulfilled_at?: string;
+  broken_reason?: string;
+}
+
+// Flowmate 2.5 — Opportunity Metadata (Opportunity Engine)
+export interface OpportunityMetadata {
+  type: 'lead' | 'competition' | 'connection' | 'internship' | 'collaboration';
+  source_person_id?: string;
+  source_person_name?: string;
+  potential_value?: string;
+  next_action?: string;
+  expires_at?: string;
 }
 
 export enum EntityStatus {
@@ -78,6 +113,7 @@ export enum RelationshipType {
   SCHEDULED_FOR = 'SCHEDULED_FOR',
   TAGGED_WITH = 'TAGGED_WITH',
   ASSIGNED_TO = 'ASSIGNED_TO',
+  RELATED_TO = 'RELATED_TO',
 }
 
 export interface Relationship {

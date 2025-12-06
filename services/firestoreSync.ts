@@ -9,7 +9,9 @@ import {
     getDocs,
     writeBatch,
     serverTimestamp,
-    Timestamp
+    Timestamp,
+    onSnapshot,
+    Unsubscribe
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from './firebase';
 import { Entity, Relationship, ToonOperation, TagDefinition } from '../types';
@@ -23,6 +25,51 @@ interface UserData {
     universalTags: TagDefinition[];
     lastSyncedAt: Timestamp | null;
 }
+
+// --- Real-time Listener ---
+
+let unsubscribe: Unsubscribe | null = null;
+
+export const subscribeToUserData = (
+    userId: string,
+    onDataChange: (data: UserData) => void
+): Unsubscribe => {
+    if (!isFirebaseConfigured()) {
+        console.warn('[FirestoreSync] Firebase not configured, skipping subscription');
+        return () => { };
+    }
+
+    // Unsubscribe from previous listener if exists
+    if (unsubscribe) {
+        unsubscribe();
+    }
+
+    const userDocRef = doc(db, USERS_COLLECTION, userId);
+
+    unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+            const data = docSnap.data();
+            console.log('[FirestoreSync] Real-time update received');
+            onDataChange({
+                entities: data.entities || [],
+                relationships: data.relationships || [],
+                universalTags: data.universalTags || [],
+                lastSyncedAt: data.lastSyncedAt || null
+            });
+        }
+    }, (error) => {
+        console.error('[FirestoreSync] Real-time listener error:', error);
+    });
+
+    return unsubscribe;
+};
+
+export const unsubscribeFromUserData = () => {
+    if (unsubscribe) {
+        unsubscribe();
+        unsubscribe = null;
+    }
+};
 
 // --- Read Operations ---
 
@@ -104,8 +151,9 @@ export const syncOperation = async (
 
 // --- Merge Strategy ---
 
-// When loading from Firestore, merge with local data
-// Conflict resolution: Server wins for same entity ID, local wins for new entities
+// FIXED: Local-first with timestamp-based conflict resolution
+// When loading from Firestore, merge with local data using updated_at timestamps
+// Whichever version is newer wins for duplicate IDs
 export const mergeData = (
     local: { entities: Entity[]; relationships: Relationship[] },
     remote: { entities: Entity[]; relationships: Relationship[] }
@@ -113,21 +161,48 @@ export const mergeData = (
     const mergedEntities = new Map<string, Entity>();
     const mergedRelationships = new Map<string, Relationship>();
 
-    // Add remote first (server priority)
+    // Add all remote entities first
     remote.entities.forEach(e => mergedEntities.set(e.id, e));
-    remote.relationships.forEach(r => mergedRelationships.set(r.id, r));
 
-    // Add local only if not in remote (new local items)
-    local.entities.forEach(e => {
-        if (!mergedEntities.has(e.id)) {
-            mergedEntities.set(e.id, e);
+    // For local entities: keep if not in remote OR if local is newer
+    local.entities.forEach(localEntity => {
+        const remoteEntity = mergedEntities.get(localEntity.id);
+
+        if (!remoteEntity) {
+            // New local entity, keep it
+            mergedEntities.set(localEntity.id, localEntity);
+        } else {
+            // Conflict: compare updated_at timestamps (local wins if equal or local is newer)
+            const localTime = new Date(localEntity.updated_at || localEntity.created_at).getTime();
+            const remoteTime = new Date(remoteEntity.updated_at || remoteEntity.created_at).getTime();
+
+            if (localTime >= remoteTime) {
+                // Local is same age or newer - LOCAL WINS
+                mergedEntities.set(localEntity.id, localEntity);
+                console.log(`[Merge] Local wins for "${localEntity.title}" (local: ${localTime}, remote: ${remoteTime})`);
+            } else {
+                // Remote is newer - keep remote (already in map)
+                console.log(`[Merge] Remote wins for "${localEntity.title}" (local: ${localTime}, remote: ${remoteTime})`);
+            }
         }
     });
-    local.relationships.forEach(r => {
-        if (!mergedRelationships.has(r.id)) {
-            mergedRelationships.set(r.id, r);
+
+    // Same logic for relationships
+    remote.relationships.forEach(r => mergedRelationships.set(r.id, r));
+    local.relationships.forEach(localRel => {
+        const remoteRel = mergedRelationships.get(localRel.id);
+        if (!remoteRel) {
+            mergedRelationships.set(localRel.id, localRel);
+        } else {
+            const localTime = new Date(localRel.created_at).getTime();
+            const remoteTime = new Date(remoteRel.created_at).getTime();
+            if (localTime >= remoteTime) {
+                mergedRelationships.set(localRel.id, localRel);
+            }
         }
     });
+
+    console.log(`[Merge] Result: ${mergedEntities.size} entities, ${mergedRelationships.size} relationships`);
 
     return {
         entities: Array.from(mergedEntities.values()),
