@@ -41,6 +41,8 @@ const CalendarView: React.FC = () => {
     const [createModalStartTime, setCreateModalStartTime] = useState<string | null>(null);
     const [draggedId, setDraggedId] = useState<string | null>(null);
     const [viewMode, setViewMode] = useState<ViewMode>('agenda');
+    const [showEvents, setShowEvents] = useState(true);
+    const [showTasks, setShowTasks] = useState(true);
     const scrollRef = useRef<HTMLDivElement>(null);
 
     // Initial scroll to 8 AM
@@ -50,12 +52,12 @@ const CalendarView: React.FC = () => {
         }
     }, [viewMode]);
 
-    // Filter events AND tasks with deadlines
+    // Filter events AND tasks with deadlines based on toggle state
     const calendarItems = useMemo(() => entities.filter(e => {
-        if (e.kind === EntityKind.EVENT && e.start_time) return true;
-        if (e.kind === EntityKind.TASK && e.deadline && e.status !== EntityStatus.COMPLETED) return true;
+        if (e.kind === EntityKind.EVENT && e.start_time) return showEvents;
+        if (e.kind === EntityKind.TASK && e.deadline && e.status !== EntityStatus.COMPLETED) return showTasks;
         return false;
-    }), [entities]);
+    }), [entities, showEvents, showTasks]);
 
     // Navigation helpers
     const handlePrev = () => {
@@ -544,9 +546,21 @@ const CalendarView: React.FC = () => {
                             </button>
                         ))}
                     </div>
-                    <div className="flex gap-3 text-xs text-slate-500">
-                        <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded bg-indigo-500" /> Events</div>
-                        <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded bg-emerald-500" /> Tasks</div>
+                    <div className="flex gap-2 text-xs">
+                        <button
+                            onClick={() => setShowEvents(!showEvents)}
+                            className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${showEvents ? 'bg-indigo-500/20 text-indigo-300' : 'bg-slate-800 text-slate-500 line-through'}`}
+                        >
+                            <div className={`w-2 h-2 rounded ${showEvents ? 'bg-indigo-500' : 'bg-slate-600'}`} />
+                            Events
+                        </button>
+                        <button
+                            onClick={() => setShowTasks(!showTasks)}
+                            className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${showTasks ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-slate-500 line-through'}`}
+                        >
+                            <div className={`w-2 h-2 rounded ${showTasks ? 'bg-emerald-500' : 'bg-slate-600'}`} />
+                            Tasks
+                        </button>
                     </div>
                 </div>
             </header>

@@ -171,6 +171,7 @@ interface FlowmateState {
     isZenMode: boolean;
     toasts: Toast[];
     showConfetti: boolean;
+    pendingOrchestration: string | null;
 
     // History
     history: HistorySnapshot[];
@@ -196,6 +197,7 @@ interface FlowmateState {
     addToast: (message: string, type?: Toast['type']) => void;
     removeToast: (id: string) => void;
     triggerConfetti: () => void;
+    setPendingOrchestration: (message: string | null) => void;
 
     // Undo/Redo
     undo: () => void;
@@ -261,6 +263,7 @@ export const useStore = create<FlowmateState>()(
             isZenMode: false,
             toasts: [],
             showConfetti: false,
+            pendingOrchestration: null,
             history: [],
             historyPointer: -1,
 
@@ -285,6 +288,9 @@ export const useStore = create<FlowmateState>()(
                 offlineQueue: state.offlineQueue.filter(q => q.id !== id)
             })),
             getOfflineQueue: () => get().offlineQueue,
+
+            // Pending Orchestration (for triggering LLM from other components)
+            setPendingOrchestration: (message) => set({ pendingOrchestration: message }),
 
             // Auth Actions
             setCurrentUser: (user) => set({ currentUser: user }),
