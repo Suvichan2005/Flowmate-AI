@@ -22,7 +22,8 @@ import {
     DailyBriefing,
     RecurrenceType,
     Toast,
-    TagDefinition
+    TagDefinition,
+    HabitMetadata
 } from './types';
 
 // --- Normalization & Validation Helper ---
@@ -810,6 +811,49 @@ export const useStore = create<FlowmateState>()(
                                                 meta: {},
                                                 created_at: now
                                             });
+
+                                            // HABIT LOGIC: Update Habit Metadata if linked entity is a HABIT
+                                            const linkedEntity = newEntities.find(e => e.id === linkedId);
+                                            if (linkedEntity && linkedEntity.kind === EntityKind.HABIT) {
+                                                const meta = { ...linkedEntity.metadata } as HabitMetadata;
+
+                                                // 1. Update Counts
+                                                meta.total_completions = (meta.total_completions || 0) + 1;
+                                                if (meta.habit_type === 'BAD' && duration) {
+                                                    meta.time_spent_minutes = (meta.time_spent_minutes || 0) + duration;
+                                                }
+
+                                                // 2. Streak Calculation (Simple Daily Logic)
+                                                // If last completed was yesterday, increment streak.
+                                                // If today, do nothing (already counted).
+                                                // If before yesterday, reset to 1.
+                                                const todayStr = new Date().toISOString().split('T')[0];
+                                                const lastDateStr = meta.last_completed_at ? meta.last_completed_at.split('T')[0] : null;
+
+                                                if (lastDateStr !== todayStr) {
+                                                    const yesterday = new Date();
+                                                    yesterday.setDate(yesterday.getDate() - 1);
+                                                    const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+                                                    if (lastDateStr === yesterdayStr) {
+                                                        meta.streak_current = (meta.streak_current || 0) + 1;
+                                                    } else {
+                                                        meta.streak_current = 1; // Reset or start new
+                                                    }
+
+                                                    // Update Best Streak
+                                                    if ((meta.streak_current || 0) > (meta.streak_best || 0)) {
+                                                        meta.streak_best = meta.streak_current;
+                                                    }
+
+                                                    meta.last_completed_at = now;
+                                                }
+
+                                                // Update the entity
+                                                newEntities = newEntities.map(e =>
+                                                    e.id === linkedId ? { ...e, metadata: meta, updated_at: now } : e
+                                                );
+                                            }
                                         }
                                     }
                                     break;

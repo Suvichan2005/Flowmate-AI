@@ -14,7 +14,8 @@ import {
   Undo2,
   Redo2,
   Maximize2,
-  Minimize2
+  Minimize2,
+  TrendingUp
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -43,6 +44,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
 
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', view: 'dashboard' as ViewType },
+    { icon: TrendingUp, label: 'Analytics', view: 'analytics' as ViewType },
     { icon: MessageSquare, label: 'Graph', view: 'chat_graph' as ViewType },
     { icon: Target, label: 'Goals', view: 'goals' as ViewType },
     { icon: BookOpen, label: 'Projects', view: 'projects' as ViewType },
@@ -87,8 +89,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
               key={view}
               onClick={() => handleNav(view)}
               className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-all text-sm ${isActive
-                  ? 'bg-indigo-500/15 text-indigo-300 font-medium'
-                  : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                ? 'bg-indigo-500/15 text-indigo-300 font-medium'
+                : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
                 } ${isCompact ? 'justify-center' : ''}`}
               title={isCompact ? label : ''}
             >
@@ -145,8 +147,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
         <button
           onClick={() => handleNav('settings')}
           className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-all text-sm ${currentView === 'settings'
-              ? 'bg-indigo-500/15 text-indigo-300 font-medium'
-              : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+            ? 'bg-indigo-500/15 text-indigo-300 font-medium'
+            : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
             } ${isCompact ? 'justify-center' : ''}`}
           title={isCompact ? 'Settings' : ''}
         >
