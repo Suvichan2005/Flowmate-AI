@@ -44,6 +44,12 @@ const normalizePayload = (type: ToonOperationType, payload: any): any => {
     if (p.date && !p.start_time) p.start_time = p.date;
     if (p.start && !p.start_time) p.start_time = p.start;
 
+    // log_activity specific aliases
+    if (type === 'log_activity') {
+        if (p.end && !p.end_time) p.end_time = p.end;
+        if (p.duration && !p.duration_minutes) p.duration_minutes = p.duration;
+    }
+
     // 2. Relationship Aliases
     if (type === 'link_entities' || type === 'unlink_entities') {
         // Source
@@ -115,6 +121,14 @@ const resolveEntityId = (identifier: string, entities: Entity[]): string | null 
             return entities[i].id;
         }
     }
+
+    // 3. Prefix ID match (Recovery for truncated UUIDs from LLM)
+    // LLMs sometimes drop the last char of a UUID or truncate long strings.
+    if (identifier.length > 20) {
+        const byPrefix = entities.find(e => e.id.startsWith(identifier));
+        if (byPrefix) return byPrefix.id;
+    }
+
     return null;
 };
 
@@ -745,6 +759,26 @@ export const useStore = create<FlowmateState>()(
 
                                 case 'log_activity': {
                                     const actId = uuidv4();
+                                    // Smart Timestamp Logic
+                                    let startTime = payload.start_time || payload.timestamp || now;
+                                    let endTime = payload.end_time || null;
+                                    let duration = payload.duration_minutes || null;
+
+                                    // Calculate missing values if possible
+                                    if (startTime && endTime && !duration) {
+                                        const start = new Date(startTime).getTime();
+                                        const end = new Date(endTime).getTime();
+                                        duration = Math.max(0, Math.round((end - start) / 60000));
+                                    } else if (startTime && duration && !endTime) {
+                                        const start = new Date(startTime).getTime();
+                                        const end = start + (duration * 60000);
+                                        endTime = new Date(end).toISOString();
+                                    } else if (endTime && duration && !startTime) {
+                                        const end = new Date(endTime).getTime();
+                                        const start = end - (duration * 60000);
+                                        startTime = new Date(start).toISOString();
+                                    }
+
                                     const activity: Entity = {
                                         id: actId,
                                         kind: EntityKind.ACTIVITY,
@@ -752,10 +786,10 @@ export const useStore = create<FlowmateState>()(
                                         description: payload.notes || payload.description || null,
                                         status: EntityStatus.COMPLETED,
                                         priority: 1,
-                                        start_time: payload.start_time || payload.timestamp || now,
-                                        end_time: payload.end_time || null,
+                                        start_time: startTime,
+                                        end_time: endTime,
                                         deadline: null,
-                                        duration_minutes: payload.duration_minutes || 0,
+                                        duration_minutes: duration || 0,
                                         recurrence: null,
                                         metadata: {},
                                         created_at: now,
