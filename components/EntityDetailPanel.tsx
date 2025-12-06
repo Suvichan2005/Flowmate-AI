@@ -758,8 +758,9 @@ const EntityDetailPanel: React.FC = () => {
                                         onChange={e => setLinkType(e.target.value as RelationshipType)}
                                         className="w-full bg-slate-950 border border-slate-700 text-slate-200 text-sm rounded p-1 outline-none"
                                     >
-                                        <option value={RelationshipType.DEPENDS_ON}>Depends On</option>
+                                        <option value={RelationshipType.RELATED_TO}>Related To</option>
                                         <option value={RelationshipType.PART_OF}>Part Of</option>
+                                        <option value={RelationshipType.DEPENDS_ON}>Depends On</option>
                                         <option value={RelationshipType.PRECEDES}>Precedes</option>
                                         <option value={RelationshipType.FULFILLS}>Fulfills</option>
                                     </select>
@@ -799,12 +800,28 @@ const EntityDetailPanel: React.FC = () => {
                                         return (
                                             <div
                                                 key={link.id}
-                                                onClick={() => selectEntity(related.id)}
-                                                className="flex items-center gap-2 p-2 rounded hover:bg-slate-700/50 cursor-pointer text-sm text-slate-200"
+                                                className="flex items-center gap-2 p-2 rounded hover:bg-slate-700/50 cursor-pointer text-sm text-slate-200 group"
                                             >
-                                                <span className="text-xs text-slate-500">{related.kind}</span>
-                                                {related.title}
-                                                <ArrowUpRight size={12} className="text-slate-500 ml-auto" />
+                                                <span onClick={() => selectEntity(related.id)} className="flex-1 flex items-center gap-2">
+                                                    <span className="text-xs text-slate-500">{related.kind}</span>
+                                                    {related.title}
+                                                </span>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (confirm(`Remove link to "${related.title}"?`)) {
+                                                            applyOperations([{
+                                                                type: 'unlink_entities',
+                                                                payload: { id: link.id }
+                                                            }]);
+                                                        }
+                                                    }}
+                                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-500/20 rounded text-slate-500 hover:text-red-400 transition-all"
+                                                    title="Remove link"
+                                                >
+                                                    <X size={12} />
+                                                </button>
+                                                <ArrowUpRight size={12} className="text-slate-500" onClick={() => selectEntity(related.id)} />
                                             </div>
                                         );
                                     })}

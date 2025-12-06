@@ -41,6 +41,14 @@ export const db: Firestore = getFirestore(app);
 
 // Auth providers
 const googleProvider = new GoogleAuthProvider();
+// Request Google Calendar access scope
+googleProvider.addScope('https://www.googleapis.com/auth/calendar');
+googleProvider.addScope('https://www.googleapis.com/auth/calendar.events');
+
+// Store the access token for Calendar API
+let googleAccessToken: string | null = null;
+
+export const getGoogleAccessToken = () => googleAccessToken;
 
 // --- Auth Functions ---
 
@@ -65,9 +73,17 @@ export const signUpWithEmail = async (email: string, password: string) => {
 export const signInWithGoogle = async () => {
     try {
         const result = await signInWithPopup(auth, googleProvider);
-        return { user: result.user, error: null };
+
+        // Extract OAuth access token for Google Calendar API
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+            googleAccessToken = credential.accessToken;
+            console.log('[Firebase] Google Calendar access token obtained');
+        }
+
+        return { user: result.user, error: null, accessToken: googleAccessToken };
     } catch (error: any) {
-        return { user: null, error: error.message };
+        return { user: null, error: error.message, accessToken: null };
     }
 };
 

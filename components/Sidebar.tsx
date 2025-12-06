@@ -46,8 +46,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
     { icon: LayoutDashboard, label: 'Dashboard', view: 'dashboard' as ViewType },
     { icon: TrendingUp, label: 'Analytics', view: 'analytics' as ViewType },
     { icon: MessageSquare, label: 'Graph', view: 'chat_graph' as ViewType },
-    { icon: Target, label: 'Goals', view: 'goals' as ViewType },
-    { icon: BookOpen, label: 'Projects', view: 'projects' as ViewType },
+    { icon: Target, label: 'Goals & Projects', view: 'goals' as ViewType },
     { icon: Library, label: 'Knowledge', view: 'knowledge' as ViewType },
     { icon: Calendar, label: 'Calendar', view: 'calendar' as ViewType },
   ];
@@ -88,13 +87,17 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
             <button
               key={view}
               onClick={() => handleNav(view)}
-              className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-all text-sm ${isActive
+              className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all duration-200 text-sm relative group ${isActive
                 ? 'bg-indigo-500/15 text-indigo-300 font-medium'
-                : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-100'
                 } ${isCompact ? 'justify-center' : ''}`}
               title={isCompact ? label : ''}
             >
-              <Icon size={18} className={isActive ? 'text-indigo-400' : ''} />
+              {/* Active indicator line */}
+              {isActive && (
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-indigo-400 rounded-r-full" />
+              )}
+              <Icon size={18} className={`transition-transform duration-200 group-hover:scale-110 ${isActive ? 'text-indigo-400' : ''}`} />
               {showLabels && <span className={forceExpanded ? '' : 'hidden md:block'}>{label}</span>}
             </button>
           );

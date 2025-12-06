@@ -3,8 +3,10 @@ import { useStore } from '../store';
 import { EntityKind, EntityStatus, RelationshipType } from '../types';
 import { Clock, CheckCircle2, Target, Calendar, TrendingUp, Sparkles, RefreshCw, ArrowRight, Zap, Briefcase, AlertTriangle, Link, Layers } from 'lucide-react';
 import ActivityHeatmap from './ActivityHeatmap';
+import MomentumHeatmap from './MomentumHeatmap';
 import MarkdownText from './MarkdownText';
 import { calculateProgress } from '../utils/progressCalculation';
+import QuickStreaks from './QuickStreaks';
 
 interface StatCardProps {
     icon: React.ReactNode;
@@ -188,6 +190,11 @@ const Dashboard: React.FC = () => {
                     value={upcomingEvents.length}
                     colorClass="text-purple-400"
                 />
+            </div>
+
+            {/* Quick Streaks Widget */}
+            <div className="mb-8">
+                <QuickStreaks />
             </div>
 
             {/* Activity Heatmap */}
