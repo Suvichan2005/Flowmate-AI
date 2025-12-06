@@ -22,6 +22,7 @@ import MarkdownText from './components/MarkdownText';
 import ToastNotification from './components/ToastNotification';
 import Confetti from './components/Confetti';
 import AuthModal from './components/AuthModal';
+import AnalyticsView from './components/AnalyticsView';
 import { EntityKind, ToonOperation } from './types';
 
 const App: React.FC = () => {
@@ -262,6 +263,8 @@ const App: React.FC = () => {
     switch (currentView) {
       case 'dashboard':
         return <Dashboard />;
+      case 'analytics':
+        return <AnalyticsView />;
       case 'goals':
         return <EntityList kinds={[EntityKind.GOAL]} title="Goals" />;
       case 'projects':

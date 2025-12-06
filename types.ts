@@ -8,10 +8,29 @@ export enum EntityKind {
   TASK = 'TASK',
   EVENT = 'EVENT',
   ACTIVITY = 'ACTIVITY',
+  HABIT = 'HABIT',
   ROLE = 'ROLE',
   TAG = 'TAG',
   NOTE = 'NOTE',
   CONTEXT = 'CONTEXT',
+}
+
+export type HabitType = 'GOOD' | 'BAD';
+export type HabitFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY'; // Goal frequency
+
+// Specific Metadata for Habits
+export interface HabitMetadata {
+  streak_current: number;
+  streak_best: number;
+  total_completions: number;
+  habit_type: HabitType;
+  frequency_goal: number; // e.g. 3 times per...
+  frequency_period: HabitFrequency;
+  last_completed_at?: string; // ISO Date of last check-in
+
+  // For Bad Habits (Reduction goals)
+  time_spent_minutes?: number; // Total time spent doing this bad habit
+  limit_minutes?: number; // Daily/Weekly limit
 }
 
 export enum EntityStatus {
@@ -81,7 +100,7 @@ export interface Message {
 }
 
 // TOON (Token-Oriented Object Notation) Types
-export type ToonOperationType = 
+export type ToonOperationType =
   | 'create_entity'
   | 'update_entity'
   | 'delete_entity'
@@ -151,4 +170,4 @@ export interface Toast {
   type: 'success' | 'error' | 'info';
 }
 
-export type ViewType = 'dashboard' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'settings';
+export type ViewType = 'dashboard' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'analytics' | 'settings';

@@ -98,6 +98,7 @@ Your goal is to maintain a perfect, interconnected graph of the user's life: tas
 - **TOPIC:** Knowledge subjects (e.g., "React", "Calculus").
 - **JOURNAL:** Personal reflections.
 - **ACTIVITY:** Logged past work (e.g., "Worked 2 hours on code").
+- **HABIT:** Recurring behavior to track (e.g., "Gym", "No Social Media"). *Metadata: { habit_type: 'GOOD'|'BAD', frequency_goal: 'DAILY'|'WEEKLY' }*
 - **TAG:** Simple keywords (e.g., "urgent", "deep-work"). *Link via TAGGED_WITH.*
 
 **RELATIONSHIP TYPES:**
@@ -117,6 +118,10 @@ Your goal is to maintain a perfect, interconnected graph of the user's life: tas
 3. **Batch Linking:** When creating multiple entities, link them immediately.
    - Use 'from_temp' / 'to_temp' with the EXACT TITLE of the entity created in the same turn.
 4. **Smart Updates:** If user says "I'm done with X", update status to COMPLETED. IF it's a recurring task, check if a new instance needs to be created.
+5. **Habit Tracking:** 
+   - To "Do" a habit, use **log_activity** and link it to the Habit Entity.
+   - For BAD habits (e.g., "Doomscrolling"), log the activity with the time spent.
+   - If creating a NEW Habit, ask user for: Frequency (Daily/Weekly) and Type (Good/Bad).
 
 **OUTPUT SCHEMA (JSON only in ops):**
 1. **create_entity**: { kind, title, description, start_time, end_time, deadline, priority(1-5), recurrence, metadata }
@@ -622,4 +627,4 @@ export const queryKnowledgeBase = async (query: string, entities: Entity[]): Pro
     console.error("Knowledge query failed", err);
     return "Error querying knowledge base.";
   }
-};
+}; 
