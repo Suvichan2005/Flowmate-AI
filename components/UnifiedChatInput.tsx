@@ -160,7 +160,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                 <input
                     ref={fileInputRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/*,audio/*,.txt,.pdf,.doc,.docx,.md,.json,.csv"
                     onChange={handleFileSelect}
                     className="hidden"
                     id="chat-file-input"
@@ -194,8 +194,8 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                             type="button"
                             onClick={toggleListening}
                             className={`p-2 rounded-lg transition-all ${isListening
-                                    ? 'bg-red-500 text-white animate-pulse'
-                                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700'
+                                ? 'bg-red-500 text-white animate-pulse'
+                                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700'
                                 }`}
                             title={isListening ? "Stop listening" : "Voice input"}
                         >
@@ -209,8 +209,8 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                             type="submit"
                             disabled={!hasContent || loading}
                             className={`p-2 rounded-lg transition-all ${hasContent && !loading
-                                    ? 'bg-indigo-600 text-white hover:bg-indigo-500'
-                                    : 'bg-slate-700 text-slate-500'
+                                ? 'bg-indigo-600 text-white hover:bg-indigo-500'
+                                : 'bg-slate-700 text-slate-500'
                                 }`}
                             title="Send message"
                         >

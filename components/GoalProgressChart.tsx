@@ -6,6 +6,11 @@ interface GoalProgressChartProps {
     entities: Entity[];
 }
 
+interface CircularProgressProps {
+    progress: number;
+    title: string;
+}
+
 const GoalProgressChart: React.FC<GoalProgressChartProps> = ({ entities }) => {
     const goals = useMemo(() => {
         return entities
@@ -23,7 +28,7 @@ const GoalProgressChart: React.FC<GoalProgressChartProps> = ({ entities }) => {
     }
 
     // Circular progress component
-    const CircularProgress = ({ progress, title }: { progress: number; title: string }) => {
+    const CircularProgress: React.FC<{ progress: number; title: string }> = ({ progress, title }) => {
         const radius = 32;
         const circumference = 2 * Math.PI * radius;
         const strokeDashoffset = circumference - (progress / 100) * circumference;

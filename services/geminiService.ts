@@ -1,4 +1,4 @@
-import { GoogleGenAI, FunctionDeclaration, Type, Tool, Content } from "@google/genai";
+import { GoogleGenAI, FunctionDeclaration, Type, Tool, Content, FunctionCallingConfigMode } from "@google/genai";
 import { ToonResponse, Entity, Relationship, EntityKind, EntityStatus, Message, ToonOperation } from "../types";
 import { useStore } from "../store";
 import { stripBase64Prefix, getMimeType } from "../utils/imageProcessing";
@@ -133,10 +133,18 @@ When user says "I'll send you the link" or "Remind me to follow up with X":
 3. **Batch Linking:** When creating multiple entities, link them immediately.
    - Use 'from_temp' / 'to_temp' with the EXACT TITLE of the entity created in the same turn.
 4. **Smart Updates:** If user says "I'm done with X", update status to COMPLETED. IF it's a recurring task, check if a new instance needs to be created.
-5. **Habit Tracking:** 
-   - To "Do" a habit, use **log_activity** and link it to the Habit Entity.
+5. **Habit Tracking (IMPORTANT):** 
+   - When user mentions habits (e.g., "coursera is a habit", "I want to track gym"), CREATE the HABIT entity immediately with defaults:
+     - habit_type: 'GOOD' (unless clearly bad like "doomscrolling", "smoking")
+     - frequency_goal: 'DAILY' (unless user specifies weekly)
+   - To log doing a habit, use **log_activity** and link it to the Habit Entity.
    - For BAD habits (e.g., "Doomscrolling"), log the activity with the time spent.
-   - If creating a NEW Habit, ask user for: Frequency (Daily/Weekly) and Type (Good/Bad).
+   - Be PROACTIVE: Don't ask permission, just create the habit!
+6. **Analyzing Orphaned/Unconnected Entities (IMPORTANT):**
+   - When user asks to "analyze", "organize", or "link" entities (especially by ID), suggest appropriate relationships.
+   - For example, if user provides entity IDs like "Meeting (ID: abc123)", use the ID to look up the entity and suggest links.
+   - Use **link_entities** with appropriate relationship types: PART_OF (hierarchy), RELATED_TO (loose association).
+   - Respond with your analysis AND the link operations to organize them.
 
 **OUTPUT SCHEMA (JSON only in ops):**
 1. **create_entity**: { kind, title, description, start_time, end_time, deadline, priority(1-5), recurrence, metadata }
@@ -372,6 +380,8 @@ CONTEXT: ${JSON.stringify(contextSnapshot)}`;
           temperature: 0.1,
           // We provide all tools. The model chooses apply_changes to act.
           tools: [{ functionDeclarations: [readCalendarTool, searchEntitiesTool, applyChangesTool] }],
+          // AUTO mode lets model choose between function calls and plain text responses
+          toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
         },
       });
 

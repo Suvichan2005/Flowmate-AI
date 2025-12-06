@@ -42,7 +42,9 @@ const App: React.FC = () => {
     currentView,
     isZenMode,
     selectedEntityId,
-    settings
+    settings,
+    pendingOrchestration,
+    setPendingOrchestration
   } = useStore();
 
   const [input, setInput] = useState('');
@@ -146,6 +148,16 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Process pending orchestration messages (from Dashboard "Ask AI" button)
+  useEffect(() => {
+    if (pendingOrchestration && !loading) {
+      // Clear pending immediately to prevent loops
+      setPendingOrchestration(null);
+      // Trigger LLM orchestration  
+      sendDirectMessage(pendingOrchestration);
+    }
+  }, [pendingOrchestration, loading]);
+
   if (!isHydrated) {
     return (
       <div className="flex items-center justify-center h-screen w-full bg-slate-950 text-slate-400">
@@ -236,7 +248,43 @@ const App: React.FC = () => {
         setPendingOps(toon.ops, msgId);
         addMessage('assistant', toon.assistant.message || "I've prepared some updates for your review.", toon.ops);
       } else {
-        addMessage('assistant', toon.assistant.message || "I've noted that.");
+        // Provide more helpful fallback if LLM didn't return a message
+        const fallbackMessage = toon.assistant.message ||
+          "I received your message but I'm not sure how to help with that. Try asking me to create a task, schedule an event, or update your goals!";
+        addMessage('assistant', fallbackMessage);
+      }
+    } catch (err) {
+      console.error(err);
+      addMessage('assistant', 'Sorry, I encountered an internal error.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Direct send function for UnifiedChatInput - bypasses state sync issues
+  const sendDirectMessage = async (text: string, attachment?: string | null) => {
+    if ((!text.trim() && !attachment) || loading) return;
+
+    const userText = text.trim();
+    const history = messages;
+
+    setSelectedAttachment(null);
+    setAttachmentType(null);
+    setLoading(true);
+
+    const msgId = addMessage('user', userText, undefined, attachment || undefined);
+
+    try {
+      const snapshot = getSnapshot();
+      const toon = await orchestrateMessage(history, userText || (attachment ? "Analyze this attachment." : ""), snapshot, attachment || undefined);
+
+      if (toon.ops && toon.ops.length > 0) {
+        setPendingOps(toon.ops, msgId);
+        addMessage('assistant', toon.assistant.message || "I've prepared some updates for your review.", toon.ops);
+      } else {
+        const fallbackMessage = toon.assistant.message ||
+          "I received your message but I'm not sure how to help with that. Try asking me to create a task, schedule an event, or update your goals!";
+        addMessage('assistant', fallbackMessage);
       }
     } catch (err) {
       console.error(err);
@@ -567,13 +615,7 @@ const App: React.FC = () => {
               {/* Desktop Chat Input - Unified ChatGPT-style */}
               <div className="p-3 bg-slate-900 border-t border-slate-800 shrink-0">
                 <UnifiedChatInput
-                  onSend={(msg) => {
-                    if (msg.trim() || selectedAttachment) {
-                      setInput(msg);
-                      // Use setTimeout to let state update before submit
-                      setTimeout(() => handleSubmit(), 0);
-                    }
-                  }}
+                  onSend={(msg) => sendDirectMessage(msg, selectedAttachment)}
                   onAttach={(file) => processFile(file)}
                   loading={loading}
                   placeholder="Ask AI anything..."
@@ -669,17 +711,23 @@ const App: React.FC = () => {
                 {renderMainContent()}
               </div>
 
-              {/* Persistent Bottom Chat Bar */}
-              <div
-                onClick={() => setIsChatOpen(true)}
-                className="shrink-0 p-3 bg-slate-900 border-t border-slate-800 flex items-center gap-3 cursor-pointer active:bg-slate-800 transition-colors"
-              >
-                <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center shrink-0">
-                  <MessageSquare size={18} />
-                </div>
-                <div className="flex-1 bg-slate-800 border border-slate-700 rounded-xl py-2.5 px-4 text-slate-500 text-sm">
-                  Ask AI anything...
-                </div>
+              {/* Persistent Bottom Chat Bar - Now unified with UnifiedChatInput */}
+              <div className="shrink-0 p-3 bg-slate-900 border-t border-slate-800">
+                <UnifiedChatInput
+                  onSend={(msg) => {
+                    setIsChatOpen(true); // Open full chat when sending
+                    sendDirectMessage(msg, selectedAttachment);
+                  }}
+                  onAttach={(file) => {
+                    processFile(file);
+                    setIsChatOpen(true); // Open full chat when attaching
+                  }}
+                  loading={loading}
+                  placeholder="Ask AI anything..."
+                  attachment={selectedAttachment}
+                  onRemoveAttachment={handleRemoveAttachment}
+                  isMobile={true}
+                />
               </div>
             </main>
           )}

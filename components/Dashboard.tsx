@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
-import { EntityKind, EntityStatus, RelationshipType } from '../types';
-import { Clock, CheckCircle2, Target, Calendar, TrendingUp, Sparkles, RefreshCw, ArrowRight, Zap, Briefcase, AlertTriangle, Link, Layers } from 'lucide-react';
+import { EntityKind, EntityStatus, RelationshipType, Entity } from '../types';
+import { Clock, CheckCircle2, Target, Calendar, TrendingUp, Sparkles, RefreshCw, ArrowRight, Zap, Briefcase, AlertTriangle, Link, Layers, X, Bot, CalendarClock, ListTodo } from 'lucide-react';
 import ActivityHeatmap from './ActivityHeatmap';
 import MomentumHeatmap from './MomentumHeatmap';
 import MarkdownText from './MarkdownText';
@@ -32,9 +32,71 @@ const StatCard: React.FC<StatCardProps> = ({ icon, label, value, subValue, color
     </div>
 );
 
+// Insight Modal Component
+interface InsightModalProps {
+    title: string;
+    items: Entity[];
+    onClose: () => void;
+    onSelect: (id: string) => void;
+    onAskAI?: () => void;
+    renderItem?: (item: Entity) => React.ReactNode;
+}
+
+const InsightModal: React.FC<InsightModalProps> = ({ title, items, onClose, onSelect, onAskAI, renderItem }) => (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onClose}>
+        <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg max-h-[70vh] overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-slate-800">
+                <h3 className="text-lg font-semibold text-slate-100">{title}</h3>
+                <button onClick={onClose} className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800">
+                    <X size={18} />
+                </button>
+            </div>
+            <div className="p-4 overflow-y-auto max-h-[50vh] space-y-2">
+                {items.length === 0 ? (
+                    <p className="text-slate-500 text-sm text-center py-4">No items found</p>
+                ) : (
+                    items.map(item => (
+                        renderItem ? renderItem(item) : (
+                            <div
+                                key={item.id}
+                                onClick={() => onSelect(item.id)}
+                                className="flex items-center gap-3 p-3 rounded-lg bg-slate-800/50 hover:bg-slate-800 cursor-pointer transition-colors"
+                            >
+                                <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-medium text-slate-200 truncate">{item.title}</div>
+                                    <div className="text-xs text-slate-500">{item.kind} • {item.status}</div>
+                                </div>
+                                {item.deadline && (
+                                    <div className="text-xs text-slate-400 shrink-0">
+                                        {new Date(item.deadline).toLocaleDateString()}
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    ))
+                )}
+            </div>
+            {onAskAI && items.length > 0 && (
+                <div className="p-4 border-t border-slate-800">
+                    <button
+                        onClick={onAskAI}
+                        className="w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+                    >
+                        <Bot size={16} />
+                        Ask AI to Analyze & Connect These
+                    </button>
+                </div>
+            )}
+        </div>
+    </div>
+);
+
 const Dashboard: React.FC = () => {
-    const { entities, relationships, selectEntity, dailyBriefing, refreshDailyBriefing, setView } = useStore();
+    const { entities, relationships, selectEntity, dailyBriefing, refreshDailyBriefing, setView, addMessage, addToast, setPendingOrchestration } = useStore();
     const [briefingLoading, setBriefingLoading] = useState(false);
+    const [showOrphansModal, setShowOrphansModal] = useState(false);
+    const [showDueModal, setShowDueModal] = useState(false);
+    const [showProjectsModal, setShowProjectsModal] = useState(false);
 
     const activeGoals = entities.filter(e => e.kind === EntityKind.GOAL && e.status === EntityStatus.ACTIVE);
     const pendingTasks = entities.filter(e => e.kind === EntityKind.TASK && e.status !== EntityStatus.COMPLETED);
@@ -63,19 +125,27 @@ const Dashboard: React.FC = () => {
         const relatedIds = new Set<string>();
         relationships.forEach(r => { relatedIds.add(r.from); relatedIds.add(r.to); });
 
-        // 1. Orphans: No connections, excluding Tags and Notes which might be standalone
-        const orphans = entities.filter(e => !relatedIds.has(e.id) && e.kind !== EntityKind.TAG && e.kind !== EntityKind.NOTE);
-
-        // 2. Overdue: Active with past deadline
-        const now = new Date();
-        const overdue = entities.filter(e =>
-            e.status === EntityStatus.ACTIVE &&
-            e.deadline &&
-            new Date(e.deadline) < now
+        // 1. Orphans: No connections, excluding Tags, Notes, and Activities which might be standalone
+        const orphans = entities.filter(e =>
+            !relatedIds.has(e.id) &&
+            e.kind !== EntityKind.TAG &&
+            e.kind !== EntityKind.NOTE &&
+            e.kind !== EntityKind.ACTIVITY &&
+            e.kind !== EntityKind.MINI_STREAK
         );
 
-        // 3. Stalled Projects: Active project with NO active tasks linked
-        const stalledProjects = entities.filter(e => {
+        // 2. Due Soon: Active tasks/goals with upcoming deadlines (sorted chronologically)
+        const now = new Date();
+        const dueSoon = entities
+            .filter(e =>
+                e.status === EntityStatus.ACTIVE &&
+                e.deadline &&
+                (e.kind === EntityKind.TASK || e.kind === EntityKind.GOAL || e.kind === EntityKind.PROJECT)
+            )
+            .sort((a, b) => new Date(a.deadline!).getTime() - new Date(b.deadline!).getTime());
+
+        // 3. Needs Next Action: Active projects with NO active tasks linked
+        const needsNextAction = entities.filter(e => {
             if (e.kind !== EntityKind.PROJECT || e.status !== EntityStatus.ACTIVE) return false;
 
             const childrenIds = relationships
@@ -90,8 +160,18 @@ const Dashboard: React.FC = () => {
             return !hasActiveTask;
         });
 
-        return { orphans, overdue, stalledProjects };
+        return { orphans, dueSoon, needsNextAction };
     }, [entities, relationships]);
+
+    // Ask AI to analyze orphans - triggers LLM orchestration
+    const handleAskAIOrphans = () => {
+        const orphanInfo = insights.orphans.map(o => `${o.title} (ID: ${o.id.slice(-6)})`).join('\n- ');
+        const message = `Please analyze these unconnected items and suggest how to link them:\n- ${orphanInfo}`;
+        // Trigger LLM orchestration via App.tsx
+        setPendingOrchestration(message);
+        setShowOrphansModal(false);
+        addToast('Asking AI to analyze...', 'info');
+    };
 
     return (
         <div className="flex-1 overflow-y-auto bg-slate-950 p-6 md:p-8">
@@ -164,97 +244,103 @@ const Dashboard: React.FC = () => {
                 </div>
             </div>
 
-            {/* Stats Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                <StatCard
-                    icon={<CheckCircle2 />}
-                    label="Pending Tasks"
-                    value={pendingTasks.length}
-                    colorClass="text-emerald-400"
-                />
-                <StatCard
-                    icon={<Briefcase />}
-                    label="Active Projects"
-                    value={activeProjects.length}
-                    colorClass="text-blue-400"
-                />
-                <StatCard
-                    icon={<Target />}
-                    label="Active Goals"
-                    value={activeGoals.length}
-                    colorClass="text-indigo-400"
-                />
-                <StatCard
-                    icon={<Calendar />}
-                    label="Events Soon"
-                    value={upcomingEvents.length}
-                    colorClass="text-purple-400"
-                />
+
+            {/* Stats Row - 4 Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                {/* Tasks - Navigate to Calendar */}
+                <div
+                    onClick={() => setView('calendar')}
+                    className="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-emerald-500/50 cursor-pointer transition-colors"
+                >
+                    <div className="flex items-center gap-2 mb-2">
+                        <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                            <CheckCircle2 size={16} />
+                        </div>
+                    </div>
+                    <div className="text-2xl font-bold text-slate-100">{pendingTasks.length}</div>
+                    <div className="text-[10px] text-slate-500 font-medium uppercase">Tasks</div>
+                </div>
+
+                <div
+                    onClick={() => setView('projects')}
+                    className="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-blue-500/50 cursor-pointer transition-colors"
+                >
+                    <div className="flex items-center gap-2 mb-2">
+                        <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400">
+                            <Briefcase size={16} />
+                        </div>
+                    </div>
+                    <div className="text-2xl font-bold text-slate-100">{activeProjects.length}</div>
+                    <div className="text-[10px] text-slate-500 font-medium uppercase">Projects</div>
+                </div>
+
+                <div
+                    onClick={() => setView('goals')}
+                    className="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-indigo-500/50 cursor-pointer transition-colors"
+                >
+                    <div className="flex items-center gap-2 mb-2">
+                        <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-400">
+                            <Target size={16} />
+                        </div>
+                    </div>
+                    <div className="text-2xl font-bold text-slate-100">{activeGoals.length}</div>
+                    <div className="text-[10px] text-slate-500 font-medium uppercase">Goals</div>
+                </div>
+
+                <div
+                    onClick={() => setView('calendar')}
+                    className="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-purple-500/50 cursor-pointer transition-colors"
+                >
+                    <div className="flex items-center gap-2 mb-2">
+                        <div className="p-2 rounded-lg bg-purple-500/10 text-purple-400">
+                            <Calendar size={16} />
+                        </div>
+                    </div>
+                    <div className="text-2xl font-bold text-slate-100">{upcomingEvents.length}</div>
+                    <div className="text-[10px] text-slate-500 font-medium uppercase">Events</div>
+                </div>
             </div>
 
-            {/* Quick Streaks Widget */}
-            <div className="mb-8">
-                <QuickStreaks />
-            </div>
-
-            {/* Activity Heatmap */}
-            <ActivityHeatmap />
-
-            {/* Smart Insights Grid */}
-            <div className="mb-8">
-                <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
-                    <Layers size={18} /> Graph Insights
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-
-                    {/* Orphans */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center gap-4 hover:border-slate-700 transition-colors">
-                        <div className={`p-3 rounded-lg ${insights.orphans.length > 0 ? 'bg-orange-500/10 text-orange-400' : 'bg-slate-800 text-slate-500'}`}>
-                            <Link size={20} />
+            {/* Insights Row - 3 Cards */}
+            <div className="grid grid-cols-3 gap-3 mb-8">
+                {/* Unlinked Items */}
+                <div
+                    onClick={() => insights.orphans.length > 0 && setShowOrphansModal(true)}
+                    className={`bg-slate-900 border border-slate-800 rounded-xl p-4 transition-colors ${insights.orphans.length > 0 ? 'hover:border-orange-500/50 cursor-pointer' : ''}`}
+                >
+                    <div className="flex items-center gap-2 mb-2">
+                        <div className={`p-2 rounded-lg ${insights.orphans.length > 0 ? 'bg-orange-500/10 text-orange-400' : 'bg-slate-800 text-slate-500'}`}>
+                            <Link size={16} />
                         </div>
-                        <div className="flex-1">
-                            <div className="text-2xl font-bold text-slate-200">{insights.orphans.length}</div>
-                            <div className="text-xs text-slate-500 font-medium uppercase">Orphaned Items</div>
-                        </div>
-                        {insights.orphans.length > 0 && (
-                            <button onClick={() => selectEntity(insights.orphans[0].id)} className="text-xs text-indigo-400 hover:underline">
-                                Review
-                            </button>
-                        )}
                     </div>
+                    <div className="text-2xl font-bold text-slate-100">{insights.orphans.length}</div>
+                    <div className="text-[10px] text-slate-500 font-medium uppercase">Unlinked</div>
+                </div>
 
-                    {/* Overdue */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center gap-4 hover:border-slate-700 transition-colors">
-                        <div className={`p-3 rounded-lg ${insights.overdue.length > 0 ? 'bg-red-500/10 text-red-400' : 'bg-slate-800 text-slate-500'}`}>
-                            <AlertTriangle size={20} />
+                <div
+                    onClick={() => insights.dueSoon.length > 0 && setShowDueModal(true)}
+                    className={`bg-slate-900 border border-slate-800 rounded-xl p-4 transition-colors ${insights.dueSoon.length > 0 ? 'hover:border-cyan-500/50 cursor-pointer' : ''}`}
+                >
+                    <div className="flex items-center gap-2 mb-2">
+                        <div className={`p-2 rounded-lg ${insights.dueSoon.length > 0 ? 'bg-cyan-500/10 text-cyan-400' : 'bg-slate-800 text-slate-500'}`}>
+                            <CalendarClock size={16} />
                         </div>
-                        <div className="flex-1">
-                            <div className="text-2xl font-bold text-slate-200">{insights.overdue.length}</div>
-                            <div className="text-xs text-slate-500 font-medium uppercase">Overdue Tasks</div>
-                        </div>
-                        {insights.overdue.length > 0 && (
-                            <button onClick={() => selectEntity(insights.overdue[0].id)} className="text-xs text-indigo-400 hover:underline">
-                                Review
-                            </button>
-                        )}
                     </div>
+                    <div className="text-2xl font-bold text-slate-100">{insights.dueSoon.length}</div>
+                    <div className="text-[10px] text-slate-500 font-medium uppercase">Due</div>
+                </div>
 
-                    {/* Stalled Projects */}
-                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center gap-4 hover:border-slate-700 transition-colors">
-                        <div className={`p-3 rounded-lg ${insights.stalledProjects.length > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-slate-800 text-slate-500'}`}>
-                            <Briefcase size={20} />
+                <div
+                    onClick={() => insights.needsNextAction.length > 0 && setShowProjectsModal(true)}
+                    className={`bg-slate-900 border border-slate-800 rounded-xl p-4 transition-colors ${insights.needsNextAction.length > 0 ? 'hover:border-yellow-500/50 cursor-pointer' : ''}`}
+                >
+                    <div className="flex items-center gap-2 mb-2">
+                        <div className={`p-2 rounded-lg ${insights.needsNextAction.length > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-slate-800 text-slate-500'}`}>
+                            <ListTodo size={16} />
                         </div>
-                        <div className="flex-1">
-                            <div className="text-2xl font-bold text-slate-200">{insights.stalledProjects.length}</div>
-                            <div className="text-xs text-slate-500 font-medium uppercase">Stalled Projects</div>
-                        </div>
-                        {insights.stalledProjects.length > 0 && (
-                            <button onClick={() => selectEntity(insights.stalledProjects[0].id)} className="text-xs text-indigo-400 hover:underline">
-                                Review
-                            </button>
-                        )}
                     </div>
-
+                    <div className="text-2xl font-bold text-slate-100">{insights.needsNextAction.length}</div>
+                    <div className="text-[10px] text-slate-500 font-medium uppercase">Stalled</div>
                 </div>
             </div>
 
@@ -334,11 +420,24 @@ const Dashboard: React.FC = () => {
                 </div>
             </div>
 
+            {/* Heatmaps - Above Recent Activity */}
+            <div className="mt-8 mb-8">
+                <MomentumHeatmap />
+            </div>
+
             {/* Recent Activity (Full Width) */}
-            <div className="mt-8 bg-slate-900 border border-slate-800 rounded-xl p-6">
-                <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
-                    <Clock size={18} /> Recent Activity
-                </h2>
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-lg font-semibold text-slate-200 flex items-center gap-2">
+                        <Clock size={18} /> Recent Activity
+                    </h2>
+                    <button
+                        onClick={() => setView('analytics')}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                    >
+                        View All <ArrowRight size={12} />
+                    </button>
+                </div>
                 <div className="space-y-1">
                     {recentActivities.length === 0 ? (
                         <p className="text-slate-500 text-sm italic">No recent activity.</p>
@@ -360,6 +459,40 @@ const Dashboard: React.FC = () => {
                     )}
                 </div>
             </div>
+
+            {/* Quick Streaks Widget - at bottom */}
+            <div className="mt-8 mb-8">
+                <QuickStreaks />
+            </div>
+
+            {/* Insight Modals */}
+            {showOrphansModal && (
+                <InsightModal
+                    title="Unconnected Items"
+                    items={insights.orphans}
+                    onClose={() => setShowOrphansModal(false)}
+                    onSelect={(id) => { selectEntity(id); setShowOrphansModal(false); }}
+                    onAskAI={handleAskAIOrphans}
+                />
+            )}
+
+            {showDueModal && (
+                <InsightModal
+                    title="Due Soon (Chronological)"
+                    items={insights.dueSoon}
+                    onClose={() => setShowDueModal(false)}
+                    onSelect={(id) => { selectEntity(id); setShowDueModal(false); }}
+                />
+            )}
+
+            {showProjectsModal && (
+                <InsightModal
+                    title="Projects Needing Next Action"
+                    items={insights.needsNextAction}
+                    onClose={() => setShowProjectsModal(false)}
+                    onSelect={(id) => { selectEntity(id); setShowProjectsModal(false); }}
+                />
+            )}
         </div>
     );
 };

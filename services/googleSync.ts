@@ -199,5 +199,76 @@ export const GoogleCalendarAdapter = {
       console.error('[GoogleSync] Fetch error:', error);
       return [];
     }
+  },
+
+  /**
+   * Convert a Google Calendar event to Flowmate Entity format
+   */
+  convertGoogleEventToEntity: (gcEvent: any): Partial<Entity> => {
+    const startTime = gcEvent.start?.dateTime || gcEvent.start?.date;
+    const endTime = gcEvent.end?.dateTime || gcEvent.end?.date;
+
+    return {
+      kind: EntityKind.EVENT,
+      title: gcEvent.summary || 'Untitled Event',
+      description: gcEvent.description || '',
+      start_time: startTime ? new Date(startTime).toISOString() : undefined,
+      end_time: endTime ? new Date(endTime).toISOString() : undefined,
+      metadata: {
+        google_calendar_id: gcEvent.id,
+        google_calendar_etag: gcEvent.etag,
+        location: gcEvent.location,
+        calendar_color: gcEvent.colorId,
+        source: 'google_calendar'
+      }
+    };
+  },
+
+  /**
+   * Import events from Google Calendar (for 2-way sync)
+   * Returns entities that don't already exist in Flowmate
+   */
+  importFromGoogleCalendar: async (existingEntities: Entity[]): Promise<Partial<Entity>[]> => {
+    // Fetch events for next 30 days
+    const now = new Date();
+    const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    const events = await GoogleCalendarAdapter.fetchEvents(
+      now.toISOString(),
+      thirtyDaysFromNow.toISOString()
+    );
+
+    // Filter out events that already exist (by google_calendar_id)
+    const existingGoogleIds = new Set(
+      existingEntities
+        .filter(e => e.metadata?.google_calendar_id)
+        .map(e => e.metadata.google_calendar_id)
+    );
+
+    const newEvents = events
+      .filter((e: any) => !existingGoogleIds.has(e.id))
+      .map((e: any) => GoogleCalendarAdapter.convertGoogleEventToEntity(e));
+
+    console.log(`[GoogleSync] Found ${newEvents.length} new events to import`);
+    return newEvents;
+  },
+
+  /**
+   * Push a Flowmate entity to Google Calendar (auto-triggered on create/update)
+   */
+  pushToGoogleCalendar: async (entity: Entity, settings: UserSettings): Promise<SyncResult> => {
+    if (entity.kind !== EntityKind.EVENT) {
+      return { success: true }; // Only sync events
+    }
+
+    const existingGoogleId = entity.metadata?.google_calendar_id;
+
+    if (existingGoogleId) {
+      // Update existing
+      return GoogleCalendarAdapter.updateEvent(entity, existingGoogleId, settings);
+    } else {
+      // Create new
+      return GoogleCalendarAdapter.createEvent(entity, settings);
+    }
   }
 };
