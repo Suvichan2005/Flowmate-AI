@@ -23,6 +23,22 @@ const readCalendarTool: FunctionDeclaration = {
   }
 };
 
+const searchEntitiesTool: FunctionDeclaration = {
+  name: "search_entities",
+  description: "Search for entities by title, tag, kind, or status. Useful for finding IDs or checking active goals.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      query: { type: Type.STRING, description: "Text to match in title or description" },
+      tags: { type: Type.ARRAY, items: { type: Type.STRING }, description: "List of tags to filter by (e.g., ['urgent', 'academics'])" },
+      kind: { type: Type.STRING, description: "Entity kind (e.g., 'GOAL', 'TASK', 'PROJECT')" },
+      status: { type: Type.STRING, description: "Entity status (e.g., 'ACTIVE', 'COMPLETED')" },
+      limit: { type: Type.NUMBER, description: "Max results (default 10)" }
+    },
+    required: []
+  }
+};
+
 const applyChangesTool: FunctionDeclaration = {
   name: "apply_changes",
   description: "Commit changes to the graph. Use this to create, update, delete, or link entities.",
@@ -63,48 +79,53 @@ const applyChangesTool: FunctionDeclaration = {
 };
 
 const SYSTEM_INSTRUCTION_BASE = `
-You are Flowmate Orchestrator v2.4.
-Your goal is to maintain a perfect, interconnected graph of the user's life.
+You are Flowmate Orchestrator, the central intelligence of a personal productivity ecosystem.
+Your goal is to maintain a perfect, interconnected graph of the user's life: tasks, goals, projects, notes, and emotional context.
 
-**CRITICAL RULES FOR "CONTEXT" vs "TAGS":**
-1. **Domains are CONTEXTS**: If the user mentions an organization, society, company, class group, workspace, club, role-domain, or broad area (e.g., “IEEE CS”, “E-Cell”, “Academics”, "Gym", "Semester 5"), ALWAYS create it as \`kind: 'CONTEXT'\`.
-   - **NEVER** create these as TAG, PROJECT, GOAL, or ROLE.
-   - **NEVER** create more than 1 context unless user explicitly implies multiple domains.
+**CORE PHILOSOPHY:**
+1. **Be the Second Brain:** Don't just log tasks; understand *why* they exist. Connect them to larger Goals.
+2. **Proactive & Assertive:** Don't ask for permission to organize. If the user says "I need to study," create a Task, link it to the "Academics" Context, and maybe even a Goal "Ace Finals" if implied.
+3. **Temporal Awareness:** You understand time perfectly (User Timezone). Deadlines, start times, and durations are critical.
+4. **Tool Use:** If you don't see an entity in your "Recent/Relevant" context context, USE THE TOOLS to find it. Do not hallucinate IDs.
 
-2. **TAGS are Atomic**: Use \`kind: 'TAG'\` ONLY for simple keywords like "urgent", "exam", "revision", "teamwork", "coding".
+**ENTITY KINDS & RULES:**
+- **CONTEXT (Domains):** High-level containers (e.g., "Work", "Academics", "Health", "Society"). *Rule: Every entity should ideally belong to a Context via PART_OF.*
+- **GOAL:** Outcomes to achieve (e.g., "Get a 10.0 GPA", "Deploy App").
+- **PROJECT:** Multi-step collections (e.g., "Backend Refactor", "Final Report").
+- **TASK:** Actionable items (e.g., "Email Professor", "Fix Bug").
+- **EVENT:** Time-bound (e.g., "Meeting with Team", "Exam"). *Must have start_time and end_time.*
+- **NOTE:** Thoughts, ideas, reference info.
+- **TOPIC:** Knowledge subjects (e.g., "React", "Calculus").
+- **JOURNAL:** Personal reflections.
+- **ACTIVITY:** Logged past work (e.g., "Worked 2 hours on code").
+- **TAG:** Simple keywords (e.g., "urgent", "deep-work"). *Link via TAGGED_WITH.*
 
-3. **Linking to Context/Tags**:
-   - Every new GOAL, PROJECT, TASK, ROLE, or EVENT that semantically relates to a Context/Tag MUST be linked to it.
-   - **MUST USE**: \`type: 'TAGGED_WITH'\` for these links.
-   - **FORBIDDEN**: Do NOT use \`PART_OF\` to link a Role/Goal to a Context. \`PART_OF\` is strictly for structural hierarchy (Project->Task).
-   - The system will automatically sync \`canonical_tags\` based on these \`TAGGED_WITH\` relationships.
+**RELATIONSHIP TYPES:**
+- **PART_OF:** Hierarchy (Task -> Project -> Context).
+- **DEPENDS_ON:** Blocker (Task B cannot start until Task A is done).
+- **RELATED_TO:** Loose association.
+- **TAGGED_WITH:** For Tags.
+- **FULFILLS:** Activity -> Task/Goal (Work done towards something).
 
-**LINKING RULES (Batch Creation):**
-When creating multiple entities in one batch, you don't know their IDs yet.
-- Use the **exact title** of the new entity in \`from_temp\` or \`to_temp\` fields.
-- Example: 
-  \`create_entity(title="IEEE CS", kind="CONTEXT")\`
-  \`create_entity(title="Deploy Project", kind="GOAL")\`
-  \`link_entities(from_temp="Deploy Project", to_temp="IEEE CS", type="TAGGED_WITH")\`
+**CRITICAL INSTRUCTIONS:**
+1. **Extract EVERYTHING:** If user says "Had a stressful meeting about the budget project", extract:
+   - Event "Budget Meeting" (past)
+   - Project "Budget Project" (if new/existing)
+   - Journal "Stressful Meeting" (emotional context)
+   - Link them all.
+2. **Infer Timestamps:** If user says "I did X an hour ago for 30 mins", calculate the exact ISO strings relative to NOW.
+3. **Batch Linking:** When creating multiple entities, link them immediately.
+   - Use 'from_temp' / 'to_temp' with the EXACT TITLE of the entity created in the same turn.
+4. **Smart Updates:** If user says "I'm done with X", update status to COMPLETED. IF it's a recurring task, check if a new instance needs to be created.
 
-**PAYLOAD SCHEMAS:**
-1. create_entity: { kind: 'TASK'|'PROJECT'|'EVENT'|'GOAL'|'CONTEXT'|'TAG', title: string, description?: string, start_time?: string, deadline?: string, priority?: number }
-2. update_entity: { id: string, fields: { ...subset of props } }
-3. link_entities: { from_temp?: string, to_temp?: string, from?: string, to?: string, type: 'PART_OF'|'DEPENDS_ON'|'TAGGED_WITH' }
-   * Use \`from_temp\`/\`to_temp\` if referring to an entity created *in this same turn*.
-   * Use \`from\`/\`to\` (UUIDs) if referring to *existing* entities from context.
-4. log_activity: { title: string, duration_minutes?: number, notes?: string }
+**OUTPUT SCHEMA (JSON only in ops):**
+1. **create_entity**: { kind, title, description, start_time, end_time, deadline, priority(1-5), recurrence, metadata }
+2. **update_entity**: { id (or title to resolve), fields: { ... } }
+3. **link_entities**: { from (id/title), to (id/title), type } or { from_temp, to_temp, type }
+4. **log_activity**: { title, start_time, end_time, duration_minutes, notes, linked_entity_id }
 
-**GENERAL RULES:**
-- Extract EVERYTHING: Meetings, goals, feelings.
-- Container First: Create the Context/Project first, then children.
-- Temporal Accuracy:
-  * ALWAYS use the USER_TIMEZONE provided in context (currently Asia/Kolkata = IST = UTC+5:30)
-  * Output dates as ISO8601 WITH the user's timezone OFFSET, NOT "Z" (UTC)
-  * Example: If user says "10 PM tomorrow" and date is 2025-12-07, output: "2025-12-08T22:00:00+05:30"
-  * NEVER use "Z" suffix - always use explicit offset like "+05:30" for IST
-  * The offset ensures the time displays correctly in the user's local timezone
-- Corrections: If user says "update it", find the entity in context and call \`update_entity\`.
+**TONE:**
+Professional, concise, yet warm. You are a highly capable Chief of Staff.
 `;
 
 function calculateRelevance(entity: Entity, userMessage: string): number {
@@ -161,6 +182,61 @@ function executeReadCalendar(args: any, allEntities: Entity[]): any[] {
   }));
 }
 
+function executeSearchEntities(args: any, allEntities: Entity[]): any[] {
+  const query = (args.query || '').toLowerCase();
+  const tags = (args.tags || []) as string[];
+  const kind = args.kind ? args.kind.toUpperCase() : null;
+  const status = args.status ? args.status.toUpperCase() : null;
+  const limit = args.limit || 15;
+
+  let results = allEntities.filter(e => {
+    // Status Filter
+    if (status && e.status !== status) return false;
+
+    // Kind Filter
+    if (kind && e.kind !== kind) return false;
+
+    // Tag Filter (OR logic for tags)
+    if (tags.length > 0) {
+      const entityTags = (e.canonical_tags || []).map(t => t.toLowerCase());
+      const hasTag = tags.some(t => entityTags.includes(t.toLowerCase()));
+      if (!hasTag) return false;
+    }
+
+    // Query Filter
+    if (query) {
+      const inTitle = (e.title || '').toLowerCase().includes(query);
+      const inDesc = (e.description || '').toLowerCase().includes(query);
+      if (!inTitle && !inDesc) return false;
+    }
+
+    return true;
+  });
+
+  // Sort by relevance (if query provided) or updated_at
+  if (query) {
+    results = results.sort((a, b) => {
+      const aTitle = (a.title || '').toLowerCase();
+      const bTitle = (b.title || '').toLowerCase();
+      if (aTitle === query) return -1;
+      if (bTitle === query) return 1;
+      if (aTitle.startsWith(query)) return -1;
+      if (bTitle.startsWith(query)) return 1;
+      return 0;
+    });
+  } else {
+    results = results.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+  }
+
+  return results.slice(0, limit).map(e => ({
+    id: e.id,
+    title: e.title,
+    kind: e.kind,
+    status: e.status,
+    tags: e.canonical_tags
+  }));
+}
+
 export const orchestrateMessage = async (
   history: Message[],
   userMessage: string,
@@ -200,46 +276,31 @@ export const orchestrateMessage = async (
     contextMap.has(r.from) && contextMap.has(r.to)
   );
 
+  // Compact entity representation - skip null fields
+  const compactEntity = (e: Entity) => {
+    const obj: Record<string, any> = { id: e.id, k: e.kind, t: e.title, s: e.status };
+    if (e.deadline) obj.dl = e.deadline;
+    if (e.start_time) obj.st = e.start_time;
+    if (e.canonical_tags?.length) obj.tags = e.canonical_tags;
+    return obj;
+  };
+
   const contextSnapshot = {
-    entities: truncatedEntities.map(e => ({
-      id: e.id,
-      kind: e.kind,
-      title: e.title,
-      status: e.status,
-      deadline: e.deadline,
-      start_time: e.start_time,
-      tags: e.canonical_tags // Ensure AI sees tags
-    })),
-    relationships: truncatedRelationships.map(r => ({
-      from: r.from,
-      to: r.to,
-      type: r.type
-    }))
+    e: truncatedEntities.map(compactEntity),
+    r: truncatedRelationships.map(r => ({ f: r.from, t: r.to, tp: r.type }))
   };
 
-  // Provide available tags for reuse
-  const availableTags = (universalTags || []).map(t => ({ title: t.title, kind: t.kind, count: t.usage_count }));
+  // Compact tags list
+  const tagList = (universalTags || []).slice(0, 20).map(t => `${t.title}(${t.kind[0]})`).join(', ');
 
-  const userTimezone = settings.timezone || 'Asia/Kolkata'; // Use stored settings
+  const userTimezone = settings.timezone || 'Asia/Kolkata';
   const now = new Date();
-  const temporalContext = {
-    iso: now.toISOString(),
-    local_display: now.toLocaleString('en-US', { timeZone: userTimezone }),
-    weekday: now.toLocaleString('en-US', { weekday: 'long', timeZone: userTimezone }),
-    date: now.toLocaleDateString('en-US', { timeZone: userTimezone })
-  };
+  const hour = parseInt(now.toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: userTimezone }));
+  const timeOfDay = hour >= 5 && hour < 12 ? 'morning' : hour >= 12 && hour < 17 ? 'afternoon' : hour >= 17 && hour < 21 ? 'evening' : 'late night';
 
-  const contextPrompt = `
-CURRENT_TIME_CONTEXT:
-${JSON.stringify(temporalContext, null, 2)}
-USER_TIMEZONE: ${userTimezone}
-
-EXISTING_TAGS_AND_CONTEXTS:
-${JSON.stringify(availableTags.slice(0, 30), null, 2)}
-
-IMMEDIATE_CONTEXT_SNAPSHOT:
-${JSON.stringify(contextSnapshot, null, 2)}
-`;
+  const contextPrompt = `NOW: ${now.toLocaleString('en-US', { timeZone: userTimezone })} (${timeOfDay}) | TZ: ${userTimezone}
+TAGS: ${tagList || 'none'}
+CONTEXT: ${JSON.stringify(contextSnapshot)}`;
 
   // --- Sliding Window History ---
   const HISTORY_WINDOW = 12;
@@ -260,12 +321,21 @@ ${JSON.stringify(contextSnapshot, null, 2)}
     const mimeType = getMimeType(attachmentDataUrl);
     const base64Data = stripBase64Prefix(attachmentDataUrl);
     currentParts.push({ inlineData: { mimeType: mimeType, data: base64Data } });
-    addDebugLog('orchestrator', 'Sending MULTIMODAL request', { mimeType, model: modelName });
-  } else {
-    addDebugLog('orchestrator', 'Sending request', { historyLength: recentHistory.length, model: modelName });
   }
 
   contents.push({ role: 'user', parts: currentParts });
+
+  // Log COMPLETE LLM input for debugging
+  addDebugLog('orchestrator', `LLM Request (${modelName})`, {
+    model: modelName,
+    systemInstruction: finalSystemInstruction,
+    contextPrompt: contextPrompt,
+    userMessage: userMessage,
+    historyLength: recentHistory.length,
+    history: recentHistory.map(m => ({ role: m.role, text: m.text.substring(0, 200) + (m.text.length > 200 ? '...' : '') })),
+    hasAttachment: !!attachmentDataUrl,
+    attachmentMimeType: attachmentDataUrl ? getMimeType(attachmentDataUrl) : null
+  });
 
   try {
     let turnCount = 0;
@@ -280,15 +350,28 @@ ${JSON.stringify(contextSnapshot, null, 2)}
         config: {
           systemInstruction: finalSystemInstruction,
           temperature: 0.1,
-          // We provide both tools. The model chooses apply_changes to act.
-          tools: [{ functionDeclarations: [readCalendarTool, applyChangesTool] }],
+          // We provide all tools. The model chooses apply_changes to act.
+          tools: [{ functionDeclarations: [readCalendarTool, searchEntitiesTool, applyChangesTool] }],
         },
       });
 
       const functionCalls = response.functionCalls;
+      const responseText = response.text;
+
+      // Log COMPLETE LLM response for debugging
+      addDebugLog('orchestrator', 'LLM Response', {
+        turnCount,
+        hasText: !!responseText,
+        textPreview: responseText ? responseText.substring(0, 500) : null,
+        hasFunctionCalls: !!(functionCalls && functionCalls.length > 0),
+        functionCalls: functionCalls || [],
+        rawCandidates: response.candidates?.map(c => ({
+          finishReason: c.finishReason,
+          safetyRatings: c.safetyRatings
+        }))
+      });
 
       if (functionCalls && functionCalls.length > 0) {
-        addDebugLog('orchestrator', 'Tool Called', { calls: functionCalls });
 
         // 1. Check for Action (apply_changes)
         const actionCall = functionCalls.find(fc => fc.name === 'apply_changes');
@@ -306,12 +389,19 @@ ${JSON.stringify(contextSnapshot, null, 2)}
           };
         }
 
-        // 2. Handle Retrieval (read_calendar)
+        // 2. Handle Retrieval (read_calendar / search_entities)
         contents.push(response.candidates?.[0]?.content as Content);
 
         const functionResponses = functionCalls.map(call => {
           if (call.name === 'read_calendar') {
             const result = executeReadCalendar(call.args, snapshot.entities);
+            return {
+              name: call.name,
+              response: { result }
+            };
+          }
+          if (call.name === 'search_entities') {
+            const result = executeSearchEntities(call.args, snapshot.entities);
             return {
               name: call.name,
               response: { result }
@@ -379,6 +469,21 @@ export const generateBriefing = async (snapshot: { entities: Entity[]; relations
   const modelName = settings?.preferred_model || 'gemini-2.5-flash';
   const ai = getAiClient();
 
+  const userTimezone = settings.timezone || 'Asia/Kolkata';
+  const now = new Date();
+
+  // Natural Context for LLM
+  const timeContext = now.toLocaleString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: true,
+    timeZone: userTimezone
+  });
+
   const activeTasks = snapshot.entities
     .filter(e => e.kind === EntityKind.TASK && e.status === EntityStatus.ACTIVE)
     .sort((a, b) => b.priority - a.priority)
@@ -387,24 +492,26 @@ export const generateBriefing = async (snapshot: { entities: Entity[]; relations
   const eventsToday = snapshot.entities
     .filter(e => e.kind === EntityKind.EVENT && e.start_time && new Date(e.start_time).toDateString() === new Date().toDateString());
 
-  const userTimezone = settings.timezone || 'Asia/Kolkata';
-
   const prompt = `
     You are a strategic productivity coach. 
     Analyze the following snapshot of the user's graph and generate a "Daily Briefing" in clear, motivating Markdown.
     
     CONTEXT:
-    Date: ${new Date().toLocaleDateString()}
+    Current Time: ${timeContext}
     Timezone: ${userTimezone}
     
     Active Tasks (Top 10): ${JSON.stringify(activeTasks.map(t => ({ title: t.title, priority: t.priority, deadline: t.deadline })))}
     Events Today: ${JSON.stringify(eventsToday.map(e => ({ title: e.title, time: e.start_time })))}
     
-    STRUCTURE:
-    1. **Greeting**: Short, motivating hook.
-    2. **Focus of the Day**: Pick 1-2 key tasks based on priority/deadline.
-    3. **Schedule Highlights**: Briefly mention events if any.
-    4. **Quick Win**: Suggest one small task.
+    INSTRUCTIONS:
+    1. **Dynamic Greeting**: Greet the user naturally based on the specific *Current Time*. 
+       - If it's late night (e.g., 12 AM - 4 AM), acknowledge they are "working late" rather than saying "Good Morning". be encouraging but realistic about rest.
+       - If it's early morning, be high energy.
+       - If it's regular day, be focused.
+    2. **Strategic Focus**: Pick 1-2 key tasks. Match the intensity to the time of day (e.g., lower intensity for late night).
+       - **IMPORTANT**: Paraphrase task titles naturally (e.g., "Review your biology notes" instead of "Do 'Biology Revise'").
+    3. **Schedule**: Briefly mention events. Clarify if events are for "later today" (upcoming daylight hours) vs "tonight".
+    4. **Quick Win**: One small, actionable step.
     
     Keep it concise (max 150 words). Do not use JSON. Return raw string.
   `;
