@@ -244,12 +244,13 @@ export const GoogleCalendarAdapter = {
 
     // Map Google Calendar RRULE to Flowmate recurrence type
     let recurrence = null;
+    let rawRrule: string | null = null;
     if (gcEvent.recurrence && gcEvent.recurrence.length > 0) {
-      const rrule = gcEvent.recurrence[0] || '';
-      if (rrule.includes('FREQ=DAILY')) recurrence = 'DAILY';
-      else if (rrule.includes('FREQ=WEEKLY')) recurrence = 'WEEKLY';
-      else if (rrule.includes('FREQ=MONTHLY')) recurrence = 'MONTHLY';
-      else if (rrule.includes('FREQ=YEARLY')) recurrence = 'YEARLY';
+      rawRrule = gcEvent.recurrence[0] || '';
+      if (rawRrule.includes('FREQ=DAILY')) recurrence = 'DAILY';
+      else if (rawRrule.includes('FREQ=WEEKLY')) recurrence = 'WEEKLY';
+      else if (rawRrule.includes('FREQ=MONTHLY')) recurrence = 'MONTHLY';
+      else if (rawRrule.includes('FREQ=YEARLY')) recurrence = 'YEARLY';
     }
 
     // Map Google Calendar colorId to hex color
@@ -332,7 +333,8 @@ export const GoogleCalendarAdapter = {
         is_all_day: isAllDay,
         source: 'google_calendar',
         auto_context: context,
-        auto_tags: tags.length > 0 ? tags : undefined
+        auto_tags: tags.length > 0 ? tags : undefined,
+        rrule: rawRrule || undefined // Store raw RRULE for complex patterns
       }
     };
   },

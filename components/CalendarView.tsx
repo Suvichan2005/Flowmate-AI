@@ -13,25 +13,66 @@ const PIXELS_PER_HOUR = 60; // 1px per minute usually works well
 const GRID_HEIGHT = 24 * PIXELS_PER_HOUR;
 
 // Check if a target date matches a recurring pattern from original date
-const matchesRecurrence = (originalDate: Date, targetDate: Date, recurrence: RecurrenceType): boolean => {
-    if (!recurrence) return false;
+// Supports both simple recurrence (DAILY/WEEKLY/MONTHLY/YEARLY) and RRULE-style patterns
+const matchesRecurrence = (originalDate: Date, targetDate: Date, recurrence: RecurrenceType, rrule?: string): boolean => {
+    if (!recurrence && !rrule) return false;
 
-    // Target must be on or after original date
-    if (targetDate < originalDate) return false;
+    // Compare dates only (not timestamps)
+    const origDateOnly = new Date(originalDate.getFullYear(), originalDate.getMonth(), originalDate.getDate());
+    const targetDateOnly = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
 
     const origDay = originalDate.getDate();
     const origMonth = originalDate.getMonth();
     const origDayOfWeek = originalDate.getDay();
 
+    // If we have RRULE metadata, parse it for complex patterns
+    if (rrule) {
+        // Parse BYDAY for patterns like "2SA" (2nd Saturday), "1MO" (1st Monday)
+        const bydayMatch = rrule.match(/BYDAY=(-?\d)?(\w{2})/);
+        if (bydayMatch) {
+            const weekNum = parseInt(bydayMatch[1] || '0');
+            const dayCode = bydayMatch[2];
+            const dayMap: Record<string, number> = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+            const targetDayOfWeek = dayMap[dayCode];
+
+            if (targetDayOfWeek !== undefined && targetDate.getDay() === targetDayOfWeek) {
+                if (weekNum !== 0) {
+                    // Nth weekday of month (e.g., 2nd Saturday)
+                    const targetWeekOfMonth = Math.ceil(targetDate.getDate() / 7);
+                    if (weekNum > 0 && targetWeekOfMonth === weekNum) return true;
+                    // Negative means from end (-1 = last)
+                    if (weekNum < 0) {
+                        const lastDayOfMonth = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0).getDate();
+                        const weeksFromEnd = Math.ceil((lastDayOfMonth - targetDate.getDate() + 1) / 7);
+                        if (weeksFromEnd === Math.abs(weekNum)) return true;
+                    }
+                } else {
+                    // Every occurrence of this weekday
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Parse INTERVAL for "every N weeks/months"
+        const intervalMatch = rrule.match(/INTERVAL=(\d+)/);
+        if (intervalMatch && recurrence === 'WEEKLY') {
+            const interval = parseInt(intervalMatch[1]);
+            const weeksDiff = Math.floor((targetDateOnly.getTime() - origDateOnly.getTime()) / (7 * 24 * 60 * 60 * 1000));
+            return weeksDiff >= 0 && weeksDiff % interval === 0 && targetDate.getDay() === origDayOfWeek;
+        }
+    }
+
+    // Simple recurrence patterns
     switch (recurrence) {
         case 'DAILY':
-            return true; // Every day after original
+            return targetDateOnly >= origDateOnly;
         case 'WEEKLY':
-            return targetDate.getDay() === origDayOfWeek; // Same day of week
+            return targetDateOnly >= origDateOnly && targetDate.getDay() === origDayOfWeek;
         case 'MONTHLY':
-            return targetDate.getDate() === origDay; // Same day of month
+            return targetDate.getDate() === origDay;
         case 'YEARLY':
-            return targetDate.getDate() === origDay && targetDate.getMonth() === origMonth; // Same date
+            return targetDate.getDate() === origDay && targetDate.getMonth() === origMonth;
         default:
             return false;
     }
@@ -57,7 +98,10 @@ const CalendarView: React.FC = () => {
     }, [viewMode]);
 
     // Filter events AND tasks with deadlines based on toggle state
+    // Also exclude hidden entities
     const calendarItems = useMemo(() => entities.filter(e => {
+        // Exclude hidden entities
+        if (e.metadata?.hidden) return false;
         if (e.kind === EntityKind.EVENT && e.start_time) return showEvents;
         if (e.kind === EntityKind.TASK && e.deadline && e.status !== EntityStatus.COMPLETED) return showTasks;
         return false;
@@ -260,7 +304,11 @@ const CalendarView: React.FC = () => {
                 }
             }
             // Check if this date matches a recurring pattern
-            else if (e.recurrence && matchesRecurrence(originalDate, date, e.recurrence)) {
+            else if (e.recurrence && matchesRecurrence(originalDate, date, e.recurrence, e.metadata?.rrule)) {
+                results.push({ entity: e, isRecurring: true });
+            }
+            // Also check for RRULE in metadata even without simple recurrence type
+            else if (e.metadata?.rrule && matchesRecurrence(originalDate, date, null as any, e.metadata.rrule)) {
                 results.push({ entity: e, isRecurring: true });
             }
         });

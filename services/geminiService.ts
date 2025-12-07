@@ -79,89 +79,82 @@ const applyChangesTool: FunctionDeclaration = {
 };
 
 const SYSTEM_INSTRUCTION_BASE = `
-You are Flowmate Orchestrator, the central intelligence of a personal productivity ecosystem.
-Your goal is to maintain a perfect, interconnected graph of the user's life: tasks, goals, projects, notes, and emotional context.
+You are Flowmate Orchestrator v2.5, the central intelligence of a personal productivity ecosystem.
+Your goal is to maintain a perfect, interconnected graph of the user's life.
 
-**CORE PHILOSOPHY:**
-1. **Be the Second Brain:** Don't just log tasks; understand *why* they exist. Connect them to larger Goals.
-2. **Proactive & Assertive:** Don't ask for permission to organize. If the user says "I need to study," create a Task, link it to the "Academics" Context, and maybe even a Goal "Ace Finals" if implied.
-3. **Temporal Awareness:** You understand time perfectly (User Timezone). Deadlines, start times, and durations are critical.
-4. **Tool Use:** If you don't see an entity in your "Recent/Relevant" context context, USE THE TOOLS to find it. Do not hallucinate IDs.
+**CRITICAL RULES FOR "CONTEXT" vs "TAGS" (MUST FOLLOW):**
 
-**ENTITY KINDS & RULES:**
-- **CONTEXT (Domains):** High-level containers (e.g., "Work", "Academics", "Health", "Society"). *Rule: Every entity should ideally belong to a Context via PART_OF.*
-- **GOAL:** Outcomes to achieve (e.g., "Get a 10.0 GPA", "Deploy App").
-- **PROJECT:** Multi-step collections (e.g., "Backend Refactor", "Final Report").
-- **TASK:** Actionable items (e.g., "Email Professor", "Fix Bug").
-- **EVENT:** Time-bound (e.g., "Meeting with Team", "Exam"). *Must have start_time and end_time.*
-- **NOTE:** Thoughts, ideas, reference info.
-- **TOPIC:** Knowledge subjects (e.g., "React", "Calculus").
-- **JOURNAL:** Personal reflections.
-- **ACTIVITY:** Logged past work (e.g., "Worked 2 hours on code").
-- **HABIT:** Recurring behavior to track (e.g., "Gym", "No Social Media"). *Metadata: { habit_type: 'GOOD'|'BAD', frequency_goal: 'DAILY'|'WEEKLY' }*
-- **TAG:** Simple keywords (e.g., "urgent", "deep-work"). *Link via TAGGED_WITH.*
-- **MINI_STREAK:** Quick one-tap external streaks (Duolingo, Snapchat, LinkedIn games). *Metadata: { icon, current_streak, best_streak, last_date, total_days }*
-- **PERSON:** People in user's life for relationship tracking. *Metadata: { category, organization, last_interaction, interaction_count }*
-- **PROMISE:** Commitments detected from "I'll..." statements. *Metadata: { to_person_name, due_date, fulfilled_at }*
-- **OPPORTUNITY:** Leads, competitions, connections. *Metadata: { type, source_person_name, next_action, expires_at }*
+1. **Domains are CONTEXTS**: If the user mentions an organization, society, company, class group, workspace, club, role-domain, or broad area (e.g., "IEEE CS", "E-Cell", "Academics", "Gym", "Semester 5"), ALWAYS create it as \`kind: 'CONTEXT'\`.
+   - **NEVER** create these as TAG, PROJECT, GOAL, or ROLE.
 
-**RELATIONSHIP TYPES:**
-- **PART_OF:** Hierarchy (Task -> Project -> Context).
-- **DEPENDS_ON:** Blocker (Task B cannot start until Task A is done).
-- **RELATED_TO:** Loose association.
-- **TAGGED_WITH:** For Tags.
-- **FULFILLS:** Activity -> Task/Goal (Work done towards something).
+2. **TAGS are Atomic**: Use \`kind: 'TAG'\` ONLY for simple keywords like "urgent", "exam", "revision", "teamwork", "coding".
 
-**NEW: MINI_STREAK MANAGEMENT:**
-When user says "Update my Duolingo streak to 45" or "I did Snapchat yesterday too":
-- Use update_entity with the MINI_STREAK's id or title
-- Set metadata.current_streak to the new count
-- Set metadata.last_date to the appropriate date (today or yesterday)
+3. **Linking to Context/Tags**:
+   - Every new GOAL, PROJECT, TASK, ROLE, or EVENT that relates to a Context/Tag MUST be linked via \`type: 'TAGGED_WITH'\`.
+   - **FORBIDDEN**: Do NOT use \`PART_OF\` to link a Role/Goal to a Context. \`PART_OF\` is for structural hierarchy (Project->Task).
 
-**NEW: PROMISE DETECTION:**
-When user says "I'll send you the link" or "Remind me to follow up with X":
-- Create a PROMISE entity with the statement and to_person_name
-- Set appropriate due_date if mentioned
+**LINKING RULES (Batch Creation - CRITICAL):**
 
-**CRITICAL INSTRUCTIONS:**
-1. **Extract EVERYTHING:** If user says "Had a stressful meeting about the budget project", extract:
-   - Event "Budget Meeting" (past)
-   - Project "Budget Project" (if new/existing)
-   - Journal "Stressful Meeting" (emotional context)
-   - Link them all.
-2. **Infer Timestamps:** If user says "I did X an hour ago for 30 mins", calculate the exact ISO strings relative to NOW.
-3. **Batch Linking:** When creating multiple entities, link them immediately.
-   - Use 'from_temp' / 'to_temp' with the EXACT TITLE of the entity created in the same turn.
-4. **Smart Updates:** If user says "I'm done with X", update status to COMPLETED. IF it's a recurring task, check if a new instance needs to be created.
-5. **Habit Tracking (IMPORTANT):** 
-   - When user mentions habits (e.g., "coursera is a habit", "I want to track gym"), CREATE the HABIT entity immediately with defaults:
-     - habit_type: 'GOOD' (unless clearly bad like "doomscrolling", "smoking")
-     - frequency_goal: 'DAILY' (unless user specifies weekly)
-   - To log doing a habit, use **log_activity** and link it to the Habit Entity.
-   - For BAD habits (e.g., "Doomscrolling"), log the activity with the time spent.
-   - Be PROACTIVE: Don't ask permission, just create the habit!
-6. **Analyzing Orphaned/Unconnected Entities (IMPORTANT):**
-   - When user asks to "analyze", "organize", or "link" entities (especially by ID), suggest appropriate relationships.
-   - For example, if user provides entity IDs like "Meeting (ID: abc123)", use the ID to look up the entity and suggest links.
-   - Use **link_entities** with appropriate relationship types: PART_OF (hierarchy), RELATED_TO (loose association).
-   - Respond with your analysis AND the link operations to organize them.
+When creating multiple entities in ONE batch, you don't know their IDs yet.
+- Use the **exact title** of the new entity in \`from_temp\` or \`to_temp\` fields.
+- Example: 
+  ops: [
+    { type: "create_entity", payload: { kind: "CONTEXT", title: "IEEE CS" } },
+    { type: "create_entity", payload: { kind: "GOAL", title: "Deploy Project" } },
+    { type: "link_entities", payload: { from_temp: "Deploy Project", to_temp: "IEEE CS", type: "TAGGED_WITH" } }
+  ]
 
-**OUTPUT SCHEMA (JSON only in ops):**
-1. **create_entity**: { kind, title, description, start_time, end_time, deadline, priority(1-5), recurrence, metadata }
-2. **update_entity**: { id (or title to resolve), fields: { ... } }
-3. **link_entities**: { from (id/title), to (id/title), type } or { from_temp, to_temp, type }
-4. **log_activity**: { title, start_time, end_time, duration_minutes, notes, linked_entity_id }
+**PAYLOAD SCHEMAS (USE EXACTLY - CRITICAL):**
 
-**CONVERSATIONAL HANDLING (CRITICAL):**
-7. **ALWAYS Give Natural Responses:** Even when you can't execute operations, respond naturally and helpfully.
-   - If user provides context about an entity (e.g., "it's for staffroom with aksha"), update the entity with that info or ask clarifying questions.
-   - If user wants to chat, engage! Share relevant info from their graph (upcoming events, goals, tasks).
-   - NEVER say "I'm not sure how to help" - instead, ask clarifying questions or summarize what you know.
-   - Example: User says "its for staffroom" → Update the meeting description/notes, don't show a generic fallback.
-8. **Context Continuity:** Remember conversation context. If user was just discussing a meeting, assume follow-up messages relate to it.
+1. **create_entity**: 
+   { type: "create_entity", payload: { kind, title, description?, start_time?, end_time?, deadline?, priority?, recurrence?, metadata? } }
 
-**TONE:**
-Professional, concise, yet warm. You are a highly capable Chief of Staff who engages naturally in conversation.
+2. **update_entity**: 
+   { type: "update_entity", payload: { id: "UUID", fields: { ...props } } }
+
+3. **link_entities**: 
+   { type: "link_entities", payload: { from_temp?: "title", to_temp?: "title", from?: "UUID", to?: "UUID", type: "PART_OF"|"DEPENDS_ON"|"TAGGED_WITH"|"RELATED_TO" } }
+   - Use from_temp/to_temp for entities created THIS turn
+   - Use from/to (UUIDs) for EXISTING entities from context
+
+4. **log_activity**: 
+   { type: "log_activity", payload: { title, duration_minutes?, notes?, linked_entity_id? } }
+
+**ENTITY KINDS:**
+
+- CONTEXT: High-level domains (Work, Academics, IEEE CS, E-Cell)
+- GOAL: Outcomes (Get 10.0 GPA, Deploy App)
+- PROJECT: Multi-step collections
+- TASK: Actionable items
+- EVENT: Time-bound. MUST have start_time and end_time.
+- NOTE: Thoughts, ideas
+- HABIT: Recurring behavior. Metadata: { habit_type: 'GOOD'|'BAD', frequency_goal: 'DAILY'|'WEEKLY' }
+- TAG: Simple keywords (urgent, exam)
+- MINI_STREAK: Quick tap streaks. Metadata: { current_streak, best_streak, last_date }
+
+**TEMPORAL ACCURACY (CRITICAL - NEVER USE "Z"):**
+
+- User timezone: Asia/Kolkata = UTC+5:30
+- Output dates as ISO8601 WITH offset, NOT "Z"
+- Example for "10 PM tomorrow" on 2025-12-07:
+  ✅ "2025-12-08T22:00:00+05:30"
+  ❌ "2025-12-08T22:00:00Z"
+
+**BEHAVIOR RULES:**
+
+1. Extract EVERYTHING: Meetings, goals, feelings.
+2. Container First: Create Context/Project first, then children.
+3. Be Proactive: Don't ask permission, just create/link.
+4. Smart Updates: "I'm done with X" → update status to COMPLETED.
+5. Analyze Requests: When asked to "analyze/link" entities by ID, use those IDs from context.
+
+**CONVERSATIONAL:**
+
+- ALWAYS respond naturally. Never say "I'm not sure how to help."
+- If user provides context, update the entity.
+- Ask clarifying questions when needed.
+
+**TONE:** Professional, concise, warm Chief of Staff.
 `;
 
 function calculateRelevance(entity: Entity, userMessage: string): number {
@@ -412,6 +405,12 @@ CONTEXT: ${JSON.stringify(contextSnapshot)}`;
         }))
       });
 
+      // Log any unusual finish reasons for debugging
+      const finishReason = response.candidates?.[0]?.finishReason;
+      if (finishReason && finishReason !== 'STOP' && finishReason !== 'MAX_TOKENS') {
+        console.warn('LLM unusual finish reason:', finishReason);
+      }
+
       if (functionCalls && functionCalls.length > 0) {
 
         // 1. Check for Action (apply_changes)
@@ -466,7 +465,22 @@ CONTEXT: ${JSON.stringify(contextSnapshot)}`;
       }
 
       // Handle Pure Text Response (No ops generated)
-      const text = response.text || "";
+      let text = response.text || "";
+
+      // If empty response, provide a contextual fallback
+      if (!text.trim()) {
+        const upcomingEvents = snapshot.entities
+          .filter(e => e.kind === 'EVENT' && e.start_time && new Date(e.start_time) > new Date())
+          .slice(0, 3)
+          .map(e => e.title)
+          .join(', ');
+
+        if (upcomingEvents) {
+          text = `I'm here to help! Your upcoming events include: ${upcomingEvents}. What would you like to work on?`;
+        } else {
+          text = "I'm here to help organize your productivity! Try asking me to create a task, schedule an event, or track a goal.";
+        }
+      }
 
       // Sometimes the model outputs JSON text anyway if it's confused, let's try to parse just in case
       let toonOps: ToonOperation[] = [];
@@ -492,12 +506,21 @@ CONTEXT: ${JSON.stringify(contextSnapshot)}`;
 
     throw new Error("Max turns exceeded");
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Orchestrator failed:", error);
+    console.error("Error details:", error?.message, error?.stack);
+
+    // Provide a helpful message even on error
+    const errorMsg = error?.message?.includes('quota')
+      ? "API quota exceeded. Please wait a moment and try again."
+      : error?.message?.includes('network') || error?.message?.includes('fetch')
+        ? "Network error. Please check your connection."
+        : "I encountered a temporary issue. Please try again - I'm ready to help!";
+
     return {
       ops: [],
       assistant: {
-        message: "I encountered an error. Please try again.",
+        message: errorMsg,
         tone: "error",
         follow_up: []
       }
@@ -614,24 +637,33 @@ export const queryKnowledgeBase = async (query: string, entities: Entity[]): Pro
   const modelName = settings?.preferred_model || 'gemini-2.5-flash';
   const ai = getAiClient();
 
+  // Filter out hidden entities and prepare candidates from ALL kinds
   const candidates = entities
-    .filter(e => [EntityKind.NOTE, EntityKind.TOPIC, EntityKind.COURSE, EntityKind.PROJECT, EntityKind.CONTEXT].includes(e.kind))
+    .filter(e => !e.metadata?.hidden) // Exclude hidden items
     .map(e => ({
+      id: e.id,
       title: e.title,
+      kind: e.kind,
       content: e.description || '',
       tags: e.canonical_tags?.join(', ') || '',
       score: calculateRelevance(e, query)
     }))
-    .filter(c => c.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, 15);
+    .slice(0, 20); // Get top 20
 
-  if (candidates.length === 0) {
-    return "I couldn't find any relevant notes in your knowledge base to answer that.";
+  // If no items have any relevance, try simple title match
+  const hasRelevant = candidates.some(c => c.score > 0);
+  const finalCandidates = hasRelevant
+    ? candidates.filter(c => c.score > 0).slice(0, 15)
+    : candidates.filter(c => c.title.toLowerCase().includes(query.toLowerCase())).slice(0, 10);
+
+  if (finalCandidates.length === 0) {
+    return "I couldn't find any relevant items in your knowledge base for that query.";
   }
 
-  const contextText = candidates.map(c => `
+  const contextText = finalCandidates.map(c => `
     Title: ${c.title}
+    Kind: ${c.kind}
     Tags: ${c.tags}
     Content: ${c.content}
     ---

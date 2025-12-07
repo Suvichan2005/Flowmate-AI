@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { EntityKind, EntityStatus, Entity } from '../types';
 import { queryKnowledgeBase } from '../services/geminiService';
-import { Library, Search, Plus, Hash, Sparkles, X, ArrowRight, Loader2, Tag, Layers, Filter, FileText, BookOpen, Folder, Target, Calendar, CheckSquare } from 'lucide-react';
+import { Library, Search, Plus, Hash, Sparkles, X, ArrowRight, Loader2, Tag, Layers, Filter, FileText, BookOpen, Folder, Target, Calendar, CheckSquare, Square, Eye, EyeOff } from 'lucide-react';
 import MarkdownText from './MarkdownText';
 
 type FilterKind = 'all' | EntityKind.NOTE | EntityKind.TOPIC | EntityKind.COURSE | EntityKind.CONTEXT | EntityKind.TASK | EntityKind.PROJECT | EntityKind.GOAL | EntityKind.EVENT;
@@ -17,6 +17,7 @@ const KnowledgeView: React.FC = () => {
     const [aiAnswer, setAiAnswer] = useState<string | null>(null);
     const [askQuery, setAskQuery] = useState('');
     const [kindFilter, setKindFilter] = useState<FilterKind>('all');
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
     // Get tags and contexts from universal store
     const allTags = useMemo(() => {
@@ -108,6 +109,68 @@ const KnowledgeView: React.FC = () => {
         setKindFilter('all');
     };
 
+    // Multi-select handlers
+    const toggleSelect = (id: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        const next = new Set(selectedIds);
+        if (next.has(id)) {
+            next.delete(id);
+        } else {
+            next.add(id);
+        }
+        setSelectedIds(next);
+    };
+
+    const selectAll = () => {
+        setSelectedIds(new Set(filteredItems.map(e => e.id)));
+    };
+
+    const deselectAll = () => {
+        setSelectedIds(new Set());
+    };
+
+    const bulkHide = () => {
+        if (selectedIds.size === 0) return;
+        const ops = Array.from(selectedIds).map(id => {
+            const entity = entities.find(e => e.id === id);
+            return {
+                type: 'update_entity' as const,
+                payload: {
+                    id,
+                    fields: {
+                        metadata: {
+                            ...entity?.metadata,
+                            hidden: true
+                        }
+                    }
+                }
+            };
+        });
+        applyOperations(ops);
+        setSelectedIds(new Set());
+    };
+
+    const bulkUnhide = () => {
+        if (selectedIds.size === 0) return;
+        const ops = Array.from(selectedIds).map(id => {
+            const entity = entities.find(e => e.id === id);
+            return {
+                type: 'update_entity' as const,
+                payload: {
+                    id,
+                    fields: {
+                        metadata: {
+                            ...entity?.metadata,
+                            hidden: false
+                        }
+                    }
+                }
+            };
+        });
+        applyOperations(ops);
+        setSelectedIds(new Set());
+    };
+
     const hasActiveFilters = searchQuery || selectedTag || selectedContext || kindFilter !== 'all';
 
     // Kind filter options
@@ -164,6 +227,38 @@ const KnowledgeView: React.FC = () => {
                         </button>
                     </div>
                 </div>
+
+                {/* Multi-Select Action Bar */}
+                {filteredItems.length > 0 && (
+                    <div className="flex items-center gap-2 p-2 bg-slate-900 rounded-lg border border-slate-800">
+                        <button
+                            onClick={selectedIds.size === filteredItems.length ? deselectAll : selectAll}
+                            className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors flex items-center gap-1.5"
+                        >
+                            {selectedIds.size === filteredItems.length ? <Square size={14} /> : <CheckSquare size={14} />}
+                            {selectedIds.size === filteredItems.length ? 'Deselect All' : 'Select All'}
+                        </button>
+
+                        {selectedIds.size > 0 && (
+                            <>
+                                <span className="text-xs text-slate-500">{selectedIds.size} selected</span>
+                                <div className="flex-1" />
+                                <button
+                                    onClick={bulkHide}
+                                    className="px-3 py-1.5 text-xs font-medium text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-lg transition-colors flex items-center gap-1.5"
+                                >
+                                    <EyeOff size={14} /> Hide from AI
+                                </button>
+                                <button
+                                    onClick={bulkUnhide}
+                                    className="px-3 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors flex items-center gap-1.5"
+                                >
+                                    <Eye size={14} /> Unhide
+                                </button>
+                            </>
+                        )}
+                    </div>
+                )}
 
                 {/* AI Search */}
                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-1">
@@ -274,13 +369,29 @@ const KnowledgeView: React.FC = () => {
                             <div
                                 key={item.id}
                                 onClick={() => selectEntity(item.id)}
-                                className="group bg-slate-900 border border-slate-800 hover:border-emerald-500/30 rounded-xl p-4 cursor-pointer transition-all hover:bg-slate-800/50 flex flex-col h-44 relative overflow-hidden"
+                                className={`group bg-slate-900 border rounded-xl p-4 cursor-pointer transition-all hover:bg-slate-800/50 flex flex-col h-44 relative overflow-hidden ${selectedIds.has(item.id)
+                                        ? 'border-indigo-500 ring-1 ring-indigo-500/50'
+                                        : 'border-slate-800 hover:border-emerald-500/30'
+                                    }`}
                             >
                                 <div className="flex justify-between items-start mb-2">
+                                    {/* Selection checkbox */}
+                                    <button
+                                        onClick={(e) => toggleSelect(item.id, e)}
+                                        className={`p-0.5 rounded transition-colors ${selectedIds.has(item.id)
+                                                ? 'text-indigo-400'
+                                                : 'text-slate-600 hover:text-slate-400'
+                                            }`}
+                                    >
+                                        {selectedIds.has(item.id) ? <CheckSquare size={14} /> : <Square size={14} />}
+                                    </button>
                                     <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${getKindColor(item.kind)}`}>
                                         {item.kind}
                                     </span>
-                                    {item.priority > 1 && <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />}
+                                    <div className="flex items-center gap-1">
+                                        {item.metadata?.hidden && <EyeOff size={12} className="text-amber-400" title="Hidden from AI" />}
+                                        {item.priority > 1 && <div className="w-1.5 h-1.5 rounded-full bg-orange-500" />}
+                                    </div>
                                 </div>
 
                                 <h3 className="font-semibold text-slate-200 mb-1 truncate group-hover:text-emerald-400 transition-colors text-sm">
