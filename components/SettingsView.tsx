@@ -282,7 +282,12 @@ const SettingsView: React.FC = () => {
                     // Group by title + start time
                     const groups: Record<string, any[]> = {};
                     events.forEach((e: any) => {
-                      const key = `${e.summary || 'Untitled'}|${e.start?.dateTime || e.start?.date}`;
+                      let startVal = e.start?.dateTime || e.start?.date || '';
+                      // Normalize midnight ISO to date string to catch duplicates where one is All-Day and one is 00:00 timed
+                      if (startVal.includes('T00:00:00')) {
+                        startVal = startVal.split('T')[0];
+                      }
+                      const key = `${e.summary || 'Untitled'}|${startVal}`;
                       if (!groups[key]) groups[key] = [];
                       groups[key].push(e);
                     });

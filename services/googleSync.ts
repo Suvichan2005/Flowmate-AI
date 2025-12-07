@@ -1,13 +1,69 @@
 import { Entity, EntityKind, UserSettings } from "../types";
-import { getGoogleAccessToken } from "./firebase";
+import { getGoogleAccessToken, refreshGoogleCalendarToken, setGoogleAccessToken } from "./firebase";
+
+// Custom error class for authentication failures
+export class GoogleAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GoogleAuthError';
+  }
+}
+
+// Helper to make authenticated requests with auto-retry on 401
+const makeAuthenticatedRequest = async (
+  url: string,
+  options: RequestInit = {},
+  retried = false
+): Promise<Response> => {
+  let accessToken = getGoogleAccessToken();
+
+  if (!accessToken) {
+    // Try to refresh if no token
+    console.log('[GoogleSync] No token found, attempting refresh...');
+    accessToken = await refreshGoogleCalendarToken();
+    if (!accessToken) {
+      throw new GoogleAuthError('No access token available. Please sign in with Google.');
+    }
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      ...options.headers,
+      'Authorization': `Bearer ${accessToken}`,
+    },
+  });
+
+  // If 401 and we haven't retried yet, refresh token and retry
+  if (response.status === 401 && !retried) {
+    console.log('[GoogleSync] Got 401, attempting token refresh...');
+    const newToken = await refreshGoogleCalendarToken();
+
+    if (newToken) {
+      console.log('[GoogleSync] Token refreshed, retrying request...');
+      return makeAuthenticatedRequest(url, options, true);
+    } else {
+      // Clear the invalid token
+      setGoogleAccessToken(null);
+      throw new GoogleAuthError('Token refresh failed. Please re-authenticate with Google.');
+    }
+  }
+
+  if (response.status === 401) {
+    throw new GoogleAuthError('Authentication failed after retry. Please sign in again.');
+  }
+
+  return response;
+};
 
 const CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
 
 interface CalendarEvent {
   summary: string;
   description?: string;
-  start: { dateTime: string; timeZone: string };
-  end: { dateTime: string; timeZone: string };
+  start: { dateTime?: string; date?: string; timeZone?: string };
+  end: { dateTime?: string; date?: string; timeZone?: string };
+  recurrence?: string[];
 }
 
 interface SyncResult {
@@ -28,32 +84,59 @@ export const GoogleCalendarAdapter = {
    * Create an event in Google Calendar
    */
   createEvent: async (entity: Entity, settings: UserSettings): Promise<SyncResult> => {
-    const accessToken = getGoogleAccessToken();
-
-    if (!accessToken) {
-      return { success: false, error: 'Not connected to Google Calendar. Sign in with Google first.' };
-    }
-
     if (!settings.sync_enabled) {
       return { success: true }; // Sync disabled, skip
     }
 
     try {
-      const startTime = entity.start_time || new Date().toISOString();
-      const endTime = entity.end_time || new Date(new Date(startTime).getTime() + 60 * 60 * 1000).toISOString();
+      const isAllDay = entity.metadata?.is_all_day === true;
+      let start: { dateTime?: string; date?: string; timeZone?: string };
+      let end: { dateTime?: string; date?: string; timeZone?: string };
+
+      if (isAllDay && entity.start_time) {
+        // Handle All-Day Event
+        const startDate = new Date(entity.start_time);
+        const endDate = entity.end_time ? new Date(entity.end_time) : new Date(startDate);
+
+        // Ensure we advance end date by 1 day for Google's exclusive end date requirement
+        // If start and end are same day (common in UI), Google needs end = start + 1 day
+        const nextDay = new Date(endDate);
+        if (startDate.toDateString() === endDate.toDateString()) {
+          nextDay.setDate(nextDay.getDate() + 1);
+        }
+
+        start = { date: startDate.toISOString().split('T')[0] };
+        end = { date: nextDay.toISOString().split('T')[0] };
+      } else {
+        // Handle Timed Event
+        const startTime = entity.start_time || new Date().toISOString();
+        const endTime = entity.end_time || new Date(new Date(startTime).getTime() + 60 * 60 * 1000).toISOString();
+
+        start = {
+          dateTime: startTime,
+          timeZone: settings.timezone || 'Asia/Kolkata'
+        };
+        end = {
+          dateTime: endTime,
+          timeZone: settings.timezone || 'Asia/Kolkata'
+        };
+      }
 
       const event: CalendarEvent = {
         summary: entity.title,
         description: entity.description || `Created by Flowmate\n\nID: ${entity.id}`,
-        start: {
-          dateTime: startTime,
-          timeZone: settings.timezone || 'Asia/Kolkata'
-        },
-        end: {
-          dateTime: endTime,
-          timeZone: settings.timezone || 'Asia/Kolkata'
-        }
+        start,
+        end
       };
+
+      // Handle Recurrence
+      if (entity.metadata?.rrule) {
+        // Use existing RRULE if available (e.g. edited recurring event)
+        event.recurrence = [entity.metadata.rrule];
+      } else if (entity.recurrence) {
+        // Construct simple RRULE from Entity recurrence
+        event.recurrence = [`RRULE:FREQ=${entity.recurrence}`];
+      }
 
       // Add colorId if specified (Google Calendar uses 1-11)
       if (entity.metadata?.calendar_color) {
@@ -65,10 +148,9 @@ export const GoogleCalendarAdapter = {
         (event as any).location = entity.metadata.location;
       }
 
-      const response = await fetch(`${CALENDAR_API_BASE}/calendars/primary/events`, {
+      const response = await makeAuthenticatedRequest(`${CALENDAR_API_BASE}/calendars/primary/events`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(event)
@@ -86,6 +168,9 @@ export const GoogleCalendarAdapter = {
       return { success: true, externalId: data.id };
     } catch (error: any) {
       console.error('[GoogleSync] Error:', error);
+      if (error instanceof GoogleAuthError) {
+        return { success: false, error: error.message };
+      }
       return { success: false, error: error.message };
     }
   },
@@ -94,30 +179,60 @@ export const GoogleCalendarAdapter = {
    * Update an existing event in Google Calendar
    */
   updateEvent: async (entity: Entity, externalId: string, settings: UserSettings): Promise<SyncResult> => {
-    const accessToken = getGoogleAccessToken();
-
-    if (!accessToken || !settings.sync_enabled) {
+    if (!settings.sync_enabled) {
       return { success: true };
     }
 
     try {
+      const isAllDay = entity.metadata?.is_all_day === true;
+      let start: { dateTime?: string; date?: string; timeZone?: string };
+      let end: { dateTime?: string; date?: string; timeZone?: string };
+
+      if (isAllDay && entity.start_time) {
+        // Handle All-Day Event
+        const startDate = new Date(entity.start_time);
+        const endDate = entity.end_time ? new Date(entity.end_time) : new Date(startDate);
+
+        // Ensure we advance end date by 1 day for Google's exclusive end date requirement
+        const nextDay = new Date(endDate);
+        if (startDate.toDateString() === endDate.toDateString()) {
+          nextDay.setDate(nextDay.getDate() + 1);
+        }
+
+        start = { date: startDate.toISOString().split('T')[0] };
+        end = { date: nextDay.toISOString().split('T')[0] };
+      } else {
+        // Handle Timed Event
+        const startTime = entity.start_time || new Date().toISOString();
+        const endTime = entity.end_time || new Date(new Date(startTime).getTime() + 60 * 60 * 1000).toISOString();
+
+        start = {
+          dateTime: startTime,
+          timeZone: settings.timezone || 'Asia/Kolkata'
+        };
+        end = {
+          dateTime: endTime,
+          timeZone: settings.timezone || 'Asia/Kolkata'
+        };
+      }
+
       const event: CalendarEvent = {
         summary: entity.title,
         description: entity.description || '',
-        start: {
-          dateTime: entity.start_time || new Date().toISOString(),
-          timeZone: settings.timezone || 'Asia/Kolkata'
-        },
-        end: {
-          dateTime: entity.end_time || new Date().toISOString(),
-          timeZone: settings.timezone || 'Asia/Kolkata'
-        }
+        start,
+        end
       };
 
-      const response = await fetch(`${CALENDAR_API_BASE}/calendars/primary/events/${externalId}`, {
+      // Handle Recurrence updates
+      if (entity.metadata?.rrule) {
+        event.recurrence = [entity.metadata.rrule];
+      } else if (entity.recurrence) {
+        event.recurrence = [`RRULE:FREQ=${entity.recurrence}`];
+      }
+
+      const response = await makeAuthenticatedRequest(`${CALENDAR_API_BASE}/calendars/primary/events/${externalId}`, {
         method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(event)
@@ -129,6 +244,9 @@ export const GoogleCalendarAdapter = {
 
       return { success: true, externalId };
     } catch (error: any) {
+      if (error instanceof GoogleAuthError) {
+        return { success: false, error: error.message };
+      }
       return { success: false, error: error.message };
     }
   },
@@ -137,18 +255,9 @@ export const GoogleCalendarAdapter = {
    * Delete an event from Google Calendar
    */
   deleteEvent: async (externalId: string): Promise<SyncResult> => {
-    const accessToken = getGoogleAccessToken();
-
-    if (!accessToken) {
-      return { success: true }; // Can't delete if not connected
-    }
-
     try {
-      const response = await fetch(`${CALENDAR_API_BASE}/calendars/primary/events/${externalId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`
-        }
+      const response = await makeAuthenticatedRequest(`${CALENDAR_API_BASE}/calendars/primary/events/${externalId}`, {
+        method: 'DELETE'
       });
 
       if (!response.ok && response.status !== 404) {
@@ -158,20 +267,20 @@ export const GoogleCalendarAdapter = {
       console.log(`[GoogleSync] Deleted event: ${externalId}`);
       return { success: true };
     } catch (error: any) {
+      if (error instanceof GoogleAuthError) {
+        // For delete, we can consider auth errors as "success" since we can't delete anyway
+        console.warn('[GoogleSync] Auth error during delete, treating as success');
+        return { success: true };
+      }
       return { success: false, error: error.message };
     }
   },
 
   /**
    * Fetch events from Google Calendar (for import/two-way sync)
+   * Throws GoogleAuthError if authentication fails after retry
    */
   fetchEvents: async (timeMin: string, timeMax: string): Promise<any[]> => {
-    const accessToken = getGoogleAccessToken();
-
-    if (!accessToken) {
-      return [];
-    }
-
     try {
       const params = new URLSearchParams({
         timeMin,
@@ -180,24 +289,24 @@ export const GoogleCalendarAdapter = {
         maxResults: '250'
       });
 
-      const response = await fetch(`${CALENDAR_API_BASE}/calendars/primary/events?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`
-        }
-      });
+      const response = await makeAuthenticatedRequest(`${CALENDAR_API_BASE}/calendars/primary/events?${params}`);
 
       if (!response.ok) {
-        console.error('[GoogleSync] Fetch failed');
-        return [];
+        console.error('[GoogleSync] Fetch failed with status:', response.status);
+        throw new Error(`Fetch failed with status ${response.status}`);
       }
 
       const data = await response.json();
       console.log(`[GoogleSync] Fetched ${data.items?.length || 0} events`);
 
       return data.items || [];
-    } catch (error) {
+    } catch (error: any) {
       console.error('[GoogleSync] Fetch error:', error);
-      return [];
+      // Re-throw auth errors so caller can handle them
+      if (error instanceof GoogleAuthError) {
+        throw error;
+      }
+      throw new Error(error.message || 'Failed to fetch events');
     }
   },
 
