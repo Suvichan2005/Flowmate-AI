@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { EntityKind, EntityStatus, RecurrenceType } from '../types';
-import { X, Plus, Type, FileText, Calendar, Repeat } from 'lucide-react';
+import { X, Plus, Type, FileText, Calendar, Repeat, TrendingUp, TrendingDown } from 'lucide-react';
 
 interface CreateEntityModalProps {
     onClose: () => void;
-    initialDate?: string | null; // ISO Date string
+    initialDate?: string | null;
     initialKind?: EntityKind;
-    initialTime?: string; // HH:MM string
+    initialTime?: string;
 }
 
 const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialDate, initialKind, initialTime }) => {
@@ -31,24 +31,22 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
     const [isAllDay, setIsAllDay] = useState(false);
     const [recurrence, setRecurrence] = useState<RecurrenceType>(null);
 
-    // Toggle date format when switching modes
+    // Habit-specific fields
+    const [habitType, setHabitType] = useState<'GOOD' | 'BAD'>('GOOD');
+    const [frequencyGoal, setFrequencyGoal] = useState<'DAILY' | 'WEEKLY'>('DAILY');
+
     useEffect(() => {
         if (!date) return;
-
         if (isAllDay && date.includes('T')) {
-            // Strip time
             setDate(date.split('T')[0]);
         } else if (!isAllDay && !date.includes('T')) {
-            // Add default time (current time or 9AM)
             setDate(date + 'T09:00');
         }
     }, [isAllDay]);
 
-    // Reset if props change (though usually this component is mounted fresh)
     useEffect(() => {
         if (initialKind) setKind(initialKind);
         if (initialDate) {
-            // Adjust ISO string to local time for input
             const d = new Date(initialDate);
             d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
             let iso = d.toISOString().slice(0, 16);
@@ -74,22 +72,17 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
         if (date) {
             let isoDate;
             if (isAllDay) {
-                // For all-day, use local midnight
                 isoDate = new Date(date + 'T00:00:00').toISOString();
                 if (kind === EntityKind.EVENT) {
                     payload.metadata = { is_all_day: true };
                 }
             } else {
-                // datetime-local gives "YYYY-MM-DDTHH:mm"
                 isoDate = new Date(date).toISOString();
             }
 
             if (kind === EntityKind.EVENT) {
                 payload.start_time = isoDate;
                 if (isAllDay) {
-                    // Default 1 day duration for all-day events
-                    // End time same day implies 1 day duration in Flowmate logic usually, 
-                    // but for storage let's be explicit: end of day
                     const sd = new Date(isoDate);
                     sd.setHours(23, 59, 59, 999);
                     payload.end_time = sd.toISOString();
@@ -97,6 +90,18 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
             } else {
                 payload.deadline = isoDate;
             }
+        }
+
+        // Add habit metadata if HABIT kind
+        if (kind === EntityKind.HABIT) {
+            payload.metadata = {
+                ...payload.metadata,
+                habit_type: habitType,
+                frequency_goal: frequencyGoal,
+                total_completions: 0,
+                current_streak: 0,
+                best_streak: 0
+            };
         }
 
         applyOperations([{
@@ -138,8 +143,8 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
 
                     <div>
                         <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Type</label>
-                        <div className="grid grid-cols-3 gap-2">
-                            {Object.values(EntityKind).filter(k => [EntityKind.TASK, EntityKind.PROJECT, EntityKind.GOAL, EntityKind.EVENT, EntityKind.NOTE, EntityKind.CONTEXT].includes(k)).map(k => (
+                        <div className="grid grid-cols-4 gap-2">
+                            {[EntityKind.TASK, EntityKind.PROJECT, EntityKind.GOAL, EntityKind.EVENT, EntityKind.NOTE, EntityKind.CONTEXT, EntityKind.HABIT].map(k => (
                                 <button
                                     key={k}
                                     type="button"
@@ -155,73 +160,128 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="grid grid-cols-2 gap-4">
+                    {/* Habit-specific settings */}
+                    {kind === EntityKind.HABIT && (
+                        <div className="grid grid-cols-2 gap-4 p-3 bg-slate-800/50 rounded-lg border border-slate-700">
                             <div>
-                                <div className="flex justify-between items-center mb-1">
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase">Date (Optional)</label>
-                                    {kind === EntityKind.EVENT && (
-                                        <label className="flex items-center gap-1 cursor-pointer">
-                                            <input
-                                                type="checkbox"
-                                                checked={isAllDay}
-                                                onChange={(e) => setIsAllDay(e.target.checked)}
-                                                className="w-3 h-3 rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-0"
-                                            />
-                                            <span className="text-[10px] text-slate-400">All Day</span>
-                                        </label>
-                                    )}
-                                </div>
-                                <div className="relative">
-                                    <Calendar className="absolute left-3 top-2.5 text-slate-600 w-4 h-4" />
-                                    <input
-                                        type={isAllDay ? "date" : "datetime-local"}
-                                        value={date}
-                                        onChange={(e) => setDate(e.target.value)}
-                                        className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-2 focus:ring-2 focus:ring-indigo-500/50 outline-none"
-                                    />
+                                <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Habit Type</label>
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setHabitType('GOOD')}
+                                        className={`flex-1 flex items-center justify-center gap-1 py-2 rounded border transition-colors text-xs ${habitType === 'GOOD'
+                                                ? 'bg-emerald-600 border-emerald-500 text-white'
+                                                : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+                                            }`}
+                                    >
+                                        <TrendingUp size={12} />
+                                        Good
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setHabitType('BAD')}
+                                        className={`flex-1 flex items-center justify-center gap-1 py-2 rounded border transition-colors text-xs ${habitType === 'BAD'
+                                                ? 'bg-red-600 border-red-500 text-white'
+                                                : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+                                            }`}
+                                    >
+                                        <TrendingDown size={12} />
+                                        Bad
+                                    </button>
                                 </div>
                             </div>
                             <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Recurrence</label>
-                                <div className="relative">
-                                    <Repeat className="absolute left-3 top-2.5 text-slate-600 w-4 h-4" />
-                                    <select
-                                        value={recurrence || ''}
-                                        onChange={(e) => setRecurrence(e.target.value ? e.target.value as RecurrenceType : null)}
-                                        className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-2 focus:ring-2 focus:ring-indigo-500/50 outline-none appearance-none"
+                                <label className="block text-xs font-semibold text-slate-500 uppercase mb-2">Frequency</label>
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setFrequencyGoal('DAILY')}
+                                        className={`flex-1 py-2 rounded border transition-colors text-xs ${frequencyGoal === 'DAILY'
+                                                ? 'bg-indigo-600 border-indigo-500 text-white'
+                                                : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+                                            }`}
                                     >
-                                        <option value="">None</option>
-                                        <option value="DAILY">Daily</option>
-                                        <option value="WEEKLY">Weekly</option>
-                                        <option value="MONTHLY">Monthly</option>
-                                        <option value="YEARLY">Yearly</option>
-                                    </select>
+                                        Daily
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFrequencyGoal('WEEKLY')}
+                                        className={`flex-1 py-2 rounded border transition-colors text-xs ${frequencyGoal === 'WEEKLY'
+                                                ? 'bg-indigo-600 border-indigo-500 text-white'
+                                                : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
+                                            }`}
+                                    >
+                                        Weekly
+                                    </button>
                                 </div>
                             </div>
                         </div>
+                    )}
 
+                    <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Description</label>
+                            <div className="flex justify-between items-center mb-1">
+                                <label className="block text-xs font-semibold text-slate-500 uppercase">Date</label>
+                                {kind === EntityKind.EVENT && (
+                                    <label className="flex items-center gap-1 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={isAllDay}
+                                            onChange={(e) => setIsAllDay(e.target.checked)}
+                                            className="w-3 h-3 rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-0"
+                                        />
+                                        <span className="text-[10px] text-slate-400">All Day</span>
+                                    </label>
+                                )}
+                            </div>
                             <div className="relative">
-                                <FileText className="absolute left-3 top-3 text-slate-600 w-4 h-4" />
-                                <textarea
-                                    value={description}
-                                    onChange={(e) => setDescription(e.target.value)}
-                                    placeholder="Optional details..."
-                                    className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-4 min-h-[100px] focus:ring-2 focus:ring-indigo-500/50 outline-none resize-none"
+                                <Calendar className="absolute left-3 top-2.5 text-slate-600 w-4 h-4" />
+                                <input
+                                    type={isAllDay ? "date" : "datetime-local"}
+                                    value={date}
+                                    onChange={(e) => setDate(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-2 focus:ring-2 focus:ring-indigo-500/50 outline-none text-xs"
                                 />
                             </div>
                         </div>
-
-                        <button
-                            type="submit"
-                            disabled={!title.trim()}
-                            className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
-                        >
-                            Create Entity
-                        </button>
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Recurrence</label>
+                            <div className="relative">
+                                <Repeat className="absolute left-3 top-2.5 text-slate-600 w-4 h-4" />
+                                <select
+                                    value={recurrence || ''}
+                                    onChange={(e) => setRecurrence(e.target.value ? e.target.value as RecurrenceType : null)}
+                                    className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-2 focus:ring-2 focus:ring-indigo-500/50 outline-none appearance-none text-xs"
+                                >
+                                    <option value="">None</option>
+                                    <option value="DAILY">Daily</option>
+                                    <option value="WEEKLY">Weekly</option>
+                                    <option value="MONTHLY">Monthly</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
+
+                    <div>
+                        <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Description</label>
+                        <div className="relative">
+                            <FileText className="absolute left-3 top-3 text-slate-600 w-4 h-4" />
+                            <textarea
+                                value={description}
+                                onChange={(e) => setDescription(e.target.value)}
+                                placeholder="Optional details..."
+                                className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-4 min-h-[80px] focus:ring-2 focus:ring-indigo-500/50 outline-none resize-none"
+                            />
+                        </div>
+                    </div>
+
+                    <button
+                        type="submit"
+                        disabled={!title.trim()}
+                        className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+                    >
+                        Create {kind}
+                    </button>
                 </form>
             </div>
         </div>

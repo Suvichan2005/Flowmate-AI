@@ -74,6 +74,8 @@ export const unsubscribeFromUserData = () => {
 // --- Read Operations ---
 
 export const loadUserData = async (userId: string): Promise<UserData | null> => {
+    console.log('[FirestoreSync] loadUserData called with userId:', userId);
+
     if (!isFirebaseConfigured()) {
         console.warn('[FirestoreSync] Firebase not configured, skipping load');
         return null;
@@ -81,10 +83,16 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
 
     try {
         const userDocRef = doc(db, USERS_COLLECTION, userId);
+        console.log('[FirestoreSync] Reading document path:', `${USERS_COLLECTION}/${userId}`);
+
         const userDoc = await getDoc(userDocRef);
+        console.log('[FirestoreSync] Document exists?', userDoc.exists());
 
         if (userDoc.exists()) {
             const data = userDoc.data();
+            console.log('[FirestoreSync] Document data keys:', Object.keys(data));
+            console.log('[FirestoreSync] Entities count:', data.entities?.length || 0);
+
             return {
                 entities: data.entities || [],
                 relationships: data.relationships || [],
@@ -93,6 +101,7 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
             };
         }
 
+        console.log('[FirestoreSync] Document does not exist at path:', `${USERS_COLLECTION}/${userId}`);
         return null;
     } catch (error) {
         console.error('[FirestoreSync] Load failed:', error);

@@ -1,331 +1,65 @@
 # Architecture Analysis
 
-This document explains the **system design**, **data flow patterns**, and **architectural decisions** in Flowmate.
+This document details the system design, data flow, and technical decisions.
 
----
-
-## 1. High-Level Architecture
+## System Architecture
 
 ```mermaid
-graph TB
-    subgraph Client["Browser (SPA)"]
-        UI[React Components]
-        Store[Zustand Store]
-        Services[AI Services]
-    end
+graph TD
+    User[User] -->|Interacts| UI[React UI Components]
+    UI -->|Reads| Store[Zustand Store]
+    UI -->|Dispatches Actions| Store
     
-    subgraph External["External APIs"]
-        Gemini[Google Gemini API]
-        GCal[Google Calendar API]
-    end
-    
-    subgraph Persistence["Storage"]
-        LS[(LocalStorage)]
-    end
-    
-    UI <--> Store
-    UI --> Services
-    Services --> Gemini
-    Store --> LS
-    Store <-.-> GCal
+    Subgraph Logic
+        Store -->|Persists| LocalStorage[Browser Storage]
+        Store -->|Syncs| Firebase[Firebase Firestore]
+        Store -->|Orchestrates| Gemini[Gemini 2.0 Flash]
+        Store -->|Syncs| GCal[Google Calendar API]
+    End
 ```
 
-**Architecture Style**: Client-only SPA with AI-as-Backend
+## State Management (Single Source of Truth)
+The application uses **Zustand** as the central store.
+*   **Store File**: `store.ts`
+*   **State Structure**:
+    *   `entities[]`: Flat list of all nodes.
+    *   `relationships[]`: Flat list of all edges.
+    *   `messages[]`: Chat history (now field-partitioned by `channelId`).
+    *   `settings`: User preferences.
 
----
+## Data Flow: The "Toon" Loop
+1.  **Trigger**: User sends a message.
+2.  **Context Assembly**: The system gathers relevant Entities (Simple RAG) + Recent Chat History.
+3.  **LLM Call**: The `geminiService` sends this context to Google Gemini with a specialized System Prompt defining the "Toon" tools.
+4.  **Structured Output**: Gemini returns a JSON object containing `ops` (operations) and `assistant` (text).
+5.  **Application**: `store.applyOperations(ops)` runs. This function contains the business logic (CRUD, linking, validation).
+6.  **Reactivity**: React components subscribe to Store changes and re-render the Graph/List/Dashboard.
 
-## 2. Core Design Patterns
+## External Integrations
 
-### 2.1 Flux-like Unidirectional Data Flow
+### Gemini (AI)
+*   Access via `@google/genai` SDK.
+*   Uses `gemini-2.0-flash-exp` (or configured model).
+*   Tools are defined not as function calls (to avoid roundtrips) but as a structured JSON schema the model must adhere to.
 
-```
-User Action → Orchestrator → TOON Operations → Store → UI Update
-```
+### Firebase (Cloud)
+*   **Auth**: Google Sign-In / Email Password.
+*   **Firestore**: Document database.
+    *   Collection `users/{uid}/data/main` stores the massive JSON blob of the user graph.
+    *   *Note*: Currently uses a "Snapshot Sync" (save/load entire state). Granular sync is in the roadmap.
 
-- **No direct mutations**: All state changes via operations
-- **Single source of truth**: Zustand store
-- **Preview before commit**: Users confirm AI-generated operations
+### Google Calendar
+*   Direct API usage via Google Identity Services (Client-side token).
+*   Maps `EntityKind.EVENT` to GCal Events.
+*   Stores `metadata.gcal_id` to maintain link.
 
-### 2.2 Command Pattern (TOON Operations)
+## View Architecture
 
-Operations are serializable command objects:
+The central `App.tsx` switches `currentView` to render the main content area:
+*   `dashboard`: `Dashboard.tsx`
+*   `chat_graph`: `GraphView.tsx` (with overlay chat)
+*   `schedules`: `SchedulesView.tsx`
+*   `calendar`: `CalendarView.tsx`
+*   ...and others.
 
-```typescript
-interface ToonOperation {
-  type: ToonOperationType;  // The command
-  payload: Record<string, any>;  // Parameters
-}
-```
-
-This enables:
-- Undo/redo via operation replay
-- Sync queue for external services
-- Debug logging of all mutations
-
-### 2.3 Observer Pattern (React + Zustand)
-
-Components subscribe to store slices:
-
-```typescript
-const { entities, selectEntity } = useStore(state => ({
-  entities: state.entities,
-  selectEntity: state.selectEntity
-}));
-```
-
----
-
-## 3. State Management Architecture
-
-### 3.1 Store Structure
-
-```typescript
-interface FlowmateState {
-  // Domain Data
-  entities: Entity[];
-  relationships: Relationship[];
-  messages: Message[];
-  
-  // Pending State
-  pendingOps: { ops: ToonOperation[], messageId: string } | null;
-  syncQueue: SyncQueueItem[];
-  
-  // UI State
-  currentView: ViewType;
-  selectedEntityId: string | null;
-  isZenMode: boolean;
-  toasts: Toast[];
-  showConfetti: boolean;
-  
-  // User Data
-  settings: UserSettings;
-  focusSession: FocusSession | null;
-  dailyBriefing: DailyBriefing | null;
-  
-  // History
-  history: HistorySnapshot[];
-  historyPointer: number;
-  
-  // Derivation
-  debugLogs: DebugLogEntry[];
-}
-```
-
-### 3.2 Action Categories
-
-| Category | Actions |
-|----------|---------|
-| **CRUD** | `applyOperations`, `selectEntity` |
-| **Navigation** | `setView`, `toggleZenMode` |
-| **Settings** | `updateSettings`, `importData` |
-| **AI Features** | `refreshDailyBriefing`, `startFocusSession` |
-| **History** | `undo`, `redo` |
-| **UI Feedback** | `addToast`, `triggerConfetti` |
-| **Debug** | `addDebugLog`, `clearDebugLogs` |
-
-### 3.3 Persistence Middleware
-
-```typescript
-persist(storeConfig, {
-  name: 'flowmate-storage',
-  version: 11,
-  storage: createJSONStorage(() => localStorage),
-  migrate: (state, version) => { ... },
-  onRehydrateStorage: () => (state) => state?.setHydrated(true)
-})
-```
-
----
-
-## 4. AI Integration Architecture
-
-### 4.1 Orchestrator Pattern
-
-The `geminiService.ts` acts as the central AI coordinator:
-
-```mermaid
-sequenceDiagram
-    participant UI as Chat UI
-    participant Orch as Orchestrator
-    participant AI as Gemini API
-    participant Store
-    
-    UI->>Orch: orchestrateMessage(text, snapshot)
-    Orch->>Orch: Build context (recent + relevant entities)
-    Orch->>Orch: Add temporal context
-    Orch->>AI: generateContent(prompt, systemInstruction)
-    AI-->>Orch: JSON Response
-    Orch->>Orch: Parse ToonResponse
-    Orch-->>UI: { ops, assistant }
-    UI->>Store: applyOperations(ops)
-```
-
-### 4.2 Context Window Management
-
-To avoid token limits, context is pruned:
-
-```typescript
-const recentLimit = 8;    // Most recently updated
-const relevantLimit = 6;  // Highest relevance score
-
-// Relevance scoring
-function calculateRelevance(entity, userMessage): number {
-  // +5 for title match
-  // +3 for tag match
-  // +2 for recent updates
-  // +1 for description/kind match
-}
-```
-
-### 4.3 System Prompt Engineering
-
-Key system instruction components:
-
-1. **Role Definition**: "You are Flowmate Orchestrator v1"
-2. **Schema Definitions**: All TOON operation payloads
-3. **Hallucination Prevention**: "Do NOT invent operations when unsure"
-4. **Output Format**: "Return ONLY valid JSON"
-5. **Custom Instructions**: User-provided persona
-
----
-
-## 5. Component Architecture
-
-### 5.1 Layout Hierarchy
-
-```
-App.tsx (root layout)
-├── Sidebar (navigation)
-├── Main Content Area
-│   ├── Chat Panel (collapsible)
-│   └── View Content (switched by currentView)
-│       ├── Dashboard
-│       ├── GraphView
-│       ├── EntityList
-│       ├── CalendarView
-│       ├── KnowledgeView
-│       └── SettingsView
-└── Overlays (z-index layers)
-    ├── EntityDetailPanel (z-40)
-    ├── PreviewModal (z-50)
-    ├── CreateEntityModal (z-50)
-    ├── LiveVoiceModal (z-50)
-    ├── CommandPalette (z-50)
-    ├── FocusTimer (z-60)
-    ├── ToastNotification (z-50)
-    ├── DebugConsole (z-60)
-    └── Confetti (z-40)
-```
-
-### 5.2 Component Communication
-
-```mermaid
-graph LR
-    Store((Zustand Store))
-    
-    App --> Store
-    Sidebar --> Store
-    Dashboard --> Store
-    GraphView --> Store
-    EntityDetailPanel --> Store
-    
-    Dashboard -->|refreshDailyBriefing| geminiService
-    GraphView -->|selectEntity| Store
-    EntityDetailPanel -->|applyOperations| Store
-```
-
----
-
-## 6. Data Flow Patterns
-
-### 6.1 Operation Application Flow
-
-```typescript
-applyOperations(ops) {
-  // 1. Save history snapshot
-  history.push({ entities, relationships, timestamp });
-  
-  // 2. Process each operation
-  ops.forEach(op => {
-    switch(op.type) {
-      case 'create_entity': /* add to entities */
-      case 'update_entity': /* modify entity */
-      case 'delete_entity': /* remove + cascade */
-      case 'link_entities': /* add relationship */
-      // ...
-    }
-  });
-  
-  // 3. Handle side effects
-  if (hasRecurrence && wasCompleted) {
-    sideEffectOps.push(/* create next instance */);
-  }
-  
-  // 4. Queue for sync
-  syncQueue.push(...newSyncItems);
-  
-  // 5. Trigger UI feedback
-  triggerConfetti();
-  addToast("Applied X operations", "success");
-}
-```
-
-### 6.2 Recurrence Handling
-
-When a recurring entity is completed:
-
-```mermaid
-flowchart TD
-    A[Entity Completed] --> B{Has Recurrence?}
-    B -->|No| C[Done]
-    B -->|Yes| D[Calculate Next Date]
-    D --> E[Create Clone Entity]
-    E --> F[New Entity is ACTIVE]
-```
-
----
-
-## 7. Security Considerations
-
-| Concern | Current State |
-|---------|---------------|
-| API Key | Stored in `.env.local`, loaded via `process.env` |
-| Data Storage | LocalStorage (not encrypted) |
-| XSS Prevention | React's default escaping |
-| External Sync | Simulated only (no real credentials) |
-
-> **Production Recommendation**: API key should be proxied through a backend to avoid client exposure.
-
----
-
-## 8. Performance Optimizations
-
-| Technique | Location |
-|-----------|----------|
-| **Memoization** | `useMemo` in list components |
-| **Context Pruning** | `geminiService.ts` limits entity count |
-| **Lazy Rendering** | Graph nodes virtualized via D3 |
-| **Debounced Saves** | Zustand persist handles batching |
-| **Image Compression** | `imageProcessing.ts` resizes to 1024px |
-
----
-
-## 9. Extensibility Points
-
-| Extension | Approach |
-|-----------|----------|
-| New Entity Kinds | Add to `EntityKind` enum + update `normalizePayload` |
-| New Relationship Types | Add to `RelationshipType` enum |
-| New Operations | Add to `ToonOperationType` + handle in `applyOperations` |
-| New Views | Add to `ViewType` + create component + update `renderMainContent` |
-| New AI Features | Extend `geminiService.ts` with new functions |
-
----
-
-## 10. Known Limitations
-
-1. **No Server**: All data in LocalStorage, no multi-device sync
-2. **No Auth**: Single-user, no login required
-3. **Simulated Sync**: Google Calendar not actually connected
-4. **Token Limits**: Large graphs may exceed context window
-5. **Offline**: Requires network for AI features
+Sidebar and Chat Overlay (Orchestrator) are global persistent elements.

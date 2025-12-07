@@ -22,7 +22,7 @@ const SchedulesView: React.FC = () => {
 
     return (
         <div className="flex flex-col h-full bg-slate-950 text-slate-100 p-6 overflow-y-auto">
-            <header className="flex items-center justify-between mb-8">
+            <header className="flex items-center justify-between mb-8 pl-14">
                 <div>
                     <h1 className="text-2xl font-bold flex items-center gap-2">
                         <CalendarClock className="text-indigo-400" />

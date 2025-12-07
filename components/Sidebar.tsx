@@ -5,8 +5,6 @@ import {
   LayoutDashboard,
   MessageSquare,
   Calendar,
-  Target,
-  BookOpen,
   Settings,
   Sparkles,
   PlusCircle,
@@ -42,12 +40,12 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
   const showLabels = forceExpanded || !isZenMode;
   const isCompact = !forceExpanded && isZenMode;
 
+  // Streamlined nav: Dashboard, Analytics (has Habits), Chat+Graph, Library (has Goals/Projects), Calendar
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', view: 'dashboard' as ViewType },
     { icon: TrendingUp, label: 'Analytics', view: 'analytics' as ViewType },
     { icon: MessageSquare, label: 'Graph', view: 'chat_graph' as ViewType },
-    { icon: Target, label: 'Goals & Projects', view: 'goals' as ViewType },
-    { icon: Library, label: 'Knowledge', view: 'knowledge' as ViewType },
+    { icon: Library, label: 'Library', view: 'knowledge' as ViewType },
     { icon: Calendar, label: 'Calendar', view: 'calendar' as ViewType },
   ];
 

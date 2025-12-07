@@ -25,6 +25,7 @@ import Confetti from './components/Confetti';
 import AuthModal from './components/AuthModal';
 import AnalyticsView from './components/AnalyticsView';
 import UnifiedChatInput from './components/UnifiedChatInput';
+import GraphFixingModal from './components/GraphFixingModal';
 import { EntityKind, ToonOperation } from './types';
 
 const App: React.FC = () => {
@@ -52,6 +53,7 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showGraphFixingModal, setShowGraphFixingModal] = useState(false);
   const [selectedAttachment, setSelectedAttachment] = useState<string | null>(null);
   const [attachmentType, setAttachmentType] = useState<'image' | 'audio' | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(true);
@@ -669,22 +671,20 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* Chat Toggle Column */}
-          {!isChatOpen && !isZenMode && (
-            <div className="w-10 shrink-0 h-full flex flex-col items-center pt-4 bg-slate-950">
-              <button
-                onClick={() => setIsChatOpen(true)}
-                className="p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-indigo-400 hover:bg-slate-700 transition-all"
-                title="Open Chat (Cmd+B)"
-              >
-                <PanelLeftOpen size={16} />
-              </button>
-            </div>
-          )}
-
           {/* Desktop Main Content */}
           <div className="flex-1 overflow-auto relative">
             {renderMainContent()}
+
+            {/* Floating Chat Toggle Button - positioned inside content area */}
+            {!isChatOpen && !isZenMode && (
+              <button
+                onClick={() => setIsChatOpen(true)}
+                className="absolute left-4 top-4 z-20 p-2.5 rounded-xl bg-slate-800/90 backdrop-blur-sm text-slate-400 hover:text-indigo-400 hover:bg-slate-700 transition-all shadow-lg border border-slate-700"
+                title="Open Chat (Cmd+B)"
+              >
+                <PanelLeftOpen size={18} />
+              </button>
+            )}
           </div>
         </main>
       )}
@@ -791,6 +791,10 @@ const App: React.FC = () => {
         <CreateEntityModal onClose={() => setShowCreateModal(false)} />
       )}
 
+      {showGraphFixingModal && (
+        <GraphFixingModal onClose={() => setShowGraphFixingModal(false)} />
+      )}
+
       {isLiveMode && (
         <LiveVoiceModal onClose={() => setIsLiveMode(false)} />
       )}
@@ -804,7 +808,7 @@ const App: React.FC = () => {
 
       <CommandPalette />
       <FocusTimer />
-      <DebugConsole />
+      <DebugConsole onOpenGraphFixer={() => setShowGraphFixingModal(true)} />
       <ToastNotification />
     </div>
   );
