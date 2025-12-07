@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import { EntityKind, EntityStatus, Entity, RecurrenceType } from '../types';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, CheckSquare, Clock, Plus, Grid3X3, List, CalendarDays, LayoutGrid, Repeat, RefreshCw, Cloud } from 'lucide-react';
 import CreateEntityModal from './CreateEntityModal';
-import { GoogleCalendarAdapter } from '../services/googleSync';
+import { GoogleCalendarAdapter, GoogleAuthError } from '../services/googleSync';
 import { refreshGoogleCalendarToken } from '../services/firebase';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -212,10 +212,13 @@ const CalendarView: React.FC = () => {
             }
         } catch (error: any) {
             console.error('[CalendarView] Sync error:', error);
-            if (error.message?.includes('401') || error.message?.includes('unauthorized')) {
-                addToast('Token expired, please try again', 'info');
+            if (error instanceof GoogleAuthError) {
+                // Auth error - prompt user to re-authenticate
+                addToast('Session expired. Click sync again to re-authenticate with Google.', 'info');
+            } else if (error.message?.includes('401') || error.message?.includes('unauthorized') || error.message?.includes('Unauthorized')) {
+                addToast('Authentication failed. Please sign in with Google again.', 'error');
             } else {
-                addToast('Failed to sync with Google Calendar', 'error');
+                addToast(`Sync failed: ${error.message || 'Unknown error'}`, 'error');
             }
         } finally {
             setIsSyncing(false);
