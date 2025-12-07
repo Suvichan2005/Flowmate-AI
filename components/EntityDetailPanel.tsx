@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { v4 as uuidv4 } from 'uuid';
-import { X, Calendar, Clock, Tag, Link2, AlertCircle, Trash2, Edit3, Save, RotateCcw, Plus, CheckSquare, Square, ChevronRight, ArrowUpRight, Sparkles, Timer, Repeat, Wand2, Shield, ShieldAlert, CornerRightDown, CornerRightUp, Lightbulb, TrendingUp } from 'lucide-react';
+import { X, Calendar, Clock, Tag, Link2, AlertCircle, Trash2, Edit3, Save, RotateCcw, Plus, CheckSquare, Square, ChevronRight, ArrowUpRight, Sparkles, Timer, Repeat, Wand2, Shield, ShieldAlert, CornerRightDown, CornerRightUp, Lightbulb, TrendingUp, Eye, EyeOff } from 'lucide-react';
 import { EntityKind, EntityStatus, RelationshipType, RecurrenceType, ToonOperation } from '../types';
 import SmartEditor from './SmartEditor';
 import MarkdownText from './MarkdownText';
@@ -440,6 +440,48 @@ const EntityDetailPanel: React.FC = () => {
                                 <span className="text-sm font-medium text-slate-200">{entity.priority}</span>
                             )}
                         </div>
+                    </div>
+
+                    {/* Hide from AI Toggle */}
+                    <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-800">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <span className="text-xs text-slate-500 uppercase tracking-wider block mb-0.5">AI Context</span>
+                                <span className="text-sm text-slate-300">
+                                    {entity.metadata?.hidden ? 'Hidden from AI' : 'Visible to AI'}
+                                </span>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    applyOperations([{
+                                        type: 'update_entity',
+                                        payload: {
+                                            id: entity.id,
+                                            fields: {
+                                                metadata: {
+                                                    ...entity.metadata,
+                                                    hidden: !entity.metadata?.hidden
+                                                }
+                                            }
+                                        }
+                                    }]);
+                                }}
+                                className={`px-3 py-1.5 rounded-lg flex items-center gap-2 text-xs font-medium transition-colors ${entity.metadata?.hidden
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30'
+                                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                    }`}
+                                title={entity.metadata?.hidden ? 'Show to AI (include in context)' : 'Hide from AI (exclude from context)'}
+                            >
+                                {entity.metadata?.hidden ? (
+                                    <><EyeOff size={14} /> Hidden</>
+                                ) : (
+                                    <><Eye size={14} /> Visible</>
+                                )}
+                            </button>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                            Hidden entities still appear in calendar but won't be sent to the AI
+                        </p>
                     </div>
 
                     {/* Recurrence */}

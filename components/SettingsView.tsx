@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { useStore } from '../store';
-import { AlertTriangle, Download, Upload, FileText, Trash2, Bot } from 'lucide-react';
+import { AlertTriangle, Download, Upload, FileText, Trash2, Bot, EyeOff } from 'lucide-react';
 import { exportToMarkdown, downloadMarkdown } from '../utils/exportMarkdown';
 
 const SettingsView: React.FC = () => {
@@ -367,6 +367,46 @@ const SettingsView: React.FC = () => {
               >
                 <Trash2 size={16} />
                 Clean Flowmate Cache Duplicates
+              </button>
+            </div>
+
+            <div className="space-y-3 pt-4 border-t border-slate-700">
+              <p className="text-xs text-slate-400 font-medium">Bulk Actions</p>
+              <button
+                onClick={() => {
+                  const birthdayEvents = entities.filter(e => {
+                    const title = (e.title || '').toLowerCase();
+                    return title.includes('birthday') || title.includes('bday');
+                  });
+
+                  if (birthdayEvents.length === 0) {
+                    alert('No birthday events found.');
+                    return;
+                  }
+
+                  if (!confirm(`Found ${birthdayEvents.length} birthday events. Hide all from AI?`)) return;
+
+                  const { applyOperations } = useStore.getState();
+                  const ops = birthdayEvents.map(e => ({
+                    type: 'update_entity' as const,
+                    payload: {
+                      id: e.id,
+                      fields: {
+                        metadata: {
+                          ...e.metadata,
+                          hidden: true
+                        }
+                      }
+                    }
+                  }));
+                  applyOperations(ops);
+
+                  alert(`✅ Hidden ${birthdayEvents.length} birthday events from AI!`);
+                }}
+                className="w-full py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium flex items-center justify-center gap-2 border border-slate-600 transition-colors"
+              >
+                <EyeOff size={16} />
+                Hide All Birthdays from AI
               </button>
             </div>
 

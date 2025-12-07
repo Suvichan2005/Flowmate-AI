@@ -292,11 +292,14 @@ export const orchestrateMessage = async (
   const recentLimit = 15;
   const relevantLimit = 10;
 
-  const recentEntities = [...snapshot.entities]
+  // Filter out hidden entities from LLM context (they still appear in calendar)
+  const visibleEntities = snapshot.entities.filter(e => !e.metadata?.hidden);
+
+  const recentEntities = [...visibleEntities]
     .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
     .slice(0, recentLimit);
 
-  const relevantEntities = [...snapshot.entities]
+  const relevantEntities = [...visibleEntities]
     .map(e => ({ entity: e, score: calculateRelevance(e, userMessage) }))
     .filter(item => item.score > 0)
     .sort((a, b) => b.score - a.score)
