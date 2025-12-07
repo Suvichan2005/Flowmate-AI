@@ -260,13 +260,69 @@ export const GoogleCalendarAdapter = {
     };
     const colorHex = gcEvent.colorId ? GCAL_COLORS[gcEvent.colorId] : undefined;
 
+    // Smart classification based on title patterns
+    const title = (gcEvent.summary || '').toLowerCase();
+
+    // Detect event type and context
+    let context: string | undefined;
+    let tags: string[] = [];
+    let inferredRecurrence = recurrence;
+
+    // Birthdays → Personal context + YEARLY recurrence
+    if (title.includes('birthday') || title.includes('bday') || title.includes("'s birthday")) {
+      context = 'Personal';
+      tags.push('birthday');
+      if (!inferredRecurrence) inferredRecurrence = 'YEARLY';
+    }
+    // Anniversary → Personal + YEARLY
+    else if (title.includes('anniversary') || title.includes('anniv')) {
+      context = 'Personal';
+      tags.push('anniversary');
+      if (!inferredRecurrence) inferredRecurrence = 'YEARLY';
+    }
+    // Tests/Exams → Academic
+    else if (title.includes('test') || title.includes('exam') || title.includes('quiz') ||
+      title.includes('assignment') || title.includes('due')) {
+      context = 'Academic';
+      tags.push('exam');
+    }
+    // Meetings → Work or Academic based on keywords
+    else if (title.includes('meeting') || title.includes('meet') || title.includes('gbm') ||
+      title.includes('interview') || title.includes('round table')) {
+      if (title.includes('ieee') || title.includes('eis') || title.includes('e-cell') ||
+        title.includes('placement') || title.includes('mentor')) {
+        context = 'Academic';
+        tags.push('meeting', 'club');
+      } else {
+        context = 'Work';
+        tags.push('meeting');
+      }
+    }
+    // Movies/Entertainment
+    else if (title.includes('movie') || title.includes('film') || title.includes('tour') ||
+      title.includes('reservation') || title.includes('concert')) {
+      context = 'Personal';
+      tags.push('entertainment');
+    }
+    // Travel/Trips
+    else if (title.includes('puri') || title.includes('trip') || title.includes('travel') ||
+      title.includes('flight') || title.includes('train')) {
+      context = 'Personal';
+      tags.push('travel');
+    }
+    // Hackathons/Challenges
+    else if (title.includes('hackathon') || title.includes('challenge') || title.includes('innovember')) {
+      context = 'Academic';
+      tags.push('hackathon');
+    }
+
     return {
       kind: EntityKind.EVENT,
       title: gcEvent.summary || 'Untitled Event',
       description: gcEvent.description || '',
       start_time: startTimeISO,
       end_time: endTimeISO,
-      recurrence: recurrence,
+      recurrence: inferredRecurrence,
       metadata: {
         google_calendar_id: gcEvent.id,
         google_calendar_etag: gcEvent.etag,
@@ -274,7 +330,9 @@ export const GoogleCalendarAdapter = {
         calendar_color: gcEvent.colorId,
         color_hex: colorHex,
         is_all_day: isAllDay,
-        source: 'google_calendar'
+        source: 'google_calendar',
+        auto_context: context,
+        auto_tags: tags.length > 0 ? tags : undefined
       }
     };
   },

@@ -417,7 +417,7 @@ const CalendarView: React.FC = () => {
         const isCurrentMonth = now.getMonth() === month && now.getFullYear() === year;
 
         return (
-            <div className="flex-1 flex flex-col">
+            <div className="flex-1 flex flex-col min-h-0 overflow-auto">
                 <div className="grid grid-cols-7 gap-1 mb-2 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">
                     <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
                 </div>
@@ -431,7 +431,11 @@ const CalendarView: React.FC = () => {
                         return (
                             <div
                                 key={day}
-                                onClick={() => handleDayClick(date)}
+                                onClick={() => {
+                                    // Click to open day view for this date
+                                    setCurrentDate(date);
+                                    setViewMode('day');
+                                }}
                                 onDragOver={handleDragOver}
                                 onDrop={(e) => handleDrop(e, date)}
                                 className={`bg-slate-950 border-r border-b border-slate-800 p-1.5 min-h-[80px] md:min-h-[100px] relative hover:bg-slate-900 transition-colors group flex flex-col cursor-pointer ${isToday ? 'bg-slate-900/80' : ''
@@ -441,7 +445,16 @@ const CalendarView: React.FC = () => {
                                     <span className={`text-xs font-medium ${isToday ? 'text-indigo-400 bg-indigo-500/10 w-6 h-6 flex items-center justify-center rounded-full' : 'text-slate-500'}`}>
                                         {day}
                                     </span>
-                                    <Plus size={12} className="text-slate-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation(); // Don't trigger day view
+                                            handleDayClick(date);
+                                        }}
+                                        className="text-slate-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-slate-700 rounded"
+                                        title="Create event"
+                                    >
+                                        <Plus size={12} />
+                                    </button>
                                 </div>
                                 <div className="space-y-0.5 overflow-hidden flex-1 mt-1">
                                     {dayItems.slice(0, 3).map(({ entity, isRecurring }) => renderEventPill(entity, isRecurring, true))}
@@ -691,8 +704,8 @@ const CalendarView: React.FC = () => {
     ];
 
     return (
-        <div className="flex-1 flex flex-col bg-slate-950 p-4 md:p-6 h-full overflow-hidden">
-            <header className="mb-4 flex flex-wrap justify-between items-center gap-2 overflow-x-auto">
+        <div className="flex-1 flex flex-col bg-slate-950 p-4 md:p-6 h-full min-h-0">
+            <header className="mb-4 flex flex-wrap justify-between items-center gap-2 shrink-0">
                 <div className="flex items-center gap-2 shrink-0">
                     <h1 className="text-lg md:text-xl font-bold text-slate-100 truncate max-w-[180px] md:max-w-none">{getHeaderTitle()}</h1>
                     <div className="flex bg-slate-900 rounded-lg border border-slate-800 p-0.5">
