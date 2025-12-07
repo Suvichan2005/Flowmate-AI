@@ -111,41 +111,46 @@ const MomentumHeatmap: React.FC = () => {
                 </div>
             </div>
 
-            {/* Month labels */}
-            <div className="flex text-[9px] text-slate-500 mb-1 ml-6">
-                {months.map((m, i) => (
-                    <div key={i} style={{ width: `${(months[i + 1]?.week ?? 53) - m.week}0px`, minWidth: '30px' }}>
-                        {m.name}
+            {/* Month labels and Grid Container */}
+            <div className="overflow-x-auto pb-2">
+                <div className="min-w-[600px]">
+                    {/* Month labels */}
+                    <div className="flex text-[9px] text-slate-500 mb-1 ml-6">
+                        {months.map((m, i) => (
+                            <div key={i} style={{ width: `${((months[i + 1]?.week ?? 53) - m.week) * 12}px`, minWidth: '30px' }}>
+                                {m.name}
+                            </div>
+                        ))}
                     </div>
-                ))}
-            </div>
 
-            {/* Grid with day labels */}
-            <div className="flex">
-                {/* Day labels */}
-                <div className="flex flex-col text-[9px] text-slate-500 mr-1 shrink-0">
-                    <div className="h-[10px]"></div>
-                    <div className="h-[10px] leading-[10px]">Mon</div>
-                    <div className="h-[10px]"></div>
-                    <div className="h-[10px] leading-[10px]">Wed</div>
-                    <div className="h-[10px]"></div>
-                    <div className="h-[10px] leading-[10px]">Fri</div>
-                    <div className="h-[10px]"></div>
-                </div>
+                    {/* Grid with day labels */}
+                    <div className="flex">
+                        {/* Day labels */}
+                        <div className="flex flex-col text-[9px] text-slate-500 mr-1 shrink-0">
+                            <div className="h-[10px]"></div>
+                            <div className="h-[10px] leading-[10px]">Mon</div>
+                            <div className="h-[10px]"></div>
+                            <div className="h-[10px] leading-[10px]">Wed</div>
+                            <div className="h-[10px]"></div>
+                            <div className="h-[10px] leading-[10px]">Fri</div>
+                            <div className="h-[10px]"></div>
+                        </div>
 
-                {/* Heatmap grid */}
-                <div className="flex gap-[2px] overflow-x-auto">
-                    {weeks.map((week, wIdx) => (
-                        <div key={wIdx} className="flex flex-col gap-[2px]">
-                            {week.map((day, dIdx) => (
-                                <div
-                                    key={dIdx}
-                                    className={`w-[10px] h-[10px] rounded-sm ${getColor(day.minutes)} ${day.minutes >= 0 ? 'hover:ring-1 hover:ring-white/40 cursor-pointer' : ''}`}
-                                    title={day.minutes >= 0 ? `${day.date}: ${formatTime(day.minutes)}` : ''}
-                                />
+                        {/* Heatmap grid */}
+                        <div className="flex gap-[2px]">
+                            {weeks.map((week, wIdx) => (
+                                <div key={wIdx} className="flex flex-col gap-[2px]">
+                                    {week.map((day, dIdx) => (
+                                        <div
+                                            key={dIdx}
+                                            className={`w-[10px] h-[10px] rounded-sm ${getColor(day.minutes)} ${day.minutes >= 0 ? 'hover:ring-1 hover:ring-white/40 cursor-pointer' : ''}`}
+                                            title={day.minutes >= 0 ? `${day.date}: ${formatTime(day.minutes)}` : ''}
+                                        />
+                                    ))}
+                                </div>
                             ))}
                         </div>
-                    ))}
+                    </div>
                 </div>
             </div>
 

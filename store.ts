@@ -179,7 +179,7 @@ interface FlowmateState {
 
     // Actions
     setHydrated: (val: boolean) => void;
-    addMessage: (role: 'user' | 'assistant', text: string, ops?: ToonOperation[], attachment?: string | null) => string;
+    addMessage: (role: 'user' | 'assistant', text: string, ops?: ToonOperation[], attachment?: string | null, channelId?: string) => string;
     setPendingOps: (ops: ToonOperation[], messageId: string) => void;
     clearPendingOps: () => void;
     applyOperations: (ops: ToonOperation[]) => void;
@@ -405,12 +405,13 @@ export const useStore = create<FlowmateState>()(
                 }));
             },
 
-            addMessage: (role, text, ops, attachment) => {
+            addMessage: (role, text, ops, attachment, channelId = 'general') => {
                 const id = uuidv4();
                 const newMessage: Message = {
                     id,
                     role,
                     text,
+                    channelId,
                     attachment: attachment || null,
                     created_at: new Date().toISOString(),
                     ops_preview: ops
@@ -775,7 +776,7 @@ export const useStore = create<FlowmateState>()(
                                             id: uuidv4(),
                                             from: fromId,
                                             to: toId,
-                                            type: payload.type || RelationshipType.DEPENDS_ON,
+                                            type: payload.type || RelationshipType.FULFILLS,
                                             meta: payload.meta || {},
                                             created_at: now
                                         });

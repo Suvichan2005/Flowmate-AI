@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import { useStore } from '../store';
 import { Entity, Relationship, EntityKind, EntityStatus, RelationshipType } from '../types';
-import { Filter, Eye, EyeOff, Maximize, Play, Edit3, Trash2, CheckSquare, Square, Sliders, Info } from 'lucide-react';
+import { Filter, Eye, EyeOff, Maximize, Play, Edit3, Trash2, CheckSquare, Square, Sliders, Info, Magnet, RefreshCw } from 'lucide-react';
 
 interface GraphViewProps {
     entities: Entity[];
@@ -22,8 +22,9 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
     const [showPhysicsMenu, setShowPhysicsMenu] = useState(false);
 
     // Physics State
+    const [groupByKind, setGroupByKind] = useState(false);
     const [forceProps, setForceProps] = useState({
-        charge: -400,
+        charge: -200,
         linkDistance: 120,
         collideRadius: 50,
         centerStrength: 0.1
@@ -38,6 +39,8 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
 
     // Context Menu State
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number, entityId: string } | null>(null);
+    // Link Creation Menu State
+    const [pendingLink, setPendingLink] = useState<{ source: string, target: string, x: number, y: number } | null>(null);
 
     // Simulation Ref to access nodes for auto-center
     const simulationRef = useRef<d3.Simulation<any, undefined> | null>(null);
@@ -91,9 +94,44 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
         if (!simulationRef.current) return;
         const sim = simulationRef.current;
 
+        // Update forces
         sim.force("charge", d3.forceManyBody().strength(forceProps.charge));
         sim.force("link", d3.forceLink(links).id((d: any) => d.id).distance(forceProps.linkDistance));
         sim.force("collide", d3.forceCollide().radius(forceProps.collideRadius));
+
+        if (groupByKind) {
+            // Grouping Logic: Cluster by Kind
+            const kinds = Object.values(EntityKind);
+            const cols = 4; // Columns for the grid
+            const cellW = 300;
+            const cellH = 300;
+            const width = containerRef.current?.clientWidth || 800;
+            const height = containerRef.current?.clientHeight || 600;
+
+            // Calculate grid start to center it
+            const gridW = cols * cellW;
+            const rows = Math.ceil(kinds.length / cols);
+            const gridH = rows * cellH;
+            const startX = width / 2 - gridW / 2 + cellW / 2;
+            const startY = height / 2 - gridH / 2 + cellH / 2;
+
+            sim.force("center", null); // Disable single center
+            sim.force("x", d3.forceX((d: any) => {
+                const idx = kinds.indexOf(d.kind);
+                const col = idx % cols;
+                return startX + col * cellW;
+            }).strength(0.5));
+            sim.force("y", d3.forceY((d: any) => {
+                const idx = kinds.indexOf(d.kind);
+                const row = Math.floor(idx / cols);
+                return startY + row * cellH;
+            }).strength(0.5));
+
+        } else {
+            sim.force("x", null);
+            sim.force("y", null);
+            sim.force("center", d3.forceCenter((containerRef.current?.clientWidth || 0) / 2, (containerRef.current?.clientHeight || 0) / 2));
+        }
 
         // Add special gravity for Context nodes to pull them centerish but not override too much
         sim.force("context-gravity", d3.forceManyBody().strength((d: any) =>
@@ -102,7 +140,7 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
 
         // Re-heat simulation
         sim.alpha(0.3).restart();
-    }, [forceProps, links, nodes]);
+    }, [forceProps, links, nodes, groupByKind]);
 
     // Auto-Center Effect
     useEffect(() => {
@@ -169,12 +207,7 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
         zoomBehaviorRef.current = zoom;
 
         svg.call(zoom as any)
-            .on("dblclick.zoom", null)
-            .on("mousemove", (event) => {
-                // Track mouse for visual linking
-                const [x, y] = d3.pointer(event);
-                setMousePos({ x, y });
-            });
+            .on("dblclick.zoom", null);
 
         // Color scale for Entity Kind
         const color = d3.scaleOrdinal<string>()
@@ -260,6 +293,7 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
             })
             .on("mousedown", (event, d: any) => {
                 if (event.shiftKey) {
+                    event.preventDefault();
                     event.stopPropagation(); // Prevent drag/zoom
                     setDragLink({ sourceId: d.id, x: d.x, y: d.y });
                 }
@@ -369,18 +403,29 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
             const targetDatum = d3.select(e.target as any).datum() as any;
 
             if (targetDatum && targetDatum.id && targetDatum.id !== dragLink.sourceId) {
-                applyOperations([{
-                    type: 'link_entities',
-                    payload: {
-                        from: dragLink.sourceId,
-                        to: targetDatum.id,
-                        type: RelationshipType.DEPENDS_ON
-                    }
-                }]);
+                // Open selection menu instead of immediate creation
+                setPendingLink({
+                    source: dragLink.sourceId,
+                    target: targetDatum.id,
+                    x: e.clientX,
+                    y: e.clientY
+                });
             }
-
             setDragLink(null);
         }
+    };
+
+    const confirmLink = (type: RelationshipType) => {
+        if (!pendingLink) return;
+        applyOperations([{
+            type: 'link_entities',
+            payload: {
+                from: pendingLink.source,
+                to: pendingLink.target,
+                type
+            }
+        }]);
+        setPendingLink(null);
     };
 
     const calculateLine = () => {
@@ -457,6 +502,13 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
             ref={containerRef}
             className="w-full h-full bg-slate-900 rounded-lg shadow-inner overflow-hidden border border-slate-800 relative group select-none"
             onMouseUp={handleGlobalMouseUp}
+            onMouseMove={(e) => {
+                // Track mouse for visual linking using React event
+                if (svgRef.current) {
+                    const rect = svgRef.current.getBoundingClientRect();
+                    setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                }
+            }}
         >
             <svg ref={svgRef} className="w-full h-full cursor-move"></svg>
 
@@ -526,6 +578,40 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
                     <Sliders size={18} />
                 </button>
                 <button
+                    onClick={() => {
+                        if (simulationRef.current && containerRef.current) {
+                            const cx = containerRef.current.clientWidth / 2;
+                            const cy = containerRef.current.clientHeight / 2;
+
+                            // Boost alpha to heat up simulation
+                            simulationRef.current.alpha(1).restart();
+
+                            // Apply a temporary centripetal force using forceX/forceY (safest compatibility)
+                            // This physically pulls nodes towards the center
+                            simulationRef.current.force("temp-x", d3.forceX(cx).strength(0.4));
+                            simulationRef.current.force("temp-y", d3.forceY(cy).strength(0.4));
+
+                            // Remove the temp force after a delay
+                            setTimeout(() => {
+                                if (simulationRef.current) {
+                                    simulationRef.current.force("temp-x", null);
+                                    simulationRef.current.force("temp-y", null);
+                                    simulationRef.current.alpha(0.3).restart();
+                                }
+                            }, 500);
+
+                            // Reset Zoom to default 1.0 view centered
+                            if (zoomBehaviorRef.current && svgRef.current) {
+                                d3.select(svgRef.current).transition().duration(750).call(zoomBehaviorRef.current.transform as any, d3.zoomIdentity);
+                            }
+                        }
+                    }}
+                    className="p-2 rounded bg-slate-950/80 border border-slate-800 text-slate-400 hover:text-white transition-colors"
+                    title="Refresh & Recenter"
+                >
+                    <RefreshCw size={18} />
+                </button>
+                <button
                     onClick={() => { setShowFilterMenu(!showFilterMenu); setShowPhysicsMenu(false); }}
                     className={`p-2 rounded bg-slate-950/80 border border-slate-800 text-slate-400 hover:text-white transition-colors ${showFilterMenu ? 'text-indigo-400 border-indigo-500/50' : ''}`}
                     title="Filter Graph"
@@ -536,6 +622,14 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
                 {showPhysicsMenu && (
                     <div className="bg-slate-950/90 backdrop-blur-md border border-slate-800 p-3 rounded-lg shadow-xl w-48 flex flex-col gap-3 animate-in fade-in zoom-in duration-100">
                         <div className="text-xs font-bold text-slate-400 uppercase border-b border-slate-800 pb-2">Physics</div>
+
+                        <button
+                            onClick={() => setGroupByKind(!groupByKind)}
+                            className={`flex items-center gap-2 text-[10px] p-2 rounded border transition-colors ${groupByKind ? 'bg-indigo-500/20 border-indigo-500 text-indigo-300' : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-300'}`}
+                        >
+                            <Magnet size={14} />
+                            {groupByKind ? 'Ungroup Nodes' : 'Group by Kind'}
+                        </button>
 
                         <div>
                             <div className="flex justify-between text-[10px] text-slate-500 mb-1">
@@ -634,6 +728,37 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
             {/* Click-away listener for context menu */}
             {contextMenu && (
                 <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)}></div>
+            )}
+
+            {/* Link Type Selection Menu */}
+            {pendingLink && (
+                <>
+                    <div className="fixed inset-0 z-40" onClick={() => setPendingLink(null)}></div>
+                    <div
+                        className="fixed bg-slate-900 border border-slate-700 rounded-lg shadow-2xl py-1 w-48 z-50 animate-in fade-in zoom-in duration-100 flex flex-col"
+                        style={{ top: pendingLink.y, left: pendingLink.x }}
+                    >
+                        <div className="px-3 py-2 border-b border-slate-800 text-[10px] font-bold text-slate-500 uppercase">
+                            Select Relationship
+                        </div>
+                        {[
+                            { id: RelationshipType.DEPENDS_ON, label: 'Blocks / Depends On', color: 'text-red-400' },
+                            { id: RelationshipType.PRECEDES, label: 'Precedes (Sequence)', color: 'text-blue-400' },
+                            { id: RelationshipType.PART_OF, label: 'Part Of', color: 'text-slate-400' },
+                            { id: RelationshipType.FULFILLS, label: 'Fulfills / Contributes', color: 'text-emerald-400' },
+                            { id: RelationshipType.RELATED_TO, label: 'Related To', color: 'text-slate-300' }
+                        ].map(type => (
+                            <button
+                                key={type.id}
+                                onClick={() => confirmLink(type.id)}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-800 flex items-center gap-2 ${type.color}`}
+                            >
+                                <div className={`w-2 h-2 rounded-full bg-current opacity-50`} />
+                                {type.label}
+                            </button>
+                        ))}
+                    </div>
+                </>
             )}
         </div>
     );

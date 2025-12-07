@@ -43,6 +43,8 @@ graph TD
 | **Calendar View** | Drag-and-drop event scheduling with IST timezone support |
 | **Gamification** | XP system and productivity levels |
 | **Firebase Integration** | Cloud sync and authentication (Email/Password + Google OAuth) |
+| **Schedules & Food** | Dedicated tracking for class timetables (recurring) and mess menus |
+| **Chat Channels** | Context-specific chat contexts (General, Schedules, Food, Finance) |
 | **Data Portability** | JSON export/import of entire graph |
 
 ---
@@ -127,6 +129,9 @@ npm run dev
 
 ## Recent Updates (Dec 2025)
 
+- **Schedules View**: Dedicated view for Class Schedules (recurring events) and Mess Menus (notes), with image upload support.
+- **Chat Channels**: Context-aware chat channels for General, Schedules, Food, and Finance to keep conversations organized.
+- **Graph View Improvements**: new "Group by Kind" force layout, "Refresh" button with centripetal force gather, and reduced default repulsion.
 - **Timezone Fix**: AI now outputs dates with correct IST timezone offset (+05:30) instead of UTC
 - **Knowledge Base**: Enhanced with tabs for All/Tags/Contexts, universal tag display with usage counts
 - **Firebase Integration**: Added cloud sync and authentication (email/password + Google OAuth)

@@ -7,11 +7,8 @@
 - [x] **EntityDetailPanel**: Rebuilt from corruption with full edit functionality
 - [x] **Knowledge Base**: Enhanced with tabs, universal tags, contexts, usage counts
 
-### ✅ Firebase Integration
-- [x] `firebase.ts` - Authentication (Email/Password + Google OAuth)
-- [x] `firestoreSync.ts` - Cloud data persistence
-- [x] `AuthModal.tsx` - Login/Signup UI
-- [x] Store integration with `syncToCloud()` / `loadFromCloud()`
+### ✅ Integrations
+- [x] **Google Calendar Sync**: Full 2-way sync with OAuth, duplicate prevention, and conflict resolution
 
 ---
 
@@ -19,11 +16,14 @@
 
 ### 🔴 High Priority
 
-#### 1. Real Google Calendar Sync
-Replace simulated `googleSync.ts` with actual Google Calendar API integration.
-- OAuth flow for calendar access
-- Two-way sync (events ↔ calendar)
-- Conflict resolution
+#### 1. Mobile & PWA
+- Responsive sidebar refinements
+- PWA manifest for install
+- Service worker for offline capability
+
+#### 2. Offline Support (Deep)
+- IndexedDB (Dexie.js) fallback when offline
+- Sync queue robust retries
 
 #### 2. Mobile Responsiveness
 - Responsive sidebar (hamburger menu)

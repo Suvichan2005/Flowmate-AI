@@ -3,7 +3,7 @@ import { useStore } from './store';
 import { orchestrateMessage } from './services/geminiService';
 import { processFileAttachment } from './utils/imageProcessing';
 import { onAuthChange, signOut } from './services/firebase';
-import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft } from 'lucide-react';
+import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, Utensils, IndianRupee, Table2, Layers } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import GraphView from './components/GraphView';
 import PreviewModal from './components/PreviewModal';
@@ -15,6 +15,7 @@ import EntityDetailPanel from './components/EntityDetailPanel';
 import DebugConsole from './components/DebugConsole';
 import LiveVoiceModal from './components/LiveVoiceModal';
 import CreateEntityModal from './components/CreateEntityModal';
+import SchedulesView from './components/SchedulesView';
 import CommandPalette from './components/CommandPalette';
 import FocusTimer from './components/FocusTimer';
 import KnowledgeView from './components/KnowledgeView';
@@ -60,6 +61,7 @@ const App: React.FC = () => {
   const [isResizing, setIsResizing] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [activeChannel, setActiveChannel] = useState('general'); // 'general', 'schedules', 'food', 'finance'
 
   const { currentUser, setCurrentUser, loadFromCloud, syncToCloud } = useStore();
 
@@ -237,21 +239,25 @@ const App: React.FC = () => {
     setLoading(true);
 
     // Add user message to store
-    const msgId = addMessage('user', userText, undefined, attachment);
+    // Ensure we default to 'general' if activeChannel is undefined
+    const currentChannel = activeChannel || 'general';
+    const msgId = addMessage('user', userText, undefined, attachment, currentChannel);
 
     try {
       const snapshot = getSnapshot();
       // Pass the previous history and the new message content
-      const toon = await orchestrateMessage(history, userText || (attachment ? "Analyze this attachment." : ""), snapshot, attachment);
+      // Filter history for context? Maybe beneficial to keep some cross-context, but for now strict separation.
+      const channelHistory = history.filter(m => (m.channelId || 'general') === currentChannel);
+      const toon = await orchestrateMessage(channelHistory, userText || (attachment ? "Analyze this attachment." : ""), snapshot, attachment);
 
       if (toon.ops && toon.ops.length > 0) {
         setPendingOps(toon.ops, msgId);
-        addMessage('assistant', toon.assistant.message || "I've prepared some updates for your review.", toon.ops);
+        addMessage('assistant', toon.assistant.message || "I've prepared some updates for your review.", toon.ops, null, currentChannel);
       } else {
         // Provide more helpful fallback if LLM didn't return a message
         const fallbackMessage = toon.assistant.message ||
           "I received your message but I'm not sure how to help with that. Try asking me to create a task, schedule an event, or update your goals!";
-        addMessage('assistant', fallbackMessage);
+        addMessage('assistant', fallbackMessage, undefined, null, currentChannel);
       }
     } catch (err) {
       console.error(err);
@@ -272,19 +278,21 @@ const App: React.FC = () => {
     setAttachmentType(null);
     setLoading(true);
 
-    const msgId = addMessage('user', userText, undefined, attachment || undefined);
+    const currentChannel = activeChannel || 'general';
+    const msgId = addMessage('user', userText, undefined, attachment || undefined, currentChannel);
 
     try {
       const snapshot = getSnapshot();
-      const toon = await orchestrateMessage(history, userText || (attachment ? "Analyze this attachment." : ""), snapshot, attachment || undefined);
+      const channelHistory = history.filter(m => (m.channelId || 'general') === currentChannel);
+      const toon = await orchestrateMessage(channelHistory, userText || (attachment ? "Analyze this attachment." : ""), snapshot, attachment || undefined);
 
       if (toon.ops && toon.ops.length > 0) {
         setPendingOps(toon.ops, msgId);
-        addMessage('assistant', toon.assistant.message || "I've prepared some updates for your review.", toon.ops);
+        addMessage('assistant', toon.assistant.message || "I've prepared some updates for your review.", toon.ops, null, currentChannel);
       } else {
         const fallbackMessage = toon.assistant.message ||
           "I received your message but I'm not sure how to help with that. Try asking me to create a task, schedule an event, or update your goals!";
-        addMessage('assistant', fallbackMessage);
+        addMessage('assistant', fallbackMessage, undefined, null, currentChannel);
       }
     } catch (err) {
       console.error(err);
@@ -322,6 +330,8 @@ const App: React.FC = () => {
         return <KnowledgeView />;
       case 'calendar':
         return <CalendarView />;
+      case 'schedules':
+        return <SchedulesView />;
       case 'settings':
         return <SettingsView />;
       case 'chat_graph':
@@ -559,45 +569,77 @@ const App: React.FC = () => {
                 onMouseDown={handleMouseDown}
                 className={`absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-500/40 transition-colors z-20 ${isResizing ? 'bg-indigo-500' : ''}`}
               />
-              <div className="h-14 border-b border-slate-800 flex items-center px-4 justify-between bg-slate-900/95 shrink-0">
-                <h1 className="font-semibold text-base flex items-center gap-2">
-                  <MessageSquare size={16} className="text-indigo-400" />
-                  Orchestrator
-                </h1>
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1.5 text-[10px] text-slate-500 bg-slate-800/80 px-2 py-1 rounded border border-slate-700">
-                    <div className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
-                    {settings.preferred_model || 'gemini-2.5-flash'}
+              <div className="flex flex-col border-b border-slate-800 bg-slate-900/95 shrink-0 z-10">
+                <div className="h-14 flex items-center px-4 justify-between">
+                  <h1 className="font-semibold text-base flex items-center gap-2">
+                    <MessageSquare size={16} className="text-indigo-400" />
+                    Orchestrator
+                  </h1>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 text-[10px] text-slate-500 bg-slate-800/80 px-2 py-1 rounded border border-slate-700">
+                      <div className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
+                      {settings.preferred_model || 'gemini-2.5-flash'}
+                    </div>
+                    <button
+                      onClick={() => setIsChatOpen(false)}
+                      className="p-1.5 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors"
+                      title="Close (Cmd+B)"
+                    >
+                      <PanelLeftClose size={18} />
+                    </button>
                   </div>
+                </div>
+
+                {/* Channel Tabs */}
+                <div className="flex items-center px-2 gap-1 pb-2 overflow-x-auto scrollbar-hide">
                   <button
-                    onClick={() => setIsChatOpen(false)}
-                    className="p-1.5 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors"
-                    title="Close (Cmd+B)"
+                    onClick={() => setActiveChannel('general')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${activeChannel === 'general' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
                   >
-                    <PanelLeftClose size={18} />
+                    <Layers size={14} /> General
+                  </button>
+                  <button
+                    onClick={() => setActiveChannel('schedules')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${activeChannel === 'schedules' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+                  >
+                    <Table2 size={14} /> Schedules
+                  </button>
+                  <button
+                    onClick={() => setActiveChannel('food')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${activeChannel === 'food' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+                  >
+                    <Utensils size={14} /> Food
+                  </button>
+                  <button
+                    onClick={() => setActiveChannel('finance')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${activeChannel === 'finance' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+                  >
+                    <IndianRupee size={14} /> Finance
                   </button>
                 </div>
               </div>
 
               <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
-                {(messages || []).map((msg) => (
-                  <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 self-start mt-0.5 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
-                      {msg.role === 'user' ? <User size={14} /> : <Bot size={14} />}
-                    </div>
-                    <div className={`flex flex-col max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                      {renderAttachmentPreview(msg)}
-                      <div className={`px-3 py-2 rounded-xl text-sm leading-relaxed ${msg.role === 'user'
-                        ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20 rounded-tr-sm'
-                        : 'bg-slate-800 border border-slate-700 rounded-tl-sm text-slate-200'
-                        }`}>
-                        {msg.text ? <MarkdownText content={msg.text} /> : <em className="text-slate-400">Attachment</em>}
-                        {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
+                {(messages || [])
+                  .filter(msg => (msg.channelId || 'general') === activeChannel)
+                  .map((msg) => (
+                    <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 self-start mt-0.5 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
+                        {msg.role === 'user' ? <User size={14} /> : <Bot size={14} />}
                       </div>
-                      <span className="text-[9px] text-slate-600 mt-1">{new Date(msg.created_at).toLocaleTimeString()}</span>
+                      <div className={`flex flex-col max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                        {renderAttachmentPreview(msg)}
+                        <div className={`px-3 py-2 rounded-xl text-sm leading-relaxed ${msg.role === 'user'
+                          ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20 rounded-tr-sm'
+                          : 'bg-slate-800 border border-slate-700 rounded-tl-sm text-slate-200'
+                          }`}>
+                          {msg.text ? <MarkdownText content={msg.text} /> : <em className="text-slate-400">Attachment</em>}
+                          {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
+                        </div>
+                        <span className="text-[9px] text-slate-600 mt-1">{new Date(msg.created_at).toLocaleTimeString()}</span>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
                 {loading && (
                   <div className="flex gap-3">
                     <div className="w-7 h-7 rounded-lg bg-slate-700 flex items-center justify-center"><Bot size={14} /></div>

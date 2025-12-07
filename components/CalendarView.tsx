@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { EntityKind, EntityStatus, Entity, RecurrenceType } from '../types';
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, CheckSquare, Clock, Plus, Grid3X3, List, CalendarDays, LayoutGrid, Repeat, RefreshCw, Cloud } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, CheckSquare, Clock, Plus, Grid3X3, List, CalendarDays, LayoutGrid, Repeat, RefreshCw, Cloud, Activity } from 'lucide-react';
 import CreateEntityModal from './CreateEntityModal';
 import { GoogleCalendarAdapter, GoogleAuthError } from '../services/googleSync';
 import { refreshGoogleCalendarToken } from '../services/firebase';
@@ -87,6 +87,7 @@ const CalendarView: React.FC = () => {
     const [viewMode, setViewMode] = useState<ViewMode>('agenda');
     const [showEvents, setShowEvents] = useState(true);
     const [showTasks, setShowTasks] = useState(true);
+    const [showLogs, setShowLogs] = useState(true);
     const [isSyncing, setIsSyncing] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -104,6 +105,7 @@ const CalendarView: React.FC = () => {
         if (e.metadata?.hidden) return false;
         if (e.kind === EntityKind.EVENT && e.start_time) return showEvents;
         if (e.kind === EntityKind.TASK && e.deadline && e.status !== EntityStatus.COMPLETED) return showTasks;
+        if (e.kind === EntityKind.ACTIVITY) return showLogs;
         return false;
     }), [entities, showEvents, showTasks]);
 
@@ -353,13 +355,15 @@ const CalendarView: React.FC = () => {
                 onClick={(e) => { e.stopPropagation(); selectEntity(item.id); }}
                 className={`text-[10px] px-1.5 py-0.5 rounded border-l-2 truncate cursor-pointer transition-colors flex items-center gap-1 ${!customColor ? (isEvent
                     ? 'bg-indigo-600/20 text-indigo-200 border-indigo-500 hover:bg-indigo-600/40'
-                    : 'bg-emerald-600/20 text-emerald-200 border-emerald-500 hover:bg-emerald-600/40')
+                    : item.kind === EntityKind.ACTIVITY
+                        ? 'bg-purple-600/20 text-purple-200 border-purple-500 hover:bg-purple-600/40'
+                        : 'bg-emerald-600/20 text-emerald-200 border-emerald-500 hover:bg-emerald-600/40')
                     : 'hover:opacity-80'
                     } ${draggedId === item.id ? 'opacity-50' : ''} ${isRecurring ? 'opacity-75' : ''} ${!isRecurring ? 'cursor-grab active:cursor-grabbing' : ''}`}
                 style={colorStyle}
                 title={`${item.title}${isRecurring ? ' (recurring)' : ''}`}
             >
-                {isEvent ? <Clock size={8} /> : <CheckSquare size={8} />}
+                {isEvent ? <Clock size={8} /> : item.kind === EntityKind.ACTIVITY ? <Activity size={8} /> : <CheckSquare size={8} />}
                 {isRecurring && <Repeat size={7} className="text-amber-400" />}
                 {!compact && <span className="truncate">{item.title}</span>}
                 {compact && <span className="truncate max-w-[50px]">{item.title}</span>}
@@ -440,13 +444,15 @@ const CalendarView: React.FC = () => {
                 }}
                 className={`absolute rounded border-l-2 cursor-pointer transition-all flex flex-col p-1 overflow-hidden z-10 ${!customColor ? (item.kind === EntityKind.EVENT
                     ? 'bg-indigo-600/30 text-indigo-100 border-indigo-500 hover:bg-indigo-600/50 hover:z-20 shadow-sm'
-                    : 'bg-emerald-600/30 text-emerald-100 border-emerald-500 hover:bg-emerald-600/50 hover:z-20 shadow-sm')
+                    : item.kind === EntityKind.ACTIVITY
+                        ? 'bg-purple-600/30 text-purple-100 border-purple-500 hover:bg-purple-600/50 hover:z-20 shadow-sm'
+                        : 'bg-emerald-600/30 text-emerald-100 border-emerald-500 hover:bg-emerald-600/50 hover:z-20 shadow-sm')
                     : 'text-white hover:opacity-80 hover:z-20 shadow-sm'
                     } ${draggedId === item.id ? 'opacity-50' : ''} ${isSpanning ? 'opacity-75 border-dashed' : ''}`}
                 title={`${item.title}${isSpanning ? ' (continues)' : ''}\n${displayStartTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${displayEndTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
             >
                 <div className="flex items-center gap-1 font-semibold text-[10px] leading-tight">
-                    {item.kind === EntityKind.EVENT ? <Clock size={8} /> : <CheckSquare size={8} />}
+                    {item.kind === EntityKind.EVENT ? <Clock size={8} /> : item.kind === EntityKind.ACTIVITY ? <Activity size={8} /> : <CheckSquare size={8} />}
                     <span className="truncate">{item.title}{isSpanning ? ' ⋯' : ''}</span>
                 </div>
                 {height > 40 && (
@@ -534,83 +540,76 @@ const CalendarView: React.FC = () => {
         const hours = Array.from({ length: 24 }, (_, i) => i);
 
         return (
-            <div className="flex-1 flex flex-col overflow-hidden">
-                {/* Header */}
-                <div className="grid grid-cols-8 gap-0 border-b border-slate-800 shrink-0 bg-slate-950 z-20">
-                    <div className="p-2 text-xs text-slate-600 border-r border-slate-800"></div>
-                    {weekDays.map(d => (
-                        <div
-                            key={d.toISOString()}
-                            onClick={() => {
-                                setCurrentDate(new Date(d));
-                                setViewMode('day');
-                            }}
-                            className={`p-2 text-center border-r border-slate-800 cursor-pointer hover:bg-slate-800/50 transition-colors ${d.toDateString() === now.toDateString() ? 'bg-indigo-500/10' : ''}`}
-                        >
-                            <div className="text-xs text-slate-500">{d.toLocaleDateString('en', { weekday: 'short' })}</div>
-                            <div className={`text-lg font-semibold ${d.toDateString() === now.toDateString() ? 'text-indigo-400' : 'text-slate-300'}`}>
-                                {d.getDate()}
-                            </div>
-                        </div>
-                    ))}
-                </div>
+            <div className="flex-1 flex flex-col overflow-hidden bg-slate-950 relative">
+                {/* Unified Scroll Container for Header + Body */}
+                <div className="flex-1 overflow-auto relative" ref={scrollRef}>
+                    <div className="min-w-[800px] flex flex-col relative">
 
-                {/* Scrollable Grid */}
-                <div className="flex-1 overflow-y-auto relative" ref={scrollRef}>
-                    <div className="grid grid-cols-8 gap-0 relative" style={{ height: GRID_HEIGHT }}>
-                        {/* Time Column */}
-                        <div className="border-r border-slate-800 bg-slate-950 z-10 sticky left-0">
-                            {hours.map(hour => (
-                                <div key={hour} className="text-[10px] text-slate-600 border-b border-slate-800/50 text-right pr-2 relative" style={{ height: PIXELS_PER_HOUR }}>
-                                    <span className="-top-2 relative">{hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`}</span>
+                        {/* Header Row (Sticky Top) */}
+                        <div className="grid grid-cols-8 gap-0 sticky top-0 z-30 bg-slate-950 border-b border-slate-800 shadow-sm shrink-0">
+                            {/* Top Left Corner (Sticky Left + Top) */}
+                            <div className="p-2 border-r border-slate-800 bg-slate-950 sticky left-0 z-40"></div>
+
+                            {/* Day Headers */}
+                            {weekDays.map(d => (
+                                <div
+                                    key={d.toISOString()}
+                                    onClick={() => {
+                                        setCurrentDate(new Date(d));
+                                        setViewMode('day');
+                                    }}
+                                    className={`p-2 text-center border-r border-slate-800 cursor-pointer hover:bg-slate-800/50 transition-colors ${d.toDateString() === now.toDateString() ? 'bg-indigo-500/10' : ''}`}
+                                >
+                                    <div className="text-xs text-slate-500">{d.toLocaleDateString('en', { weekday: 'short' })}</div>
+                                    <div className={`text-lg font-semibold ${d.toDateString() === now.toDateString() ? 'text-indigo-400' : 'text-slate-300'}`}>
+                                        {d.getDate()}
+                                    </div>
                                 </div>
                             ))}
                         </div>
 
-                        {/* Day Columns */}
-                        {weekDays.map(d => {
-                            const dayItems = getItemsForDate(d);
-                            const isToday = d.toDateString() === now.toDateString();
+                        {/* Grid Body */}
+                        <div className="grid grid-cols-8 gap-0 relative" style={{ height: GRID_HEIGHT }}>
+                            {/* Time Column (Sticky Left) */}
+                            <div className="border-r border-slate-800 bg-slate-950 z-20 sticky left-0 h-full">
+                                {hours.map(hour => (
+                                    <div key={hour} className="text-[10px] text-slate-600 border-b border-slate-800/50 text-right pr-2 relative" style={{ height: PIXELS_PER_HOUR }}>
+                                        <span className="-top-2 relative">{hour === 0 ? '12 AM' : hour < 12 ? `${hour} AM` : hour === 12 ? '12 PM' : `${hour - 12} PM`}</span>
+                                    </div>
+                                ))}
+                            </div>
 
-                            return (
-                                <div
-                                    key={d.toISOString()}
-                                    className={`border-r border-slate-800 relative ${isToday ? 'bg-indigo-500/5' : ''}`}
-                                    onDragOver={handleDragOver}
-                                    onDrop={(e) => {
-                                        const rect = e.currentTarget.getBoundingClientRect();
-                                        const y = e.clientY - rect.top + e.currentTarget.scrollTop;
-                                        // Adjust for scroll? No, currentTarget is the simple div which is tall.
-                                        // Actually e.clientY is viewport relative. element relative Y needed.
-                                        // Simplified: Use simple math if possible, or rough estimate.
-                                        // Ideally we want exact drop time. 
-                                        // Let's rely on simple hover logic for now or improve later.
-                                        // For now, defaulting to dropping on the day. Improved drop logic requires more DOM math.
-                                        handleDrop(e, d);
-                                    }}
-                                    onClick={(e) => {
-                                        // Calculate clicked hour
-                                        const rect = e.currentTarget.getBoundingClientRect();
-                                        const y = e.clientY - rect.top; // This might be wrong if scrolled?
-                                        // The container is TALL, inside a scroll pane. 
-                                        // Better to just pass date for now.
-                                        // If we want exact hour click:
-                                        // We need to use nativeEvent.offsetY if target is this container
-                                        const offsetY = e.nativeEvent.offsetY;
-                                        const hour = Math.floor(offsetY / PIXELS_PER_HOUR);
-                                        handleDayClick(d, hour);
-                                    }}
-                                >
-                                    {/* Hour Grid Lines */}
-                                    {hours.map(h => (
-                                        <div key={h} className="border-b border-slate-800/30 absolute w-full" style={{ top: h * PIXELS_PER_HOUR, height: PIXELS_PER_HOUR, pointerEvents: 'none' }} />
-                                    ))}
+                            {/* Day Columns */}
+                            {weekDays.map(d => {
+                                const dayItems = getItemsForDate(d);
+                                const isToday = d.toDateString() === now.toDateString();
 
-                                    {/* Events */}
-                                    {dayItems.map(({ entity, isRecurring, isSpanning }) => renderAbsoluteEvent(entity, isRecurring, d, isSpanning))}
-                                </div>
-                            );
-                        })}
+                                return (
+                                    <div
+                                        key={d.toISOString()}
+                                        className={`border-r border-slate-800 relative ${isToday ? 'bg-indigo-500/5' : ''}`}
+                                        onDragOver={handleDragOver}
+                                        onDrop={(e) => handleDrop(e, d)}
+                                        onClick={(e) => {
+                                            const rect = e.currentTarget.getBoundingClientRect();
+                                            const y = e.clientY - rect.top; // Relative to viewport if fixed? No.
+                                            // The click is relative to the element.
+                                            const offsetY = e.nativeEvent.offsetY;
+                                            const hour = Math.floor(offsetY / PIXELS_PER_HOUR);
+                                            handleDayClick(d, hour);
+                                        }}
+                                    >
+                                        {/* Hour Grid Lines */}
+                                        {hours.map(h => (
+                                            <div key={h} className="border-b border-slate-800/30 absolute w-full" style={{ top: h * PIXELS_PER_HOUR, height: PIXELS_PER_HOUR, pointerEvents: 'none' }} />
+                                        ))}
+
+                                        {/* Events */}
+                                        {dayItems.map(({ entity, isRecurring, isSpanning }) => renderAbsoluteEvent(entity, isRecurring, d, isSpanning))}
+                                    </div>
+                                );
+                            })}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -808,6 +807,13 @@ const CalendarView: React.FC = () => {
                         >
                             <div className={`w-2 h-2 rounded ${showTasks ? 'bg-emerald-500' : 'bg-slate-600'}`} />
                             Tasks
+                        </button>
+                        <button
+                            onClick={() => setShowLogs(!showLogs)}
+                            className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${showLogs ? 'bg-purple-500/20 text-purple-300' : 'bg-slate-800 text-slate-500 line-through'}`}
+                        >
+                            <div className={`w-2 h-2 rounded ${showLogs ? 'bg-purple-500' : 'bg-slate-600'}`} />
+                            Logs
                         </button>
                     </div>
                     <button

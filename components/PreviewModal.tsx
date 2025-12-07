@@ -28,9 +28,7 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ ops, onConfirm, onCancel })
 
   const updateOpField = (idx: number, field: string, value: string) => {
     const newOps = [...editedOps];
-    if (field === 'title' || field === 'description') {
-      newOps[idx] = { ...newOps[idx], payload: { ...newOps[idx].payload, [field]: value } };
-    } else if (field.startsWith('fields.')) {
+    if (field.startsWith('fields.')) {
       const subField = field.replace('fields.', '');
       newOps[idx] = {
         ...newOps[idx],
@@ -39,6 +37,9 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ ops, onConfirm, onCancel })
           fields: { ...newOps[idx].payload.fields, [subField]: value }
         }
       };
+    } else {
+      // Allow updating any top-level payload field (title, description, start_time, etc.)
+      newOps[idx] = { ...newOps[idx], payload: { ...newOps[idx].payload, [field]: value } };
     }
     setEditedOps(newOps);
   };
@@ -104,8 +105,8 @@ const PreviewModal: React.FC<PreviewModalProps> = ({ ops, onConfirm, onCancel })
                   {Object.entries(op.payload).map(([key, value]) => {
                     if (key === 'id' || value === null || value === undefined) return null;
 
-                    // Editable fields
-                    if ((key === 'title' || key === 'description') && typeof value === 'string') {
+                    // Editable fields (All strings except ID)
+                    if (key !== 'id' && typeof value === 'string') {
                       return (
                         <div key={key} className="space-y-1">
                           <label className="text-xs text-slate-500 font-medium uppercase">{key}</label>
