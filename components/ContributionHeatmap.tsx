@@ -85,42 +85,47 @@ const ContributionHeatmap: React.FC<ContributionHeatmapProps> = ({ entities }) =
         <div className="bg-gray-800/30 border border-gray-700 rounded-xl p-4">
             <h3 className="text-sm font-medium text-gray-300 mb-4">Activity Over The Last Year</h3>
 
-            {/* Month Labels */}
-            <div className="flex mb-1 ml-8">
-                {monthLabels.map((m, i) => (
-                    <div
-                        key={i}
-                        className="text-[10px] text-gray-500"
-                        style={{ marginLeft: i === 0 ? 0 : `${(m.weekIndex - (monthLabels[i - 1]?.weekIndex || 0)) * 12 - 20}px` }}
-                    >
-                        {m.label}
+            {/* Month Labels and Grid Container */}
+            <div className="overflow-x-auto pb-2">
+                <div className="min-w-[600px]">
+                    {/* Month Labels */}
+                    <div className="flex mb-1 ml-8">
+                        {monthLabels.map((m, i) => (
+                            <div
+                                key={i}
+                                className="text-[10px] text-gray-500"
+                                style={{ marginLeft: i === 0 ? 0 : `${(m.weekIndex - (monthLabels[i - 1]?.weekIndex || 0)) * 12 - 20}px` }}
+                            >
+                                {m.label}
+                            </div>
+                        ))}
                     </div>
-                ))}
-            </div>
 
-            <div className="flex">
-                {/* Day Labels */}
-                <div className="flex flex-col mr-2 mt-0.5">
-                    {dayLabels.map((label, i) => (
-                        <div key={i} className="text-[10px] text-gray-500 h-[11px] leading-[11px]">
-                            {label}
-                        </div>
-                    ))}
-                </div>
-
-                {/* Grid */}
-                <div className="flex gap-[3px] overflow-x-auto">
-                    {grid.map((week, weekIndex) => (
-                        <div key={weekIndex} className="flex flex-col gap-[3px]">
-                            {week.map((day, dayIndex) => (
-                                <div
-                                    key={dayIndex}
-                                    className={`w-[10px] h-[10px] rounded-sm ${getColor(day.count)} hover:ring-1 hover:ring-white/50 transition-all cursor-pointer`}
-                                    title={`${day.dateStr}: ${day.count} activities`}
-                                />
+                    <div className="flex">
+                        {/* Day Labels */}
+                        <div className="flex flex-col mr-2 mt-0.5">
+                            {dayLabels.map((label, i) => (
+                                <div key={i} className="text-[10px] text-gray-500 h-[11px] leading-[11px]">
+                                    {label}
+                                </div>
                             ))}
                         </div>
-                    ))}
+
+                        {/* Grid */}
+                        <div className="flex gap-[3px]">
+                            {grid.map((week, weekIndex) => (
+                                <div key={weekIndex} className="flex flex-col gap-[3px]">
+                                    {week.map((day, dayIndex) => (
+                                        <div
+                                            key={dayIndex}
+                                            className={`w-[10px] h-[10px] rounded-sm ${getColor(day.count)} hover:ring-1 hover:ring-white/50 transition-all cursor-pointer`}
+                                            title={`${day.dateStr}: ${day.count} activities`}
+                                        />
+                                    ))}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             </div>
 

@@ -32,7 +32,7 @@ const EntityDetailPanel: React.FC = () => {
 
     const [showLinker, setShowLinker] = useState(false);
     const [linkSearch, setLinkSearch] = useState('');
-    const [linkType, setLinkType] = useState<RelationshipType>(RelationshipType.DEPENDS_ON);
+    const [linkType, setLinkType] = useState<RelationshipType>(RelationshipType.FULFILLS);
 
     const [aiGenerating, setAiGenerating] = useState(false);
 
@@ -279,13 +279,13 @@ const EntityDetailPanel: React.FC = () => {
         setShowAddSubtask(false);
     };
 
-    const handleCreateLink = (targetId: string) => {
+    const handleCreateLink = (targetId: string, type: RelationshipType) => {
         applyOperations([{
             type: 'link_entities',
             payload: {
                 from: entity.id,
                 to: targetId,
-                type: linkType
+                type
             }
         }]);
         setShowLinker(false);
@@ -818,7 +818,7 @@ const EntityDetailPanel: React.FC = () => {
                                             {linkCandidates.map(c => (
                                                 <button
                                                     key={c.id}
-                                                    onClick={() => handleCreateLink(c.id)}
+                                                    onClick={() => handleCreateLink(c.id, linkType)}
                                                     className="w-full text-left px-3 py-2 text-sm text-slate-200 hover:bg-slate-700 flex items-center gap-2"
                                                 >
                                                     <span className="text-xs text-slate-500">{c.kind}</span>
@@ -889,7 +889,7 @@ const EntityDetailPanel: React.FC = () => {
                                 >
                                     <span className="text-sm text-slate-300">{s.title}</span>
                                     <button
-                                        onClick={() => handleCreateLink(s.id)}
+                                        onClick={() => handleCreateLink(s.id, RelationshipType.RELATED_TO)}
                                         className="text-xs text-indigo-400 hover:text-indigo-300"
                                     >
                                         Link

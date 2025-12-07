@@ -130,6 +130,7 @@ export interface Message {
   created_at: string;
   role: 'user' | 'assistant' | 'system';
   text: string;
+  channelId?: string; // 'general', 'food', 'finance', 'schedules'
   attachment?: string | null; // Base64 encoded image string
   ops_preview?: ToonOperation[];
   structured?: any;
@@ -206,4 +207,4 @@ export interface Toast {
   type: 'success' | 'error' | 'info';
 }
 
-export type ViewType = 'dashboard' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'analytics' | 'settings';
+export type ViewType = 'dashboard' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'analytics' | 'settings' | 'schedules';
