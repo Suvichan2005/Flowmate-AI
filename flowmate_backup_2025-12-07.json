@@ -1,0 +1,2656 @@
+{
+  "version": 1,
+  "timestamp": "2025-12-07T06:57:31.481Z",
+  "entities": [
+    {
+      "metadata": {},
+      "end_time": null,
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "duration_minutes": null,
+      "start_time": null,
+      "status": "ACTIVE",
+      "id": "812314dc-b63d-4e4e-91b0-65188bec8a0a",
+      "title": "IEEE CS",
+      "priority": 1,
+      "recurrence": null,
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "description": null,
+      "kind": "CONTEXT",
+      "canonical_tags": [],
+      "deadline": null
+    },
+    {
+      "metadata": {},
+      "status": "ACTIVE",
+      "start_time": null,
+      "id": "4b526d0e-0dab-43e2-b0cb-b59ec4fede62",
+      "deadline": null,
+      "priority": 1,
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "canonical_tags": [],
+      "recurrence": null,
+      "duration_minutes": null,
+      "kind": "CONTEXT",
+      "description": null,
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "end_time": null,
+      "title": "Academics"
+    },
+    {
+      "start_time": null,
+      "priority": 1,
+      "deadline": null,
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "id": "8ddb2e30-f1de-4724-a2e0-c93a744be89d",
+      "metadata": {},
+      "canonical_tags": [],
+      "description": null,
+      "end_time": null,
+      "kind": "TAG",
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "status": "ACTIVE",
+      "duration_minutes": null,
+      "recurrence": null,
+      "title": "revision"
+    },
+    {
+      "end_time": null,
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "kind": "TAG",
+      "id": "e09ab26a-9657-4f00-9879-1ab8fedfe832",
+      "duration_minutes": null,
+      "description": null,
+      "status": "ACTIVE",
+      "canonical_tags": [],
+      "deadline": null,
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "metadata": {},
+      "recurrence": null,
+      "start_time": null,
+      "title": "exam",
+      "priority": 1
+    },
+    {
+      "metadata": {},
+      "deadline": null,
+      "priority": 1,
+      "start_time": null,
+      "duration_minutes": null,
+      "id": "999b19fb-29d1-41fc-993d-ccd0fcea850c",
+      "description": null,
+      "recurrence": null,
+      "canonical_tags": [],
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "title": "coding",
+      "kind": "TAG",
+      "status": "ACTIVE",
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "end_time": null
+    },
+    {
+      "kind": "TAG",
+      "description": null,
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "title": "teamwork",
+      "deadline": null,
+      "canonical_tags": [],
+      "duration_minutes": null,
+      "end_time": null,
+      "id": "32e76fef-0752-4b32-9279-bf7c31090227",
+      "status": "ACTIVE",
+      "metadata": {},
+      "recurrence": null,
+      "start_time": null,
+      "priority": 1
+    },
+    {
+      "duration_minutes": null,
+      "description": "Role within IEEE CS",
+      "priority": 1,
+      "title": "Technical Project Coordinator",
+      "kind": "ROLE",
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "recurrence": null,
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "start_time": null,
+      "deadline": null,
+      "metadata": {},
+      "id": "83fb5629-4ee9-42fd-96da-0e88bd77e2cf",
+      "status": "ACTIVE",
+      "canonical_tags": [
+        "IEEE CS"
+      ],
+      "end_time": null
+    },
+    {
+      "kind": "GOAL",
+      "description": null,
+      "start_time": null,
+      "priority": 1,
+      "id": "c4237f91-d549-45ba-97c1-a7c0171fce17",
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "canonical_tags": [
+        "IEEE CS"
+      ],
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "metadata": {},
+      "title": "Deploy two projects",
+      "duration_minutes": null,
+      "status": "ACTIVE",
+      "recurrence": null,
+      "deadline": "2025-12-31T23:59:59+05:30",
+      "end_time": null
+    },
+    {
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "end_time": null,
+      "priority": 1,
+      "description": null,
+      "status": "ACTIVE",
+      "title": "Mentor 8 teams",
+      "recurrence": null,
+      "metadata": {},
+      "deadline": null,
+      "duration_minutes": null,
+      "id": "696cf997-0989-4ce0-8abc-5a6f5be8b11e",
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "canonical_tags": [
+        "IEEE CS",
+        "teamwork"
+      ],
+      "kind": "GOAL",
+      "start_time": null
+    },
+    {
+      "description": null,
+      "kind": "EVENT",
+      "recurrence": null,
+      "canonical_tags": [
+        "IEEE CS"
+      ],
+      "start_time": "2025-12-07T22:00:00+05:30",
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "id": "b32fafa2-cd94-47bb-a398-c834071cf88f",
+      "duration_minutes": null,
+      "status": "ACTIVE",
+      "end_time": null,
+      "metadata": {},
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "priority": 1,
+      "title": "IEEE CS Meeting",
+      "deadline": null
+    },
+    {
+      "recurrence": null,
+      "metadata": {},
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "duration_minutes": null,
+      "kind": "EVENT",
+      "id": "073aeff5-b138-42c6-88c3-96a6c54b6bd4",
+      "canonical_tags": [
+        "Academics",
+        "exam"
+      ],
+      "end_time": null,
+      "title": "Exams Start",
+      "deadline": null,
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "priority": 1,
+      "start_time": "2025-12-12T00:00:00+05:30",
+      "description": null,
+      "status": "ACTIVE"
+    },
+    {
+      "description": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "title": "Do Coursera course",
+      "end_time": null,
+      "start_time": "2025-12-06T21:00:00+05:30",
+      "priority": 1,
+      "canonical_tags": [
+        "Academics"
+      ],
+      "status": "ACTIVE",
+      "kind": "TASK",
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "deadline": null,
+      "metadata": {},
+      "id": "e58aab3a-343c-4f86-aab3-94645939a004"
+    },
+    {
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "recurrence": null,
+      "end_time": null,
+      "start_time": null,
+      "description": null,
+      "kind": "TASK",
+      "title": "Revise for tomorrow",
+      "status": "ACTIVE",
+      "duration_minutes": null,
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "deadline": null,
+      "id": "d4da6cc7-6048-4b47-8497-9f8006df24fb",
+      "metadata": {},
+      "priority": 1,
+      "canonical_tags": [
+        "Academics",
+        "revision",
+        "exam"
+      ]
+    },
+    {
+      "end_time": null,
+      "canonical_tags": [],
+      "updated_at": "2025-12-06T17:19:01.681Z",
+      "metadata": {},
+      "kind": "ACTIVITY",
+      "deadline": null,
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "status": "COMPLETED",
+      "priority": 1,
+      "start_time": "2025-12-06T17:19:01.681Z",
+      "description": "Vibe coding, felt progress then crashed.",
+      "id": "c065c0fe-1ea2-4e67-8060-d63efecd7f42",
+      "title": "Worked on Flowmate",
+      "duration_minutes": 360,
+      "recurrence": null
+    },
+    {
+      "recurrence": null,
+      "deadline": null,
+      "end_time": null,
+      "description": "Also a bit here and there while working on the app.",
+      "priority": 1,
+      "metadata": {},
+      "kind": "ACTIVITY",
+      "created_at": "2025-12-06T17:19:01.682Z",
+      "duration_minutes": 120,
+      "status": "COMPLETED",
+      "updated_at": "2025-12-06T17:19:01.682Z",
+      "title": "Did DSA",
+      "start_time": "2025-12-06T17:19:01.682Z",
+      "canonical_tags": [],
+      "id": "9ef695bf-7a8f-45ce-a5c5-fcd75d8ebead"
+    },
+    {
+      "metadata": {},
+      "status": "COMPLETED",
+      "end_time": null,
+      "created_at": "2025-12-06T17:19:01.682Z",
+      "canonical_tags": [],
+      "id": "80122705-a451-4af0-9445-627847dc426b",
+      "duration_minutes": 0,
+      "deadline": null,
+      "description": "Screaming at AI all day, felt like making progress but it came crashing down. Spewing bullshit now. Wasted day.",
+      "updated_at": "2025-12-06T17:19:01.682Z",
+      "priority": 1,
+      "start_time": "2025-12-06T17:19:01.682Z",
+      "kind": "ACTIVITY",
+      "recurrence": null,
+      "title": "Vibe coding on app (frustrated)"
+    },
+    {
+      "updated_at": "2025-12-06T17:24:22.273Z",
+      "canonical_tags": [],
+      "kind": "PROJECT",
+      "deadline": null,
+      "priority": 1,
+      "description": "Long-term project to build into a startup",
+      "metadata": {},
+      "recurrence": null,
+      "id": "713c28cf-dd80-47f2-891e-8f23b73005a2",
+      "created_at": "2025-12-06T17:24:22.273Z",
+      "start_time": null,
+      "status": "ACTIVE",
+      "title": "Staffroom",
+      "duration_minutes": null,
+      "end_time": null
+    },
+    {
+      "updated_at": "2025-12-06T18:15:15.300Z",
+      "deadline": null,
+      "progress": 90,
+      "title": "Flowmate App",
+      "metadata": {},
+      "canonical_tags": [],
+      "id": "c1c3a834-f696-42ce-b454-8fddd6ebac79",
+      "end_time": null,
+      "start_time": null,
+      "duration_minutes": null,
+      "kind": "PROJECT",
+      "description": "Close to deployment",
+      "created_at": "2025-12-06T17:24:22.273Z",
+      "status": "IN_PROGRESS",
+      "priority": 1,
+      "recurrence": null
+    },
+    {
+      "title": "Meeting",
+      "id": "e30636bb-97fc-4bfa-83c1-a5a9a0072064",
+      "start_time": "2025-12-07T16:00:00+05:30",
+      "priority": 1,
+      "kind": "EVENT",
+      "end_time": null,
+      "metadata": {},
+      "deadline": null,
+      "status": "ACTIVE",
+      "recurrence": null,
+      "duration_minutes": null,
+      "updated_at": "2025-12-06T18:09:59.983Z",
+      "created_at": "2025-12-06T18:06:26.906Z",
+      "description": null,
+      "canonical_tags": []
+    },
+    {
+      "metadata": {},
+      "recurrence": null,
+      "status": "COMPLETED",
+      "created_at": "2025-12-06T18:46:33.883Z",
+      "title": "Worked on Flowmate App",
+      "start_time": "2025-12-06T18:46:33.883Z",
+      "description": null,
+      "updated_at": "2025-12-06T18:46:33.883Z",
+      "priority": 1,
+      "id": "9dab7fb4-de8d-4fb9-8371-4f3e995a334f",
+      "end_time": null,
+      "deadline": null,
+      "canonical_tags": [],
+      "kind": "ACTIVITY",
+      "duration_minutes": 0
+    },
+    {
+      "id": "b9f8e217-ed23-40cc-a149-1546b81b5aef",
+      "kind": "EVENT",
+      "title": "Birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2021-05-29T18:30:00.000Z",
+      "end_time": "2021-05-30T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "cdh3ad1n65gjgb9icphmab9k60q3ibb260omcbb5cpijgphp6go62e9j6c",
+        "google_calendar_etag": "\"3204822091165000\"",
+        "calendar_color": "11",
+        "color_hex": "#d50000",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": false
+      },
+      "created_at": "2025-12-07T06:00:40.494Z",
+      "updated_at": "2025-12-07T06:12:45.593Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "5ecffb02-4779-4a4c-9c7f-898c3197268f",
+      "kind": "EVENT",
+      "title": "Mummy Papa Anniv",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2024-11-30T18:30:00.000Z",
+      "end_time": "2024-12-01T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "uckekqkdahe24dtdd2n9ujvar5",
+        "google_calendar_etag": "\"3456242061668000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "anniversary"
+        ],
+        "hidden": false
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:04:52.278Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "1b420461-2564-4052-9b67-d0dcb8bd1901",
+      "kind": "EVENT",
+      "title": "Tanuj Bhaiya's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-07-16T18:30:00.000Z",
+      "end_time": "2023-07-17T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "60r6ad1gckp34b9j6srm8b9k65gj6bb275hjebb271ijec1p60p3ac1hcc",
+        "google_calendar_etag": "\"3469497150822000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "bb0fd030-9019-420e-8f3c-7052d3a85c80",
+      "kind": "EVENT",
+      "title": "Kshitij Singh's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-07-14T18:30:00.000Z",
+      "end_time": "2023-07-15T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "60s64e9hccs3ab9jcdgjgb9kclgm8b9o6gsj8b9j6pijid3571hm8db3cg",
+        "google_calendar_etag": "\"3469497115043000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "f47c884e-e0d6-4968-8805-ffd19513d1e2",
+      "kind": "EVENT",
+      "title": "Siddharth, Adwai, Saranya's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-06-07T18:30:00.000Z",
+      "end_time": "2023-06-08T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "64pj2d9g6pj3gbb5cgsjeb9k64om4b9ocoo30bb16pj32ohm6gs3gcr16o",
+        "google_calendar_etag": "\"3469497042109000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "65e3db78-7cf2-4c04-932d-7c80a3d4496a",
+      "kind": "EVENT",
+      "title": "Priyanshu's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-02-03T18:30:00.000Z",
+      "end_time": "2023-02-04T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "64r36cb36li32b9gc9i3eb9kchhj0bb1cop62bb4coom4c1g6gs34dpg64",
+        "google_calendar_etag": "\"3469496846090000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "1cfa8a3a-7700-4bed-bd6c-6ae35e88b702",
+      "kind": "EVENT",
+      "title": "Ujjawal Anand Bday's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-07-10T18:30:00.000Z",
+      "end_time": "2023-07-11T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "65hjacppc4rjgb9hc4smab9kccpmcbb16hhm2bb168o3idhk71h66e1p6o",
+        "google_calendar_etag": "\"3469497097002000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "2da7ffdd-239d-4796-af52-a3ca4cd3876c",
+      "kind": "EVENT",
+      "title": "Jayesh's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-03-23T18:30:00.000Z",
+      "end_time": "2023-03-24T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "68q32phk60qm8b9m6hi6cb9k68p36b9o6hh3abb460oj0cpg70o3cp9i6c",
+        "google_calendar_etag": "\"3469496892926000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "027a55d7-dd9d-4b50-9677-c2c3a9e0a333",
+      "kind": "EVENT",
+      "title": "Lakshya Bhaiya's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-07-17T18:30:00.000Z",
+      "end_time": "2023-07-18T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "69ij0ohjcgr62b9g6cs68b9k6gqj0bb2cko64bb2c5h64phh6so3edplc8",
+        "google_calendar_etag": "\"3469497184163000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "e2a8dc56-ecea-4c3b-b55c-cad4f513ec2c",
+      "kind": "EVENT",
+      "title": "Aman Agarwal's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-11-09T18:30:00.000Z",
+      "end_time": "2023-11-10T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6cpm4ophcdhj8bb470r36b9k6kq3gbb269j3ib9jcor64d9pc4pjep9o6g",
+        "google_calendar_etag": "\"3469496596641000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "60668bd0-fca8-4af7-9b10-3e64912f860e",
+      "kind": "EVENT",
+      "title": "Himanshu's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-09-27T18:30:00.000Z",
+      "end_time": "2023-09-28T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6go34d1i68o68b9lchj30b9kchhm6b9p69hj0bb2cpj32d1j70sjeob560",
+        "google_calendar_etag": "\"3469497252690000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "5b63c631-c059-4523-a9eb-63229ee5cbf7",
+      "kind": "EVENT",
+      "title": "Yashvi's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-07-15T18:30:00.000Z",
+      "end_time": "2023-07-16T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6gp30ohhccsjcbb364o3gb9k74pjabb165i30b9l6gsjac9j6gr64dj36s",
+        "google_calendar_etag": "\"3469497132903000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "49b67453-90ab-4324-a401-fbcb50fc97a3",
+      "kind": "EVENT",
+      "title": "Mummy's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-04-26T18:30:00.000Z",
+      "end_time": "2023-04-27T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6hh32e1p6hij6bb6cdh6ab9k70pjib9ocgsjab9j75j3ecb46ko36e1k64",
+        "google_calendar_etag": "\"3469496913954000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "f2973d96-4d37-4d35-bcf1-1ddf1a3d7e35",
+      "kind": "EVENT",
+      "title": "Prasidh's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-01-13T18:30:00.000Z",
+      "end_time": "2023-01-14T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6pgj2ob56ksmcb9gc8q6ab9kcorm4b9p6crmcb9ic4ojce9m75ijee356g",
+        "google_calendar_etag": "\"3469496819832000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "8b887d72-fec8-482f-97d8-e5e0f098f738",
+      "kind": "EVENT",
+      "title": "Suvam Prakash's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-11-30T18:30:00.000Z",
+      "end_time": "2023-12-01T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6srjic1h68o66b9ic4qjgb9k6dj6cbb26ooj8bb56sr68p1p68sm6e9p6c",
+        "google_calendar_etag": "\"3469496703282000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "cec54b8d-bfba-4635-883f-985222b4e1dd",
+      "kind": "EVENT",
+      "title": "Naman Sabnani's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-11-13T18:30:00.000Z",
+      "end_time": "2023-11-14T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6ss3gc9o70qj0b9g68rjgb9k75hjcb9p71h66bb3c5j64c3168p30db46c",
+        "google_calendar_etag": "\"3469496619640000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "9888efb5-ee80-4807-aa74-de307ad79ff5",
+      "kind": "EVENT",
+      "title": "Akash Pandey (2nd)'s birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-12-01T18:30:00.000Z",
+      "end_time": "2023-12-02T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6ss66d9icdgmcbb574sjeb9kcgq66b9o64q34b9i70pjacb574sm4dj46o",
+        "google_calendar_etag": "\"3469496739912000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "b14e51fb-5c26-4a6a-81b0-cf57987f968c",
+      "kind": "EVENT",
+      "title": "Rishabh Paul's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-05-21T18:30:00.000Z",
+      "end_time": "2023-05-22T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "70o66c1hcgq66b9k6hhm6b9k71hmab9o70q6cbb665h68dr268pm2dhgco",
+        "google_calendar_etag": "\"3469496976002000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "bf559ec9-2619-4e98-be6d-ca26f5332556",
+      "kind": "EVENT",
+      "title": "Upam's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-07-24T18:30:00.000Z",
+      "end_time": "2023-07-25T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "70smce9gcgsjabb46sp64b9kccqj0bb1c8q36b9o74s66dpi6sqm2d3574",
+        "google_calendar_etag": "\"3469497193494000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "02065afe-ee6c-4b89-a51b-ffc18218201a",
+      "kind": "EVENT",
+      "title": "Nubo birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-10-20T18:30:00.000Z",
+      "end_time": "2023-10-21T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "74oj4pb464rjib9h65i6ab9k6krjgbb16opm8bb16pgj4c9gc4qjce1g74",
+        "google_calendar_etag": "\"3469496252861000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "e337bddf-c1f3-407e-91ab-23d0741d4ce5",
+      "kind": "EVENT",
+      "title": "Saket's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-10-10T18:30:00.000Z",
+      "end_time": "2023-10-11T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "74ojidj5cooj0b9pcpgm2b9k6li36bb2ckr6ab9g6ssjgphmc8q30opkc8",
+        "google_calendar_etag": "\"3469496543513000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "a1b37a9b-9cde-4f00-a525-57038e4cb005",
+      "kind": "EVENT",
+      "title": "Akash Pandey's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-06-07T18:30:00.000Z",
+      "end_time": "2023-06-08T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "74qm2dhickrm8b9i6or68b9kcoom2bb26kr6ab9i60rj2cj4c4s36d1j70",
+        "google_calendar_etag": "\"3469497022517000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "d011c7ee-6ff9-4939-8500-5d2e2c047842",
+      "kind": "EVENT",
+      "title": "Suraj Kumar's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-09-28T18:30:00.000Z",
+      "end_time": "2023-09-29T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "75h38pj4cco6ab9nclh68b9k6crmcbb16phm4bb471i3eor2cdijecho64",
+        "google_calendar_etag": "\"3469497273308000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "ae27a360-3ca5-4fa5-9036-21282bdb44ee",
+      "kind": "EVENT",
+      "title": "Rohit's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-10-26T18:30:00.000Z",
+      "end_time": "2023-10-27T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "c4pm4cpp60q3cbb46grjab9k6osm2b9o70o3cb9icdi6aor46oo3cdj274",
+        "google_calendar_etag": "\"3469496466563000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "7e2a055a-201a-4dff-8328-4e210dbeecfd",
+      "kind": "EVENT",
+      "title": "Shubhang's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-08-09T18:30:00.000Z",
+      "end_time": "2023-08-10T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "c9gm6e1l70om8b9ocor62b9kchh3cbb1coqjab9p70oj8dr16or6cd1m6g",
+        "google_calendar_etag": "\"3469497227708000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "3318d7b7-8174-4668-9a0a-c1dc7cda2cfd",
+      "kind": "EVENT",
+      "title": "Aakash Poddar's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-06-17T18:30:00.000Z",
+      "end_time": "2023-06-18T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "c9j34e9lc8sj4b9k70q68b9k60rmcbb1c4o62b9n60o38php74r30o9k6o",
+        "google_calendar_etag": "\"3469497076048000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "06afaca2-9ba1-4ad4-bab7-8dd58f6e0f15",
+      "kind": "EVENT",
+      "title": "Udit's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-02-18T18:30:00.000Z",
+      "end_time": "2023-02-19T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "ccom4e32cksj4b9gcpim2b9kchh3cbb2cor3ibb664s3gc9i64omcoppck",
+        "google_calendar_etag": "\"3469496872548000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "c0962f44-be1f-4bb8-83c8-61d9b93498cc",
+      "kind": "EVENT",
+      "title": "Subham Dash's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-05-15T18:30:00.000Z",
+      "end_time": "2023-05-16T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "ccrj6dpn74o66b9l6gr34b9k6go3cb9o6cp3eb9g64o3ad3160r32cb464",
+        "google_calendar_etag": "\"3469496951040000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "9d25e02d-5797-446d-90a6-0c96e0595416",
+      "kind": "EVENT",
+      "title": "Poorvika Didi's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-12-17T18:30:00.000Z",
+      "end_time": "2023-12-18T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "ckp66phi6pj3ebb46cpjib9k71gjabb1ckq3ib9gccom4p3371j6cohlck",
+        "google_calendar_etag": "\"3469496774735000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "55851c44-d1bb-46e0-815e-ee33ce1802a2",
+      "kind": "EVENT",
+      "title": "Rachit Agarwal's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-11-28T18:30:00.000Z",
+      "end_time": "2023-11-29T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "ckq68p9p6lh32b9icgsj8b9k71hm2bb16cpj0b9g61i64dhn6phj8d356k",
+        "google_calendar_etag": "\"3469496631294000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "62ff2da1-4ccf-444d-a8fa-712b18b8b94d",
+      "kind": "EVENT",
+      "title": "Pratyay's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-12-27T18:30:00.000Z",
+      "end_time": "2023-12-28T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "ckrm2e9jcgpj0b9i6hijab9kcksm6b9o6crj8b9o74q68db4c9i64c326s",
+        "google_calendar_etag": "\"3469496788376000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "3b75bc04-d01d-4ed8-96cf-ffed97773851",
+      "kind": "EVENT",
+      "title": "Mayank's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-05-11T18:30:00.000Z",
+      "end_time": "2023-05-12T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "clh3aeb46cojab9mc9i6ab9kcdj62b9p71h32bb1clij4dhl68r38d1g74",
+        "google_calendar_etag": "\"3469496932886000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "aed1b366-90e3-4e74-a03f-399dd707dc5d",
+      "kind": "EVENT",
+      "title": "Adity Verma's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2023-10-14T18:30:00.000Z",
+      "end_time": "2023-10-15T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "clhm2chi6tim6bb56go38b9kchj3ibb274qm8b9k60r6aoph65hm2d1pco",
+        "google_calendar_etag": "\"3469496566170000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "1a897297-2f74-4203-ac54-49ffc6a8be9c",
+      "kind": "EVENT",
+      "title": "Happy birthday!",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2005-05-29T18:30:00.000Z",
+      "end_time": "2005-05-30T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "vdinmg22ioqvk2m7drpfokj604",
+        "google_calendar_etag": "\"3488267650502327\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "ed03f277-9582-4152-b201-c39b834ae167",
+      "kind": "EVENT",
+      "title": "Akshat Shrivastava's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2024-02-14T18:30:00.000Z",
+      "end_time": "2024-02-15T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6thjcc1occpjib9j6csmab9k6tij0b9pcpim2bb26gp6cob368o66cpl6g",
+        "google_calendar_etag": "\"3479689110936000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "fac3536a-9207-41d7-a72c-4cf956b1cb6d",
+      "kind": "EVENT",
+      "title": "Samarth Sinha's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2024-02-16T18:30:00.000Z",
+      "end_time": "2024-02-17T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "cpj68e35c8r6abb4chgjab9k6dgjebb26pi68b9iccs32c1g70pjcdj264",
+        "google_calendar_etag": "\"3479689140814000\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "1e4cd2ba-6885-432d-b37f-a38f87a37df5",
+      "kind": "EVENT",
+      "title": "Sristi Dutta's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2024-12-24T18:30:00.000Z",
+      "end_time": "2024-12-25T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "cgpjgchg70s6cb9nc9ijib9kc8rm2b9o74r34bb56gp6ap31ccs66c1gco",
+        "google_calendar_etag": "\"3485136773276862\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "5059aa5b-c117-4043-b819-188b73a5fee2",
+      "kind": "EVENT",
+      "title": "Ari's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2024-09-23T18:30:00.000Z",
+      "end_time": "2024-09-24T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6go30cj1c5hj0b9mchhj4b9k75ijgb9o6kp36b9pc9hj8oj2c5i3gdhlc4",
+        "google_calendar_etag": "\"3499687561287998\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "6e4a3231-27e3-43b3-8e26-c2a1548f29ce",
+      "kind": "EVENT",
+      "title": "Pappu Mama's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2024-08-12T18:30:00.000Z",
+      "end_time": "2024-08-13T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6gsj8d9l68p6cbb26kq64b9kclgj6b9o6gs3gb9l6lh34dhg6kojge1pcg",
+        "google_calendar_etag": "\"3510127813965022\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "efe171ab-8876-47cb-8677-2ae8e9f9f43a",
+      "kind": "EVENT",
+      "title": "Ci test",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-08-21T06:30:00.000Z",
+      "end_time": "2025-08-21T07:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "6li3cohj6gr68bb1coqjgb9kc8o68bb16pij0b9m6th62d3664q30cj36g",
+        "google_calendar_etag": "\"3511273322658462\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "388febb9-7088-4665-b732-fc438718e452",
+      "kind": "EVENT",
+      "title": "Jolly LLB 3 (UA16+)",
+      "description": "To see detailed information for automatically created events like this one, use the official Google Calendar app. https://g.co/calendar\n\nThis event was created from an email you received in Gmail. https://mail.google.com/mail?extsrc=cal&plid=ACUX6DM3q7aKz9H9c1wmcrpcTNEJhty8Ww12UXA\n",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-09-29T09:25:00.000Z",
+      "end_time": "2025-09-29T10:25:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "3vapfrmifer0ovd3b74325jkjo",
+        "google_calendar_etag": "\"3518225698326590\"",
+        "location": "Miraj Cinemas: Newtown, Kolkata(SCREEN 1), Kolkata, Kolkata",
+        "is_all_day": false,
+        "source": "google_calendar"
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "6bb57ae6-53a5-4edc-9a73-38d9e287e895",
+      "kind": "EVENT",
+      "title": "Cn test",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-04T18:30:00.000Z",
+      "end_time": "2025-11-05T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "61h62c1k70rjab9ncdh68b9k6hgj2bb16th34bb66lijie1kcco3cp1ocg",
+        "google_calendar_etag": "\"3524032574934526\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "2409d3ef-7e24-4b48-bd93-81c753f3412b",
+      "kind": "EVENT",
+      "title": "Innovember: 72-Hour MERN Challenge",
+      "description": "Get up-to-date information at: https://luma.com/84fxlvpi?pk=g-HwYg4TcFJFlqBFj\n\nNovember 8 - November 10 | Online Hackathon | Free Entry\nBuild. Compete. Innovate.\nJoin passionate developers and students across the country in a 72-hour coding sprint on Sandbox Pro, where real-world innovation meets execution.\n\n💻 Why Participate?\n✅ Build a functional MERN prototype in just 72 hours\n✅ Compete with developers nationwide\n✅ Earn certificates & exciting prizes\n✅ Feature your project on LinkedIn and gain industry visibility\n✅ Free Access to Sandbox Pro platform\n✅ Learn and interact with mentors Aman & Akansha\n\n🔥 Timeline\n🗓️ Access & Demo: Nov 8\nPlatform demo + guidelines\n🗓️…\n\nHosted by Divya Varma & Aadya",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-08T05:30:00.000Z",
+      "end_time": "2025-11-10T07:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "2eo28fidajkbvh48ehi3bhg458",
+        "google_calendar_etag": "\"3524866652523870\"",
+        "location": "https://luma.com/join/g-HwYg4TcFJFlqBFj",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "hackathon"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "37e1f063-130a-4090-8acd-eeb2bdfd9623",
+      "kind": "EVENT",
+      "title": "EiS meet",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-09T15:30:00.000Z",
+      "end_time": "2025-11-09T16:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "60sjgcj468rjebb4c4rj4b9k61h34b9p6spjib9ocpgj8dpicdim2ohp70",
+        "google_calendar_etag": "\"3525271362565950\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "meeting",
+          "club"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "308d0806-f643-47e3-bea7-b9342e6ac1f0",
+      "kind": "EVENT",
+      "title": "Shivank Attal's birthday",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2024-02-01T18:30:00.000Z",
+      "end_time": "2024-02-02T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6kpj8db16so34bb361im6b9kc8o30bb2c8o64b9n6op64dhk6di66pb4c4",
+        "google_calendar_etag": "\"3527151248825278\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ],
+        "hidden": true
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:12:30.751Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "7dc45f5c-0311-4e80-a0f8-c14423f18707",
+      "kind": "EVENT",
+      "title": "Mentor Meeting",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-26T06:30:00.000Z",
+      "end_time": "2025-11-26T07:00:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "69hmco9g6ks32bb269h3cb9k74s38bb174smcb9m6oq66dpj6pj36p9p6g",
+        "google_calendar_etag": "\"3528180987547102\"",
+        "calendar_color": "2",
+        "color_hex": "#33b679",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "meeting",
+          "club"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "9dbb766c-26ae-49a0-97e5-5ab7a77ccb61",
+      "kind": "EVENT",
+      "title": "WiftHub Interview",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-26T10:30:00.000Z",
+      "end_time": "2025-11-26T10:45:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "1genook9putagv6299k2i0k76o",
+        "google_calendar_etag": "\"3528181024640766\"",
+        "location": "Online meeting: https://meet.google.com/mng-qzqq-mze PIN: 447 271 537",
+        "calendar_color": "10",
+        "color_hex": "#0b8043",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Work",
+        "auto_tags": [
+          "meeting"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "09511921-6617-4150-a4f4-0b1db5f498ff",
+      "kind": "EVENT",
+      "title": "Puri",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-12-01T05:00:00.000Z",
+      "end_time": "2025-12-02T09:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "c4smachi60q3ab9m6srjeb9kckrm8b9p75i6ab9pc8o6cp9mc9j6ad1j70",
+        "google_calendar_etag": "\"3528304252745758\"",
+        "calendar_color": "9",
+        "color_hex": "#3f51b5",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "travel"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "9bb7fa68-7d82-4e8d-803e-5e1a407002f5",
+      "kind": "EVENT",
+      "title": "IEEE CS Meeting",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-26T16:30:00.000Z",
+      "end_time": "2025-11-26T17:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "cgs3ce3364q6cb9i60pjab9k70sjibb16kq34b9i6sqj6p9h64q3ed1jcg",
+        "google_calendar_etag": "\"3528311826301310\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "meeting",
+          "club"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "3323cdd8-9c7e-4b2d-93f9-5962b4792778",
+      "kind": "EVENT",
+      "title": "Open Elective Selection",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-29T05:00:00.000Z",
+      "end_time": "2025-11-29T07:00:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "cgr3idr2climabb16cq64b9kc8qj2bb16gp34bb4clh6aob370q3echic4",
+        "google_calendar_etag": "\"3528504445383326\"",
+        "is_all_day": false,
+        "source": "google_calendar"
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "dad4c127-b0b3-4f87-8dc8-c53ecc313f47",
+      "kind": "EVENT",
+      "title": "EiS Round Table",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-30T04:30:00.000Z",
+      "end_time": "2025-11-30T06:00:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "60qm6d32cgs3cbb66ph36b9k6dh66bb26or38b9o71ijcohpc4s6achpcg",
+        "google_calendar_etag": "\"3528989768659454\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "meeting",
+          "club"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "416a49c4-ddc5-4ab5-8ea1-881e80864e09",
+      "kind": "EVENT",
+      "title": "Airbus Test",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-12-06T04:30:00.000Z",
+      "end_time": "2025-12-07T18:29:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "60r68dhkc4s36b9n6phjeb9k6sqj8bb2c4rjab9p74p3ad1kc4s36chh6k",
+        "google_calendar_etag": "\"3529893947495614\"",
+        "calendar_color": "3",
+        "color_hex": "#8e24aa",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "bed57246-1ff7-41c6-8cd5-213b9a073c85",
+      "kind": "EVENT",
+      "title": "Krhythm GBM",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-12-06T10:30:00.000Z",
+      "end_time": "2025-12-06T12:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "6ti68cb575j6ab9j6oqm8b9k70pm2bb1c8s6ab9i6oojgdr2c4o3eob1c4",
+        "google_calendar_etag": "\"3529898725230814\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Work",
+        "auto_tags": [
+          "meeting"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "308824b2-2d3d-408e-a001-0a29b6f1925f",
+      "kind": "EVENT",
+      "title": "Alan Walker India Tour - Bhubaneshwar",
+      "description": "To see detailed information for automatically created events like this one, download the official Google Calendar app for your Android phone or tablet. https://www.google.com/calendar/android\n\nThis event was created from an email you received in Gmail. https://mail.google.com/mail?extsrc=cal&plid=ACUX6DMl0KAMEuo48vsEplJsMeM1Xe4OwSFoYn4\n",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-04-19T10:30:00.000Z",
+      "end_time": "2025-04-19T11:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "0gbqqm733sfsto26kdd5bl8s7c",
+        "google_calendar_etag": "\"3530170944297246\"",
+        "location": "Venue To Be Announced: Bhubaneswar, Bhubaneswar",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "entertainment"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "8eb9ae49-4b42-41a8-ab08-f510d706e360",
+      "kind": "EVENT",
+      "title": "F1: The Movie",
+      "description": "To see detailed information for automatically created events like this one, download the official Google Calendar app for your Android phone or tablet. https://www.google.com/calendar/android\n\nThis event was created from an email you received in Gmail. https://mail.google.com/mail?extsrc=cal&plid=ACUX6DNfJ823sUd3jHsQZK6EAZ8j0dbcDLA1oVs\n",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-07-12T07:35:00.000Z",
+      "end_time": "2025-07-12T08:35:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "sdrkv5pp06uqok20q8pm5dp0no",
+        "google_calendar_etag": "\"3530170952386590\"",
+        "location": "INOX: DN Regalia Mall, Bhubaneswar, Bhubaneswar",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "entertainment"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "44dc94bc-14d4-4feb-812e-276d256188c2",
+      "kind": "EVENT",
+      "title": "IEEE CS Meeting",
+      "description": "Created by Flowmate\n\nID: b32fafa2-cd94-47bb-a398-c834071cf88f",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-12-07T16:30:00.000Z",
+      "end_time": "2025-12-07T17:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "2t71b3orde7di4vkhukuf6trh0",
+        "google_calendar_etag": "\"3530170999831294\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "meeting",
+          "club"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "465f5814-6131-4819-9b00-9f057e838d6f",
+      "kind": "EVENT",
+      "title": "IEEE recruitment",
+      "description": "Created by Flowmate\n\nID: 230738bb-8462-4a17-8fff-fb957f622f7a",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-28T09:30:00.000Z",
+      "end_time": "2025-11-28T13:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "3fdalnicu47gviba6r2gre2mag",
+        "google_calendar_etag": "\"3530171002206270\"",
+        "calendar_color": "1",
+        "color_hex": "#7986cb",
+        "is_all_day": false,
+        "source": "google_calendar"
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "e8e6c314-9b8e-4e15-98d6-1601a261b309",
+      "kind": "EVENT",
+      "title": "Hass Elective Selection",
+      "description": "Created by Flowmate\n\nID: 80621289-d528-43f1-b0a9-99e4c10e7a38",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-27T06:30:00.000Z",
+      "end_time": "2025-11-27T09:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "8crqt0foo6dc4d8f7rvj41tacs",
+        "google_calendar_etag": "\"3530171004640894\"",
+        "is_all_day": false,
+        "source": "google_calendar"
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "920f4786-6e05-4d2b-ac1b-06cfddfd79bb",
+      "kind": "EVENT",
+      "title": "Wifthub meeting",
+      "description": "Created by Flowmate\n\nID: 8f1dad13-c6f7-4bba-b355-88e136cc8c2f",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-12-04T08:00:00.000Z",
+      "end_time": "2025-12-04T09:00:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "9d1hvukp3ibd4v5fpdhjsqunk8",
+        "google_calendar_etag": "\"3530171017603678\"",
+        "calendar_color": "9",
+        "color_hex": "#3f51b5",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Work",
+        "auto_tags": [
+          "meeting"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "e4795a8f-ce7f-4238-b078-e91ce1a5cd64",
+      "kind": "EVENT",
+      "title": "IEEE meet",
+      "description": "Created by Flowmate\n\nID: c9325e46-87da-4611-b300-9d38bbab9c4c",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-12-05T16:00:00.000Z",
+      "end_time": "2025-12-05T17:00:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "35jgcb39jkelubh78o423o1ats",
+        "google_calendar_etag": "\"3530171019915134\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "meeting",
+          "club"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "0ebd3ae1-a3ec-4afa-8c0a-d3db5a8e1f5b",
+      "kind": "EVENT",
+      "title": "Assignment due: Vomychat.com",
+      "description": "Created by Flowmate\n\nID: cea96691-d5c9-4a48-bb96-ecc0d681b896",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-01-08T12:30:00.000Z",
+      "end_time": "2025-01-08T13:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "0gv800lrhjjtnv57es9tkdl164",
+        "google_calendar_etag": "\"3530171255796734\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "17138de6-5482-43a3-943f-285f694b5f53",
+      "kind": "EVENT",
+      "title": "Babylon",
+      "description": "To see detailed information for automatically created events like this one, download the official Google Calendar app for your Android phone or tablet. https://www.google.com/calendar/android\n\nThis event was created from an email you received in Gmail. https://mail.google.com/mail?extsrc=cal&plid=ACUX6DMx1n45xk0Tdjf7NfIJj6rSoM_XYj5VCjY\n",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-05-30T15:00:00.000Z",
+      "end_time": "2025-05-30T16:00:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "26olmcf4kadr6s2n8i1rd0l4cg",
+        "google_calendar_etag": "\"3530171255935678\"",
+        "location": "AE 370, AE Block, Bidhannagar, Sector 1, Salt Lake, Kolkata",
+        "is_all_day": false,
+        "source": "google_calendar"
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "0e2c26c3-ba96-4c4e-b6c3-1f2cbb99e094",
+      "kind": "EVENT",
+      "title": "Movie: Shin Chan The Spicy Kasukabe Dancers in India",
+      "description": "To see detailed information for automatically created events like this one, download the official Google Calendar app for your Android phone or tablet. https://www.google.com/calendar/android\n\nThis event was created from an email you received in Gmail. https://mail.google.com/mail?extsrc=cal&plid=ACUX6DOebLAgPLed0B81FN9sGmpf2w5rLvhiwqw\n",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-10-01T12:15:00.000Z",
+      "end_time": "2025-10-01T13:15:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "2njoggor1iiddud546s6m66t70",
+        "google_calendar_etag": "\"3530171256005150\"",
+        "location": "PVR Manisquare, Mani Square Mall, Kolkata, Mani Square Mall, Plot no 164/1, Nr. Apollo Hospital, EM Bypass Road, Kolkata, West Bengal 700054, India, Kolkata, West Bengal 700054",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "entertainment"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "eb8fa8fb-ce95-46a3-a89c-490c7952fe54",
+      "kind": "EVENT",
+      "title": "Reservation at Pepper Town",
+      "description": "To see detailed information for automatically created events like this one, download the official Google Calendar app for your Android phone or tablet. https://www.google.com/calendar/android\n\nThis event was created from an email you received in Gmail. https://mail.google.com/mail?extsrc=cal&plid=ACUX6DNL7ppNju4lGKgG1UaHr9tyRJFr9BnW8gk\n",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-10-04T15:00:00.000Z",
+      "end_time": "2025-10-04T16:00:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "e69ehfl21o4gq6rf34k13s1d8s",
+        "google_calendar_etag": "\"3530171256481950\"",
+        "location": "Pepper Town, Bidhannagar, Kolkata",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "entertainment"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "5d7a4e0c-cdd1-4126-916a-1efd45eeee89",
+      "kind": "EVENT",
+      "title": "Hpc quiz and class",
+      "description": "Created by Flowmate\n\nID: ea390135-a440-4aae-a916-17be9e989e18",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-11T16:15:00.000Z",
+      "end_time": "2025-11-11T17:15:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "64gbim2vs3fe8u6uerhbi92l0c",
+        "google_calendar_etag": "\"3530171256663806\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "964f9223-284b-4d84-8b5a-fa84849c6c46",
+      "kind": "EVENT",
+      "title": "CN Theory test-2 (5 marks)",
+      "description": "Application Layer \nMCQ",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-08-18T17:30:00.000Z",
+      "end_time": "2025-08-18T18:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "j4s41tmg5ac1o07nmtof6lo0j4",
+        "google_calendar_etag": "\"3530171283366590\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "6d25d79f-3b38-4190-a67e-c268af4a26ad",
+      "kind": "EVENT",
+      "title": "EE Quiz Test",
+      "description": "Created by Flowmate\n\nID: 627cf558-ae1a-443b-8947-2f31f30cb9ed",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-09-04T02:30:00.000Z",
+      "end_time": "2025-09-04T03:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "09c102ru44l9l6mpe6llkep954",
+        "google_calendar_etag": "\"3530171288291838\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "443ed8dc-6de4-4d1f-b47f-9a6bc1be4b5f",
+      "kind": "EVENT",
+      "title": "Placement test",
+      "description": "Created by Flowmate\n\nID: a4e2a879-c509-4b38-b9e5-e350652925d4",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-09T04:30:00.000Z",
+      "end_time": "2025-11-09T06:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "2mvdd4prgjrs335cglh5ekmvo0",
+        "google_calendar_etag": "\"3530171302916062\"",
+        "calendar_color": "10",
+        "color_hex": "#0b8043",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "23e1670f-f0be-4fd6-a4fa-394de191c6eb",
+      "kind": "EVENT",
+      "title": "Admit Card Collection",
+      "description": "Created by Flowmate\n\nID: d9311806-594c-479b-886b-eda53eedf557",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-11T09:00:00.000Z",
+      "end_time": "2025-11-11T12:00:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "9tupuas428f0nubeoa7i092rdg",
+        "google_calendar_etag": "\"3530171306360126\"",
+        "location": "A-308 Counter-4",
+        "calendar_color": "4",
+        "color_hex": "#e67c73",
+        "is_all_day": false,
+        "source": "google_calendar"
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "72cd42c9-1a8e-4f16-93f7-a590388f6d14",
+      "kind": "EVENT",
+      "title": "E-Cell GBM",
+      "description": "Created by Flowmate\n\nID: 24d9c6fc-cb14-4b5d-972f-e4702ea74849",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-30T06:00:00.000Z",
+      "end_time": "2025-11-30T08:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "0tnembb375mujg3rlf31b6fmdc",
+        "google_calendar_etag": "\"3530171321827070\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "meeting",
+          "club"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "5735171f-3f94-4b8b-88d8-b3ef513cd067",
+      "kind": "EVENT",
+      "title": "Arka",
+      "description": "Created by Flowmate\n\nID: 6efb1560-d8c2-45c3-9c4e-22c6f2b0b6f7",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-12-06T09:30:00.000Z",
+      "end_time": "2025-12-06T10:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "573vmplk1c40ppuhrq3rsq8rtc",
+        "google_calendar_etag": "\"3530171330088990\"",
+        "is_all_day": false,
+        "source": "google_calendar"
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "31059488-f16d-4d75-9433-eb1a722207d5",
+      "kind": "EVENT",
+      "title": "EiS Monthly Meeting",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-08T12:00:00.000Z",
+      "end_time": "2025-11-08T13:00:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "MONTHLY",
+      "metadata": {
+        "google_calendar_id": "c8o30chk6cp34b9j6pijab9kc8q64bb275im4b9pckqm8ohm61im4d9lcg",
+        "google_calendar_etag": "\"3530172615187742\"",
+        "calendar_color": "1",
+        "color_hex": "#7986cb",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "meeting",
+          "club"
+        ]
+      },
+      "created_at": "2025-12-07T06:00:40.495Z",
+      "updated_at": "2025-12-07T06:00:40.495Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "bac9f188-8f81-444c-bbda-90edecbdfa22",
+      "kind": "EVENT",
+      "title": "HTML assignment",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-12-03T18:30:00.000Z",
+      "end_time": "2025-12-04T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "70o32cb1c8ojcb9j6dj66b9kcoqmcbb165gjgbb4cdj64c1l6pj62p9lc4",
+        "google_calendar_etag": "\"3529646174967550\"",
+        "is_all_day": true,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:54:38.161Z",
+      "updated_at": "2025-12-07T06:54:38.161Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "4d9dae91-dc59-4053-9926-06b53c8550d3",
+      "kind": "EVENT",
+      "title": "Exams Start",
+      "description": "Created by Flowmate\n\nID: 073aeff5-b138-42c6-88c3-96a6c54b6bd4",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-12-11T18:30:00.000Z",
+      "end_time": "2025-12-11T19:30:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "8s7upjn8agh9265sq3plhbqeq4",
+        "google_calendar_etag": "\"3530170331466942\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:54:38.161Z",
+      "updated_at": "2025-12-07T06:54:38.161Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "7ba6a8a4-f22a-4f44-a180-ca408220840b",
+      "kind": "EVENT",
+      "title": "EiS Monthly Meeting",
+      "description": "Created by Flowmate\n\nID: 615b2aa8-50b4-431d-a670-0b5a3f1fdd1d",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-08T12:00:00.000Z",
+      "end_time": "2025-11-08T13:00:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "82rrqfnua2qmh9i5e8tpc9qoc0",
+        "google_calendar_etag": "\"3530171038264030\"",
+        "calendar_color": "1",
+        "color_hex": "#7986cb",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "meeting",
+          "club"
+        ]
+      },
+      "created_at": "2025-12-07T06:54:38.161Z",
+      "updated_at": "2025-12-07T06:54:38.161Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "f752d6e5-eac5-473d-812b-964afb1beb89",
+      "kind": "EVENT",
+      "title": "Cn test",
+      "description": "Created by Flowmate\n\nID: e5b7c499-251a-42d3-922d-6574cb48f451",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-04T18:30:00.000Z",
+      "end_time": "2025-11-05T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "79jtm4fnj30fqrt3256fsjdn0s",
+        "google_calendar_etag": "\"3530171256311134\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:54:38.161Z",
+      "updated_at": "2025-12-07T06:54:38.161Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "aeba1826-630a-4ecf-ac7a-61bade8c808a",
+      "kind": "EVENT",
+      "title": "HTML assignment",
+      "description": "Created by Flowmate\n\nID: 9d45cdb1-f378-4578-b532-cd18295cffd6",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-12-03T18:30:00.000Z",
+      "end_time": "2025-12-04T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "16ede5735e0sia1bgtfdce86gc",
+        "google_calendar_etag": "\"3530171323479390\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "exam"
+        ]
+      },
+      "created_at": "2025-12-07T06:54:38.161Z",
+      "updated_at": "2025-12-07T06:54:38.161Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "b8b0e87e-b8b9-498c-b949-1eb26840cb53",
+      "kind": "EVENT",
+      "title": "Sristi Dutta's birthday",
+      "description": "Created by Flowmate\n\nID: 052d8b60-97a9-4766-a06b-5b6d1a8dfa35",
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2024-12-24T18:30:00.000Z",
+      "end_time": "2024-12-25T18:29:59.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": "YEARLY",
+      "metadata": {
+        "google_calendar_id": "6o58esikslf70unm8r1015enu8",
+        "google_calendar_etag": "\"3530171333354110\"",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Personal",
+        "auto_tags": [
+          "birthday"
+        ]
+      },
+      "created_at": "2025-12-07T06:54:38.161Z",
+      "updated_at": "2025-12-07T06:54:38.161Z",
+      "canonical_tags": []
+    },
+    {
+      "id": "18bf1d59-7593-4b62-a920-8b8a530bf290",
+      "kind": "EVENT",
+      "title": "EiS Monthly Meeting",
+      "description": null,
+      "status": "ACTIVE",
+      "priority": 1,
+      "start_time": "2025-11-08T12:00:00.000Z",
+      "end_time": "2025-11-08T13:00:00.000Z",
+      "deadline": null,
+      "duration_minutes": null,
+      "recurrence": null,
+      "metadata": {
+        "google_calendar_id": "c8o30chk6cp34b9j6pijab9kc8q64bb275im4b9pckqm8ohm61im4d9lcg_20251108T120000Z",
+        "google_calendar_etag": "\"3530172615187742\"",
+        "calendar_color": "1",
+        "color_hex": "#7986cb",
+        "is_all_day": false,
+        "source": "google_calendar",
+        "auto_context": "Academic",
+        "auto_tags": [
+          "meeting",
+          "club"
+        ]
+      },
+      "created_at": "2025-12-07T06:54:38.161Z",
+      "updated_at": "2025-12-07T06:54:38.161Z",
+      "canonical_tags": []
+    }
+  ],
+  "relationships": [
+    {
+      "id": "5c8d016e-da37-4b7d-92b1-5519579b51f7",
+      "to": "812314dc-b63d-4e4e-91b0-65188bec8a0a",
+      "type": "TAGGED_WITH",
+      "meta": {},
+      "from": "83fb5629-4ee9-42fd-96da-0e88bd77e2cf",
+      "created_at": "2025-12-06T17:19:01.681Z"
+    },
+    {
+      "meta": {},
+      "to": "812314dc-b63d-4e4e-91b0-65188bec8a0a",
+      "type": "TAGGED_WITH",
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "from": "c4237f91-d549-45ba-97c1-a7c0171fce17",
+      "id": "bec2fd65-c6b9-4e06-be33-58483d569290"
+    },
+    {
+      "from": "696cf997-0989-4ce0-8abc-5a6f5be8b11e",
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "meta": {},
+      "to": "812314dc-b63d-4e4e-91b0-65188bec8a0a",
+      "type": "TAGGED_WITH",
+      "id": "0b43c614-f27d-4ee1-bbbc-e8693ddc3d70"
+    },
+    {
+      "id": "05a46837-7efe-4593-b3f3-128aa95fff87",
+      "type": "TAGGED_WITH",
+      "to": "32e76fef-0752-4b32-9279-bf7c31090227",
+      "from": "696cf997-0989-4ce0-8abc-5a6f5be8b11e",
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "meta": {}
+    },
+    {
+      "type": "TAGGED_WITH",
+      "from": "b32fafa2-cd94-47bb-a398-c834071cf88f",
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "meta": {},
+      "id": "c59230b6-63d8-4209-8b8b-944b121607ec",
+      "to": "812314dc-b63d-4e4e-91b0-65188bec8a0a"
+    },
+    {
+      "type": "TAGGED_WITH",
+      "id": "1027dd93-0074-42b9-8386-71d47230c909",
+      "meta": {},
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "from": "073aeff5-b138-42c6-88c3-96a6c54b6bd4",
+      "to": "4b526d0e-0dab-43e2-b0cb-b59ec4fede62"
+    },
+    {
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "type": "TAGGED_WITH",
+      "to": "e09ab26a-9657-4f00-9879-1ab8fedfe832",
+      "meta": {},
+      "from": "073aeff5-b138-42c6-88c3-96a6c54b6bd4",
+      "id": "98463820-cab4-4bf3-9d8a-3704be50ca87"
+    },
+    {
+      "from": "e58aab3a-343c-4f86-aab3-94645939a004",
+      "meta": {},
+      "id": "08b38c97-d686-4245-869d-a0c87f96c2fa",
+      "type": "TAGGED_WITH",
+      "to": "4b526d0e-0dab-43e2-b0cb-b59ec4fede62",
+      "created_at": "2025-12-06T17:19:01.681Z"
+    },
+    {
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "id": "50522e71-c8b8-4ace-b6ae-fd14b5d65e7a",
+      "to": "4b526d0e-0dab-43e2-b0cb-b59ec4fede62",
+      "from": "d4da6cc7-6048-4b47-8497-9f8006df24fb",
+      "meta": {},
+      "type": "TAGGED_WITH"
+    },
+    {
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "meta": {},
+      "to": "8ddb2e30-f1de-4724-a2e0-c93a744be89d",
+      "from": "d4da6cc7-6048-4b47-8497-9f8006df24fb",
+      "type": "TAGGED_WITH",
+      "id": "e2442ba5-33a9-41c3-8fb2-edded812a09f"
+    },
+    {
+      "created_at": "2025-12-06T17:19:01.681Z",
+      "meta": {},
+      "to": "e09ab26a-9657-4f00-9879-1ab8fedfe832",
+      "from": "d4da6cc7-6048-4b47-8497-9f8006df24fb",
+      "id": "f9702334-5ca5-4927-9a14-e6dc863d6f1f",
+      "type": "TAGGED_WITH"
+    }
+  ],
+  "messages": [
+    {
+      "id": "init-1",
+      "role": "assistant",
+      "text": "Welcome to Flowmate. I am ready to organize your productivity graph. What are you working on?",
+      "created_at": "2025-12-07T06:00:27.437Z"
+    },
+    {
+      "id": "5c47b997-188c-4e3b-b62f-3dcca278b7f9",
+      "role": "user",
+      "text": "Please analyze these unconnected items and suggest how to link them:\n- Staffroom (ID: 3005a2)\n- Flowmate App (ID: ebac79)\n- Meeting (ID: 072064)\n- Birthday (ID: 1b5aef)\n- Mummy Papa Anniv (ID: 97268f)\n- Tanuj Bhaiya's birthday (ID: bd1901)\n- Kshitij Singh's birthday (ID: a85c80)\n- Siddharth, Adwai, Saranya's birthday (ID: 13d1e2)\n- Priyanshu's birthday (ID: d4496a)\n- Ujjawal Anand Bday's birthday (ID: 88b702)\n- Jayesh's birthday (ID: d3876c)\n- Lakshya Bhaiya's birthday (ID: e0a333)\n- Aman Agarwal's birthday (ID: 13ec2c)\n- Himanshu's birthday (ID: 2f860e)\n- Yashvi's birthday (ID: e5cbf7)\n- Mummy's birthday (ID: fc97a3)\n- Prasidh's birthday (ID: 3d7e35)\n- Suvam Prakash's birthday (ID: 98f738)\n- Naman Sabnani's birthday (ID: b4e1dd)\n- Akash Pandey (2nd)'s birthday (ID: d79ff5)\n- Rishabh Paul's birthday (ID: 7f968c)\n- Upam's birthday (ID: 332556)\n- Nubo birthday (ID: 18201a)\n- Saket's birthday (ID: 1d4ce5)\n- Akash Pandey's birthday (ID: 4cb005)\n- Suraj Kumar's birthday (ID: 047842)\n- Rohit's birthday (ID: db44ee)\n- Shubhang's birthday (ID: beecfd)\n- Aakash Poddar's birthday (ID: da2cfd)\n- Udit's birthday (ID: 6e0f15)\n- Subham Dash's birthday (ID: 3498cc)\n- Poorvika Didi's birthday (ID: 595416)\n- Rachit Agarwal's birthday (ID: 1802a2)\n- Pratyay's birthday (ID: b8b94d)\n- Mayank's birthday (ID: 773851)\n- Adity Verma's birthday (ID: 07dc5d)\n- Happy birthday! (ID: a8be9c)\n- Akshat Shrivastava's birthday (ID: 4ae167)\n- Samarth Sinha's birthday (ID: b1cb6d)\n- Sristi Dutta's birthday (ID: a37df5)\n- Ari's birthday (ID: a5fee2)\n- Pappu Mama's birthday (ID: 8f29ce)\n- Ci test (ID: f9f43a)\n- Jolly LLB 3 (UA16+) (ID: 18e452)\n- Cn test (ID: 87e895)\n- Innovember: 72-Hour MERN Challenge (ID: f3412b)\n- EiS meet (ID: fd9623)\n- Shivank Attal's birthday (ID: 6ac1f0)\n- Mentor Meeting (ID: f18707)\n- WiftHub Interview (ID: 7ccb61)\n- Puri (ID: f498ff)\n- IEEE CS Meeting (ID: 7002f5)\n- Open Elective Selection (ID: 792778)\n- EiS Round Table (ID: 313f47)\n- HTML assignment (ID: 4dd185)\n- Airbus Test (ID: 864e09)\n- Krhythm GBM (ID: 073c85)\n- Alan Walker India Tour - Bhubaneshwar (ID: f1925f)\n- F1: The Movie (ID: 06e360)\n- IEEE CS Meeting (ID: 6188c2)\n- IEEE recruitment (ID: 838d6f)\n- Hass Elective Selection (ID: 61b309)\n- Wifthub meeting (ID: fd79bb)\n- IEEE meet (ID: a5cd64)\n- EiS Monthly Meeting (ID: 7772b3)\n- Assignment due: Vomychat.com (ID: 8e1f5b)\n- Babylon (ID: 4b5f53)\n- Movie: Shin Chan The Spicy Kasukabe Dancers in India (ID: 99e094)\n- Cn test (ID: 73aaf2)\n- Reservation at Pepper Town (ID: 52fe54)\n- Hpc quiz and class (ID: eeee89)\n- CN Theory test-2 (5 marks) (ID: 9c6c46)\n- EE Quiz Test (ID: 4a26ad)\n- Placement test (ID: be4b5f)\n- Admit Card Collection (ID: 91c6eb)\n- E-Cell GBM (ID: 8f6d14)\n- HTML assignment (ID: 36902a)\n- Arka (ID: 3cd067)\n- Sristi Dutta's birthday (ID: 60d567)\n- EiS Monthly Meeting (ID: 2207d5)\n- EiS Monthly Meeting (ID: f21ea7)",
+      "attachment": null,
+      "created_at": "2025-12-07T06:01:20.836Z"
+    },
+    {
+      "id": "e7b36c28-2b03-4564-b7e5-37aa20cf021c",
+      "role": "assistant",
+      "text": "I received your message but I'm not sure how to help with that. Try asking me to create a task, schedule an event, or update your goals!",
+      "attachment": null,
+      "created_at": "2025-12-07T06:01:55.447Z"
+    },
+    {
+      "id": "d42676d3-b5bb-419f-ad82-c6af235e9995",
+      "role": "user",
+      "text": "please do the neeful",
+      "attachment": null,
+      "created_at": "2025-12-07T06:02:52.008Z"
+    },
+    {
+      "id": "847e09e3-946b-493b-a5ec-a0535a470c76",
+      "role": "assistant",
+      "text": "I received your message but I'm not sure how to help with that. Try asking me to create a task, schedule an event, or update your goals!",
+      "attachment": null,
+      "created_at": "2025-12-07T06:03:30.716Z"
+    },
+    {
+      "id": "22a15d68-8075-4e0d-81a2-90e64a2608df",
+      "role": "user",
+      "text": "ahh",
+      "attachment": null,
+      "created_at": "2025-12-07T06:17:13.925Z"
+    },
+    {
+      "id": "c1f73849-ac0f-44bd-b6bf-a514ea17154b",
+      "role": "assistant",
+      "text": "I received your message but I'm not sure how to help with that. Try asking me to create a task, schedule an event, or update your goals!",
+      "attachment": null,
+      "created_at": "2025-12-07T06:17:43.698Z"
+    },
+    {
+      "id": "8d7bda1e-c379-4a07-805a-8d9c0046a91e",
+      "role": "user",
+      "text": ".",
+      "attachment": null,
+      "created_at": "2025-12-07T06:17:56.822Z"
+    },
+    {
+      "id": "00821358-64d9-4b66-818d-2fd800c38c56",
+      "role": "assistant",
+      "text": "I received your message but I'm not sure how to help with that. Try asking me to create a task, schedule an event, or update your goals!",
+      "attachment": null,
+      "created_at": "2025-12-07T06:18:35.389Z"
+    },
+    {
+      "id": "320fa5f2-ac43-4658-aee2-c28b7408128f",
+      "role": "user",
+      "text": "try again",
+      "attachment": null,
+      "created_at": "2025-12-07T06:26:06.823Z"
+    },
+    {
+      "id": "8d0eeac0-8f2b-487e-bbb1-0e7b2576d30d",
+      "role": "user",
+      "text": "i have a meeting at 4 pm tomorrow",
+      "attachment": null,
+      "created_at": "2025-12-07T06:55:03.700Z"
+    },
+    {
+      "id": "cc2c678a-ab87-4ec3-9d89-7977e18316fa",
+      "role": "assistant",
+      "text": "I had trouble processing that request. Try being more specific, like 'Create task X' or 'Schedule meeting Y tomorrow at 3pm'.",
+      "attachment": null,
+      "created_at": "2025-12-07T06:56:00.449Z"
+    }
+  ],
+  "settings": {
+    "timezone": "Asia/Kolkata",
+    "preferred_model": "gemini-2.5-flash",
+    "sync_enabled": false,
+    "debug_mode": true,
+    "custom_instructions": ""
+  }
+}
