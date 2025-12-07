@@ -1,18 +1,26 @@
 import React, { useMemo } from 'react';
 import { Entity, EntityKind } from '../types';
+import { getStreakInfo, getActivitySummary } from '../utils/streakCalculation';
+import { Flame, Trophy, Calendar, Clock } from 'lucide-react';
 
 interface ContributionHeatmapProps {
     entities: Entity[];
+    showStats?: boolean; // Show streak statistics
 }
 
-const ContributionHeatmap: React.FC<ContributionHeatmapProps> = ({ entities }) => {
+const ContributionHeatmap: React.FC<ContributionHeatmapProps> = ({ entities, showStats = true }) => {
+    // Calculate streak info using utilities
+    const streakInfo = useMemo(() => getStreakInfo(entities), [entities]);
+    const summary = useMemo(() => getActivitySummary(entities), [entities]);
+
     // Generate last 365 days of data
-    const { grid, maxCount, monthLabels } = useMemo(() => {
+    const { grid, maxCount, monthLabels, totalActivities } = useMemo(() => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
         // Count activities per day
         const counts: Record<string, number> = {};
+        let total = 0;
 
         entities.forEach(e => {
             // Count completed tasks, activities, and logged work
@@ -20,6 +28,7 @@ const ContributionHeatmap: React.FC<ContributionHeatmapProps> = ({ entities }) =
                 (e.status === 'COMPLETED' && (e.kind === EntityKind.TASK || e.kind === EntityKind.HABIT))) {
                 const dateStr = (e.start_time || e.updated_at || e.created_at).split('T')[0];
                 counts[dateStr] = (counts[dateStr] || 0) + 1;
+                total++;
             }
         });
 
@@ -64,7 +73,7 @@ const ContributionHeatmap: React.FC<ContributionHeatmapProps> = ({ entities }) =
             weeks.push(weekData);
         }
 
-        return { grid: weeks, maxCount: maxVal, monthLabels: monthLabelPositions };
+        return { grid: weeks, maxCount: maxVal, monthLabels: monthLabelPositions, totalActivities: total };
     }, [entities]);
 
     // Color scale (5 levels)
@@ -81,9 +90,50 @@ const ContributionHeatmap: React.FC<ContributionHeatmapProps> = ({ entities }) =
 
     const dayLabels = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
 
+    // Format minutes to hours and minutes
+    const formatDuration = (minutes: number) => {
+        if (minutes < 60) return `${minutes}m`;
+        const hours = Math.floor(minutes / 60);
+        const mins = minutes % 60;
+        return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    };
+
     return (
         <div className="bg-gray-800/30 border border-gray-700 rounded-xl p-4">
-            <h3 className="text-sm font-medium text-gray-300 mb-4">Activity Over The Last Year</h3>
+            {/* Header with title and stats */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                <h3 className="text-sm font-medium text-gray-300">Activity Over The Last Year</h3>
+
+                {showStats && (
+                    <div className="flex items-center gap-4 text-xs">
+                        {/* Current Streak */}
+                        <div className="flex items-center gap-1.5 px-2 py-1 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                            <Flame className={`w-3.5 h-3.5 ${streakInfo.current > 0 ? 'text-orange-400' : 'text-gray-500'}`} />
+                            <span className={streakInfo.current > 0 ? 'text-orange-300' : 'text-gray-400'}>
+                                {streakInfo.current} day{streakInfo.current !== 1 ? 's' : ''}
+                            </span>
+                        </div>
+
+                        {/* Best Streak */}
+                        <div className="flex items-center gap-1.5 px-2 py-1 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+                            <Trophy className="w-3.5 h-3.5 text-purple-400" />
+                            <span className="text-purple-300">Best: {streakInfo.longest}</span>
+                        </div>
+
+                        {/* This Week */}
+                        <div className="hidden md:flex items-center gap-1.5 px-2 py-1 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                            <Calendar className="w-3.5 h-3.5 text-blue-400" />
+                            <span className="text-blue-300">{summary.thisWeekCount} this week</span>
+                        </div>
+
+                        {/* Total Time */}
+                        <div className="hidden lg:flex items-center gap-1.5 px-2 py-1 bg-green-500/10 border border-green-500/20 rounded-lg">
+                            <Clock className="w-3.5 h-3.5 text-green-400" />
+                            <span className="text-green-300">{formatDuration(summary.totalMinutes)}</span>
+                        </div>
+                    </div>
+                )}
+            </div>
 
             {/* Month Labels and Grid Container */}
             <div className="overflow-x-auto pb-2">
@@ -119,7 +169,7 @@ const ContributionHeatmap: React.FC<ContributionHeatmapProps> = ({ entities }) =
                                         <div
                                             key={dayIndex}
                                             className={`w-[10px] h-[10px] rounded-sm ${getColor(day.count)} hover:ring-1 hover:ring-white/50 transition-all cursor-pointer`}
-                                            title={`${day.dateStr}: ${day.count} activities`}
+                                            title={`${day.dateStr}: ${day.count} ${day.count === 1 ? 'activity' : 'activities'}`}
                                         />
                                     ))}
                                 </div>
@@ -129,18 +179,22 @@ const ContributionHeatmap: React.FC<ContributionHeatmapProps> = ({ entities }) =
                 </div>
             </div>
 
-            {/* Legend */}
-            <div className="flex items-center justify-end gap-1 mt-3 text-[10px] text-gray-500">
-                <span>Less</span>
-                <div className="w-[10px] h-[10px] rounded-sm bg-gray-800" />
-                <div className="w-[10px] h-[10px] rounded-sm bg-green-900" />
-                <div className="w-[10px] h-[10px] rounded-sm bg-green-700" />
-                <div className="w-[10px] h-[10px] rounded-sm bg-green-500" />
-                <div className="w-[10px] h-[10px] rounded-sm bg-green-400" />
-                <span>More</span>
+            {/* Legend and total */}
+            <div className="flex items-center justify-between mt-3">
+                <span className="text-[10px] text-gray-500">{totalActivities} activities in the last year</span>
+                <div className="flex items-center gap-1 text-[10px] text-gray-500">
+                    <span>Less</span>
+                    <div className="w-[10px] h-[10px] rounded-sm bg-gray-800" />
+                    <div className="w-[10px] h-[10px] rounded-sm bg-green-900" />
+                    <div className="w-[10px] h-[10px] rounded-sm bg-green-700" />
+                    <div className="w-[10px] h-[10px] rounded-sm bg-green-500" />
+                    <div className="w-[10px] h-[10px] rounded-sm bg-green-400" />
+                    <span>More</span>
+                </div>
             </div>
         </div>
     );
 };
 
 export default ContributionHeatmap;
+

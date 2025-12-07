@@ -1,10 +1,14 @@
 import React, { useState } from 'react';
 import { useStore } from '../store';
-import { Terminal, X, Trash2, ChevronDown, ChevronRight, Copy, Check, Maximize2, Minimize2 } from 'lucide-react';
+import { Terminal, X, Trash2, ChevronDown, ChevronRight, Copy, Check, Maximize2, Minimize2, Wand2 } from 'lucide-react';
 
 type DetailTab = 'all' | 'system' | 'context' | 'history' | 'response';
 
-const DebugConsole: React.FC = () => {
+interface DebugConsoleProps {
+  onOpenGraphFixer?: () => void;
+}
+
+const DebugConsole: React.FC<DebugConsoleProps> = ({ onOpenGraphFixer }) => {
   const { settings, debugLogs, clearDebugLogs } = useStore();
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -118,6 +122,15 @@ const DebugConsole: React.FC = () => {
           >
             {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
+          {onOpenGraphFixer && (
+            <button
+              onClick={onOpenGraphFixer}
+              className="p-1.5 hover:bg-slate-800 rounded text-violet-400 hover:text-violet-300 transition-colors"
+              title="AI Graph Fixer"
+            >
+              <Wand2 size={14} />
+            </button>
+          )}
           <button
             onClick={clearDebugLogs}
             className="p-1.5 hover:bg-slate-800 rounded text-slate-500 hover:text-red-400 transition-colors"
@@ -152,7 +165,7 @@ const DebugConsole: React.FC = () => {
                   {new Date(log.timestamp).toLocaleTimeString()}
                 </span>
                 <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 ${log.type === 'orchestrator' ? 'bg-indigo-500/20 text-indigo-400' :
-                    log.type === 'sync' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'
+                  log.type === 'sync' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'
                   }`}>
                   {log.type}
                 </span>
@@ -170,8 +183,8 @@ const DebugConsole: React.FC = () => {
                           key={tab}
                           onClick={() => setActiveTab(tab)}
                           className={`px-2 py-1 text-[10px] rounded font-medium transition-colors ${activeTab === tab
-                              ? 'bg-indigo-500/30 text-indigo-300'
-                              : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
+                            ? 'bg-indigo-500/30 text-indigo-300'
+                            : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800'
                             }`}
                         >
                           {tab.charAt(0).toUpperCase() + tab.slice(1)}

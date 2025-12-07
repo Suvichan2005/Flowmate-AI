@@ -105,9 +105,10 @@ const CalendarView: React.FC = () => {
         if (e.metadata?.hidden) return false;
         if (e.kind === EntityKind.EVENT && e.start_time) return showEvents;
         if (e.kind === EntityKind.TASK && e.deadline && e.status !== EntityStatus.COMPLETED) return showTasks;
-        if (e.kind === EntityKind.ACTIVITY) return showLogs;
+        // Activities: show if they have start_time or created_at for date placement
+        if (e.kind === EntityKind.ACTIVITY && (e.start_time || e.created_at)) return showLogs;
         return false;
-    }), [entities, showEvents, showTasks]);
+    }), [entities, showEvents, showTasks, showLogs]);
 
     // Navigation helpers
     const handlePrev = () => {
@@ -287,8 +288,20 @@ const CalendarView: React.FC = () => {
         const results: { entity: Entity; isRecurring: boolean; isSpanning?: boolean }[] = [];
 
         calendarItems.forEach(e => {
-            const originalDate = new Date(e.kind === EntityKind.EVENT ? e.start_time! : e.deadline!);
-            const originalDateStr = originalDate.toDateString();
+            // Get date for this item
+            let itemDate: Date | null = null;
+            if (e.kind === EntityKind.EVENT && e.start_time) {
+                itemDate = new Date(e.start_time);
+            } else if (e.kind === EntityKind.TASK && e.deadline) {
+                itemDate = new Date(e.deadline);
+            } else if (e.kind === EntityKind.ACTIVITY) {
+                // Activities use start_time or fall back to created_at
+                itemDate = new Date(e.start_time || e.created_at);
+            }
+
+            if (!itemDate) return;
+
+            const originalDateStr = itemDate.toDateString();
 
             // Check if this is the original start date
             if (originalDateStr === dateStr) {
@@ -309,11 +322,11 @@ const CalendarView: React.FC = () => {
                 }
             }
             // Check if this date matches a recurring pattern
-            else if (e.recurrence && matchesRecurrence(originalDate, date, e.recurrence, e.metadata?.rrule)) {
+            else if (e.recurrence && matchesRecurrence(itemDate, date, e.recurrence, e.metadata?.rrule)) {
                 results.push({ entity: e, isRecurring: true });
             }
             // Also check for RRULE in metadata even without simple recurrence type
-            else if (e.metadata?.rrule && matchesRecurrence(originalDate, date, null as any, e.metadata.rrule)) {
+            else if (e.metadata?.rrule && matchesRecurrence(itemDate, date, null as any, e.metadata.rrule)) {
                 results.push({ entity: e, isRecurring: true });
             }
         });
@@ -755,7 +768,7 @@ const CalendarView: React.FC = () => {
 
     return (
         <div className="flex-1 flex flex-col bg-slate-950 p-4 md:p-6 h-full min-h-0">
-            <header className="mb-4 flex flex-wrap justify-between items-center gap-2 shrink-0">
+            <header className="mb-4 flex flex-wrap justify-between items-center gap-2 shrink-0 pl-14">
                 <div className="flex items-center gap-2 shrink-0">
                     <h1 className="text-lg md:text-xl font-bold text-slate-100 truncate max-w-[180px] md:max-w-none">{getHeaderTitle()}</h1>
                     <div className="flex bg-slate-900 rounded-lg border border-slate-800 p-0.5">

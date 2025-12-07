@@ -1,186 +1,93 @@
 # Structural Analysis
 
-This document provides a complete structural breakdown of the Flowmate codebase, detailing file organization, module boundaries, and file responsibilities.
+This document provides a breakdown of the codebase structure, file organization, and module boundaries.
 
----
-
-## Directory Tree
+## Top-Level Structure
 
 ```
-c:/Users/.../copy-of-copy-of-copy-of-flowmate/
-│
-├── 📄 App.tsx                    [21,607 bytes] Main application component
-├── 📄 index.tsx                  [349 bytes]    React DOM entry point
-├── 📄 store.ts                   [26,300 bytes] Zustand state management
-├── 📄 types.ts                   [3,120 bytes]  TypeScript type definitions
-├── 📄 index.html                 [1,425 bytes]  HTML template
-├── 📄 package.json               [560 bytes]    Dependencies
-├── 📄 vite.config.ts             [580 bytes]    Vite configuration
-├── 📄 tsconfig.json              [542 bytes]    TypeScript configuration
-├── 📄 .env.local                 [35 bytes]     Environment variables
-├── 📄 .gitignore                 [253 bytes]    Git ignore rules
-├── 📄 README.md                  [553 bytes]    Project readme
-├── 📄 metadata.json              [268 bytes]    Project metadata
-│
-├── 📁 components/                [21 files]     React UI components
-│   ├── ActivityHeatmap.tsx       [4,380 bytes]  GitHub-style activity grid
-│   ├── CalendarView.tsx          [9,667 bytes]  Monthly calendar with drag-drop
-│   ├── CommandPalette.tsx        [8,717 bytes]  Cmd+K quick actions
-│   ├── Confetti.tsx              [2,626 bytes]  Celebration animation
-│   ├── CreateEntityModal.tsx     [7,758 bytes]  Entity creation form
-│   ├── Dashboard.tsx             [18,134 bytes] Main dashboard view
-│   ├── DebugConsole.tsx          [3,800 bytes]  Developer debug panel
-│   ├── EntityDetailPanel.tsx     [34,949 bytes] Entity editor sidebar
-│   ├── EntityList.tsx            [11,985 bytes] Filtered entity list view
-│   ├── FocusTimer.tsx            [4,416 bytes]  Pomodoro-style timer
-│   ├── GraphView.tsx             [25,941 bytes] D3 graph visualization
-│   ├── KanbanBoard.tsx           [6,750 bytes]  Kanban board view
-│   ├── KnowledgeView.tsx         [10,665 bytes] Knowledge base with AI Q&A
-│   ├── LiveVoiceModal.tsx        [7,013 bytes]  Real-time voice interface
-│   ├── MarkdownText.tsx          [7,930 bytes]  Markdown renderer
-│   ├── PreviewModal.tsx          [3,013 bytes]  Operation confirmation
-│   ├── SettingsView.tsx          [10,521 bytes] Settings panel
-│   ├── Sidebar.tsx               [6,642 bytes]  Navigation sidebar
-│   ├── SmartEditor.tsx           [4,967 bytes]  AI-enhanced text editor
-│   ├── TimelineView.tsx          [9,008 bytes]  Timeline visualization
-│   └── ToastNotification.tsx     [1,673 bytes]  Toast notifications
-│
-├── 📁 services/                  [3 files]      Backend services
-│   ├── geminiService.ts          [12,073 bytes] Gemini AI orchestration
-│   ├── googleSync.ts             [2,624 bytes]  Google Calendar sync
-│   └── liveSession.ts            [9,505 bytes]  Real-time voice AI
-│
-└── 📁 utils/                     [1 file]       Utility functions
-    └── imageProcessing.ts        [2,529 bytes]  Image/audio processing
+c:/Users/KIIT0001/Documents/FLOWMATE/copy-of-copy-of-copy-of-flowmate/
+├── App.tsx                  # Main Application Shell & Chat Logic
+├── store.ts                 # Global State Management (Zustand)
+├── types.ts                 # TypeScript Core Definitions
+├── index.tsx                # Entry Point
+├── index.css                # Global Styles (Tailwind directives)
+├── index.html               # HTML Template
+├── vite.config.ts           # Vite Bundler Config
+└── .env.local               # Environment Variables (API Keys)
 ```
 
----
+## Directory: /components
 
-## File Categories
+Contains all React UI components.
 
-### 1. Core Application Files
+| Component | Responsibility |
+|-----------|----------------|
+| `ActivityHeatmap.tsx` | Visualizes activity logs over time. |
+| `AnalyticsView.tsx` | Dashboard for productivity metrics and charts. |
+| `AuthModal.tsx` | Firebase authentication (Sign In/Up). |
+| `BadHabitAlert.tsx` | Visual alert when "bad habits" are tracked. |
+| `CalendarView.tsx` | Drag-and-drop calendar for Events and Logs. |
+| `CommandPalette.tsx` | Quick action menu (Ctrl+K). |
+| `Confetti.tsx` | Visual celebration effect. |
+| `ContextSummary.tsx` | Displays active contexts in the dashboard. |
+| `ContributionHeatmap.tsx` | "Github-style" contribution graph. |
+| `CreateEntityModal.tsx` | Form for manually creating entities. |
+| `Dashboard.tsx` | Main landing view with summary widgets. |
+| `DebugConsole.tsx` | Floating console for system logs. |
+| `EntityDetailPanel.tsx` | Sidebar for editing selected node details. |
+| `EntityList.tsx` | List view components for Goals/Projects. |
+| `FocusTimer.tsx` | Pomodoro timer with floating widget. |
+| `GoalProgressChart.tsx` | Circular progress visualization. |
+| `GraphView.tsx` | D3.js interactive force-directed graph. |
+| `HabitCard.tsx` | Widget for tracking simple habits. |
+| `KanbanBoard.tsx` | Kanban view for tasks (To Do, Doing, Done). |
+| `KnowledgeView.tsx` | Interface for browsing Notes, Tags, and Contexts. |
+| `LiveVoiceModal.tsx` | UI for real-time voice interaction. |
+| `MarkdownText.tsx` | Utility to render Markdown safely. |
+| `MomentumHeatmap.tsx` | Advanced heatmap for dashboard. |
+| `PreviewModal.tsx` | Modal for previewing operations before commit. |
+| `QuickCapture.tsx` | Fast input for thoughts/tasks. |
+| `QuickStreaks.tsx` | Lightweight habit streak tracker. |
+| `ReviewPrompt.tsx` | Dialog for End-of-Day review. |
+| `SchedulesView.tsx` | **NEW**: Dedicated view for Class Schedules & Mess Menus. |
+| `SettingsView.tsx` | Configuration panel (API Keys, Timezone). |
+| `Sidebar.tsx` | Main navigation rail. |
+| `SmartEditor.tsx` | Enhanced text editor (unused/experimental). |
+| `StreakLeaderboard.tsx` | Gamification leaderboard. |
+| `TimelineView.tsx` | Linear timeline visualization of events. |
+| `ToastNotification.tsx` | Floating notification alerts. |
+| `UnifiedChatInput.tsx` | Input bar for text/files/voice. |
+| `WeeklySummary.tsx` | Weekly productivity rollup. |
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `App.tsx` | 527 | Root component; layout, chat interface, routing |
-| `store.ts` | 715 | Global state management with Zustand |
-| `types.ts` | 145 | Domain types, enums, interfaces |
-| `index.tsx` | ~15 | React DOM render entry |
+## Directory: /services
 
-### 2. Component Files (21 total)
+Contains logic for external APIs and backend integrations.
 
-**View Components** (render full page views):
-- `Dashboard.tsx` - Stats, briefing, activity heatmap
-- `CalendarView.tsx` - Monthly calendar
-- `KnowledgeView.tsx` - Notes browser with AI Q&A
-- `EntityList.tsx` - Generic entity list
-- `SettingsView.tsx` - User preferences
+| Service | Responsibility |
+|---------|----------------|
+| `firebase.ts` | Firebase initialization and Auth wrappers. |
+| `firestoreSync.ts` | Sync logic for Firestore (Save/Load). |
+| `geminiService.ts` | LLM Orchestration logic and prompt engineering. |
+| `googleSync.ts` | Google Calendar API adapter. |
+| `liveSession.ts` | WebSocket management for Gemini Live API. |
 
-**Visualization Components**:
-- `GraphView.tsx` - D3-powered force graph
-- `KanbanBoard.tsx` - Status-based board
-- `TimelineView.tsx` - Chronological timeline
-- `ActivityHeatmap.tsx` - GitHub-style heatmap
+## Directory: /utils
 
-**Modal Components**:
-- `CreateEntityModal.tsx` - Entity creation
-- `PreviewModal.tsx` - Operation confirmation
-- `LiveVoiceModal.tsx` - Voice interface
-- `EntityDetailPanel.tsx` - Entity editor (slide-over)
-- `CommandPalette.tsx` - Quick actions overlay
+Helper functions.
 
-**Utility Components**:
-- `Sidebar.tsx` - Navigation
-- `FocusTimer.tsx` - Focus session
-- `DebugConsole.tsx` - Developer tools
-- `ToastNotification.tsx` - Notifications
-- `Confetti.tsx` - Celebration effects
-- `MarkdownText.tsx` - Markdown parser
-- `SmartEditor.tsx` - AI text editing
+| File | Responsibility |
+|------|----------------|
+| `exportMarkdown.ts` | Export entities and graph data to Markdown format. |
+| `imageProcessing.ts` | Compressing and encoding images for LLM. |
+| `progressCalculation.ts` | Logic to calculate project/goal completion %. |
+| `streakCalculation.ts` | Streak, aggregation, and contribution data utilities. |
 
-### 3. Service Files
+## Directory: /public
 
-| Service | Lines | Responsibility |
-|---------|-------|----------------|
-| `geminiService.ts` | 329 | AI orchestration, briefing, knowledge Q&A |
-| `liveSession.ts` | 300 | WebSocket voice AI session |
-| `googleSync.ts` | 74 | Calendar sync adapter (simulated) |
+Static assets for PWA support.
 
-### 4. Utility Files
+| File | Responsibility |
+|------|----------------|
+| `manifest.json` | PWA manifest for installability. |
+| `sw.js` | Service worker for offline caching. |
 
-| Utility | Lines | Functions |
-|---------|-------|-----------|
-| `imageProcessing.ts` | 83 | Image resize, base64 encode, MIME detection |
-
----
-
-## Import Dependency Graph
-
-```mermaid
-graph LR
-    App --> store.ts
-    App --> types.ts
-    App --> geminiService.ts
-    App --> imageProcessing.ts
-    App --> Components
-    
-    subgraph Components
-        Dashboard
-        GraphView
-        CalendarView
-        EntityDetailPanel
-        Sidebar
-    end
-    
-    Components --> store.ts
-    Components --> types.ts
-    
-    geminiService.ts --> store.ts
-    geminiService.ts --> types.ts
-    geminiService.ts --> imageProcessing.ts
-    
-    liveSession.ts --> store.ts
-    liveSession.ts --> types.ts
-    
-    googleSync.ts --> types.ts
-```
-
----
-
-## Module Boundaries
-
-### State Layer (`store.ts`)
-- **Exports**: `useStore` hook
-- **Contains**: All state, actions, persistence logic
-- **Consumers**: App, all components, all services
-
-### Type Layer (`types.ts`)
-- **Exports**: Enums, interfaces, type aliases
-- **Contains**: `Entity`, `Relationship`, `ToonOperation`, etc.
-- **Consumers**: All files
-
-### Service Layer (`services/`)
-- **geminiService.ts**: Main AI logic
-- **liveSession.ts**: Voice session manager
-- **googleSync.ts**: External calendar sync
-- **Consumers**: App, select components
-
-### Component Layer (`components/`)
-- **Organized by**: View vs Modal vs Utility
-- **Data Flow**: Access state via `useStore`
-- **Side Effects**: Call services for AI operations
-
----
-
-## File Size Distribution
-
-| Category | Total Lines | File Count |
-|----------|-------------|------------|
-| Store & Types | 860 | 2 |
-| Main App | 527 | 1 |
-| Components | ~4,500 | 21 |
-| Services | 703 | 3 |
-| Utils | 83 | 1 |
-| **Total** | **~6,700** | **28** |
-
-> **Note**: Line counts are approximate due to dynamic file viewing.

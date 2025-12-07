@@ -74,7 +74,7 @@ const SettingsView: React.FC = () => {
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-950 p-6 md:p-8">
-      <header className="mb-8 border-b border-slate-800 pb-6">
+      <header className="mb-8 border-b border-slate-800 pb-6 pl-14">
         <h1 className="text-2xl font-bold text-slate-100">Settings</h1>
         <p className="text-slate-400 text-sm mt-1">
           Configure your Flowmate preferences and environment.

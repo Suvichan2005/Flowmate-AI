@@ -29,6 +29,14 @@ const KnowledgeView: React.FC = () => {
     // Selection
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+    // Sort options
+    type SortOption = 'recent' | 'oldest' | 'alpha' | 'priority';
+    const [sortBy, setSortBy] = useState<SortOption>('recent');
+
+    // Status filter
+    type StatusFilter = 'all' | 'active' | 'completed';
+    const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+
     // Refs
     const aiInputRef = useRef<HTMLInputElement>(null);
 
@@ -59,13 +67,17 @@ const KnowledgeView: React.FC = () => {
         return relatedIds;
     };
 
-    const hasActiveFilters = Boolean(searchQuery || selectedTag || selectedContext || kindFilter !== 'all');
+    const hasActiveFilters = Boolean(searchQuery || selectedTag || selectedContext || kindFilter !== 'all' || statusFilter !== 'all');
 
     // Filter Logic
     const filteredItems = useMemo(() => {
-        return entities.filter(e => {
+        let items = entities.filter(e => {
             if (e.status === EntityStatus.ARCHIVED || e.status === EntityStatus.CANCELED) return false;
             if (kindFilter !== 'all' && e.kind !== kindFilter) return false;
+
+            // Status filter
+            if (statusFilter === 'active' && e.status === EntityStatus.COMPLETED) return false;
+            if (statusFilter === 'completed' && e.status !== EntityStatus.COMPLETED) return false;
 
             const matchesSearch = !searchQuery ||
                 e.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -84,8 +96,27 @@ const KnowledgeView: React.FC = () => {
                 if (!hasContext && !relatedIds.has(e.id)) return false;
             }
             return true;
-        }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-    }, [entities, searchQuery, selectedTag, selectedContext, kindFilter, relationships]);
+        });
+
+        // Apply sort
+        switch (sortBy) {
+            case 'oldest':
+                items.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+                break;
+            case 'alpha':
+                items.sort((a, b) => a.title.localeCompare(b.title));
+                break;
+            case 'priority':
+                items.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+                break;
+            case 'recent':
+            default:
+                items.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+                break;
+        }
+
+        return items;
+    }, [entities, searchQuery, selectedTag, selectedContext, kindFilter, statusFilter, sortBy, relationships]);
 
     // Keyboard Shortcuts
     useEffect(() => {
@@ -146,6 +177,8 @@ const KnowledgeView: React.FC = () => {
         setSelectedTag(null);
         setSelectedContext(null);
         setKindFilter('all');
+        setStatusFilter('all');
+        setSortBy('recent');
     };
 
     // Selection Handlers
@@ -219,7 +252,7 @@ const KnowledgeView: React.FC = () => {
 
             {/* 1. Header & Controls */}
             <div className="shrink-0 border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm z-10">
-                <div className="p-4 flex flex-col gap-4">
+                <div className="p-4 pl-16 flex flex-col gap-4">
 
                     {/* Top Row: Title, Search, Actions */}
                     <div className="flex items-center gap-3">
@@ -310,7 +343,32 @@ const KnowledgeView: React.FC = () => {
                     {/* Expandable: Advanced Filters */}
                     {showFilters && (
                         <div className="flex flex-wrap gap-4 p-4 bg-slate-900 rounded-xl border border-slate-800 animate-in slide-in-from-top-2 fade-in">
-                            <div className="flex-1 min-w-[200px]">
+                            <div className="flex-1 min-w-[150px]">
+                                <label className="text-xs font-semibold text-slate-500 uppercase block mb-2">Sort By</label>
+                                <select
+                                    value={sortBy}
+                                    onChange={e => setSortBy(e.target.value as any)}
+                                    className="w-full bg-slate-950 border border-slate-800 text-slate-300 text-sm rounded-lg p-2 outline-none focus:border-indigo-500"
+                                >
+                                    <option value="recent">Recently Updated</option>
+                                    <option value="oldest">Oldest First</option>
+                                    <option value="alpha">Alphabetical</option>
+                                    <option value="priority">Priority</option>
+                                </select>
+                            </div>
+                            <div className="flex-1 min-w-[150px]">
+                                <label className="text-xs font-semibold text-slate-500 uppercase block mb-2">Status</label>
+                                <select
+                                    value={statusFilter}
+                                    onChange={e => setStatusFilter(e.target.value as any)}
+                                    className="w-full bg-slate-950 border border-slate-800 text-slate-300 text-sm rounded-lg p-2 outline-none focus:border-indigo-500"
+                                >
+                                    <option value="all">All Status</option>
+                                    <option value="active">Active Only</option>
+                                    <option value="completed">Completed</option>
+                                </select>
+                            </div>
+                            <div className="flex-1 min-w-[150px]">
                                 <label className="text-xs font-semibold text-slate-500 uppercase block mb-2">Filter by Tag</label>
                                 <select
                                     value={selectedTag || ''}
@@ -321,7 +379,7 @@ const KnowledgeView: React.FC = () => {
                                     {allTags.map(t => <option key={t.id} value={t.title}>#{t.title} ({t.usage_count})</option>)}
                                 </select>
                             </div>
-                            <div className="flex-1 min-w-[200px]">
+                            <div className="flex-1 min-w-[150px]">
                                 <label className="text-xs font-semibold text-slate-500 uppercase block mb-2">Filter by Context</label>
                                 <select
                                     value={selectedContext || ''}

@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { EntityKind, EntityStatus, RelationshipType, Entity } from '../types';
-import { Clock, CheckCircle2, Target, Calendar, TrendingUp, Sparkles, RefreshCw, ArrowRight, Zap, Briefcase, AlertTriangle, Link, Layers, X, Bot, CalendarClock, ListTodo } from 'lucide-react';
+import { Clock, CheckCircle2, Target, Calendar, TrendingUp, Sparkles, RefreshCw, ArrowRight, Zap, Briefcase, AlertTriangle, Link, Layers, X, Bot, CalendarClock, ListTodo, Flame, Trophy, Wand2 } from 'lucide-react';
 import ActivityHeatmap from './ActivityHeatmap';
 import MomentumHeatmap from './MomentumHeatmap';
 import MarkdownText from './MarkdownText';
 import { calculateProgress } from '../utils/progressCalculation';
+import { getStreakInfo, getActivitySummary } from '../utils/streakCalculation';
 import QuickStreaks from './QuickStreaks';
 
 interface StatCardProps {
@@ -91,7 +92,11 @@ const InsightModal: React.FC<InsightModalProps> = ({ title, items, onClose, onSe
     </div>
 );
 
-const Dashboard: React.FC = () => {
+interface DashboardProps {
+    onOpenGraphFixer?: () => void;
+}
+
+const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
     const { entities, relationships, selectEntity, dailyBriefing, refreshDailyBriefing, setView, addMessage, addToast, setPendingOrchestration } = useStore();
     const [briefingLoading, setBriefingLoading] = useState(false);
     const [showOrphansModal, setShowOrphansModal] = useState(false);
@@ -111,6 +116,10 @@ const Dashboard: React.FC = () => {
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
         .slice(0, 5);
 
+    // Calculate streak stats
+    const streakInfo = useMemo(() => getStreakInfo(entities), [entities]);
+    const activitySummary = useMemo(() => getActivitySummary(entities), [entities]);
+
     const handleGenerateBriefing = async () => {
         setBriefingLoading(true);
         await refreshDailyBriefing();
@@ -119,6 +128,14 @@ const Dashboard: React.FC = () => {
 
     const today = new Date().toISOString().split('T')[0];
     const isBriefingStale = !dailyBriefing || dailyBriefing.generated_for_date !== today;
+
+    // Format minutes to hours/minutes string
+    const formatDuration = (minutes: number) => {
+        if (minutes < 60) return `${minutes}m`;
+        const hours = Math.floor(minutes / 60);
+        const mins = minutes % 60;
+        return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    };
 
     // -- GRAPH INSIGHTS --
     const insights = useMemo(() => {
@@ -175,7 +192,7 @@ const Dashboard: React.FC = () => {
 
     return (
         <div className="flex-1 overflow-y-auto bg-slate-950 p-6 md:p-8">
-            <header className="mb-8 flex flex-col md:flex-row md:justify-between md:items-end gap-4">
+            <header className="mb-8 flex flex-col md:flex-row md:justify-between md:items-end gap-4 pl-14">
                 <div>
                     <h1 className="text-3xl font-bold text-slate-100 tracking-tight">Dashboard</h1>
                     <p className="text-slate-400 text-sm mt-1 flex items-center gap-2">
@@ -244,6 +261,56 @@ const Dashboard: React.FC = () => {
                 </div>
             </div>
 
+            {/* Streak Stats Banner */}
+            <div className="mb-6 bg-gradient-to-r from-orange-500/10 via-purple-500/10 to-blue-500/10 border border-slate-800 rounded-xl p-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                    {/* Current Streak */}
+                    <div className="flex items-center gap-3">
+                        <div className={`p-3 rounded-xl ${streakInfo.current > 0 ? 'bg-orange-500/20' : 'bg-slate-800'}`}>
+                            <Flame className={`w-6 h-6 ${streakInfo.current > 0 ? 'text-orange-400' : 'text-slate-500'}`} />
+                        </div>
+                        <div>
+                            <div className={`text-2xl font-bold ${streakInfo.current > 0 ? 'text-orange-300' : 'text-slate-400'}`}>
+                                {streakInfo.current} day{streakInfo.current !== 1 ? 's' : ''}
+                            </div>
+                            <div className="text-xs text-slate-500">Current Streak</div>
+                        </div>
+                    </div>
+
+                    {/* Best Streak */}
+                    <div className="flex items-center gap-3">
+                        <div className="p-3 rounded-xl bg-purple-500/20">
+                            <Trophy className="w-6 h-6 text-purple-400" />
+                        </div>
+                        <div>
+                            <div className="text-2xl font-bold text-purple-300">{streakInfo.longest}</div>
+                            <div className="text-xs text-slate-500">Best Streak</div>
+                        </div>
+                    </div>
+
+                    {/* This Week */}
+                    <div className="flex items-center gap-3">
+                        <div className="p-3 rounded-xl bg-blue-500/20">
+                            <Calendar className="w-6 h-6 text-blue-400" />
+                        </div>
+                        <div>
+                            <div className="text-2xl font-bold text-blue-300">{activitySummary.thisWeekCount}</div>
+                            <div className="text-xs text-slate-500">This Week</div>
+                        </div>
+                    </div>
+
+                    {/* Total Focus Time */}
+                    <div className="flex items-center gap-3">
+                        <div className="p-3 rounded-xl bg-green-500/20">
+                            <Clock className="w-6 h-6 text-green-400" />
+                        </div>
+                        <div>
+                            <div className="text-2xl font-bold text-green-300">{formatDuration(activitySummary.totalMinutes)}</div>
+                            <div className="text-xs text-slate-500">Total Focus</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             {/* Stats Row - 4 Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
@@ -342,6 +409,27 @@ const Dashboard: React.FC = () => {
                     <div className="text-2xl font-bold text-slate-100">{insights.needsNextAction.length}</div>
                     <div className="text-[10px] text-slate-500 font-medium uppercase">Stalled</div>
                 </div>
+
+                {/* Fix Graph AI Button */}
+                {(insights.orphans.length > 0 || insights.needsNextAction.length > 0) && onOpenGraphFixer && (
+                    <div
+                        onClick={onOpenGraphFixer}
+                        className="bg-gradient-to-br from-violet-500/10 to-indigo-500/10 border border-violet-500/30 rounded-xl p-4 hover:border-violet-500/60 cursor-pointer transition-all col-span-3"
+                    >
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 rounded-lg bg-violet-500/20 text-violet-400">
+                                    <Wand2 size={16} />
+                                </div>
+                                <div>
+                                    <div className="text-sm font-medium text-violet-200">AI Graph Fixer</div>
+                                    <div className="text-[10px] text-violet-400/70">Automatically categorize, tag, and connect entities</div>
+                                </div>
+                            </div>
+                            <ArrowRight size={16} className="text-violet-400" />
+                        </div>
+                    </div>
+                )}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
