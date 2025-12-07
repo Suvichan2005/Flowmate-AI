@@ -76,13 +76,15 @@ const KnowledgeView: React.FC = () => {
         }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
     }, [entities, searchQuery, selectedTag, selectedContext, kindFilter, relationships]);
 
-    // Ask AI
+    // Ask AI (uses filtered items to respect active filters)
     const handleAskAI = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!askQuery.trim()) return;
         setIsAsking(true);
         setAiAnswer(null);
-        const answer = await queryKnowledgeBase(askQuery, entities);
+        // Use filteredItems to respect tag/context/kind filters
+        const itemsToSearch = filteredItems.length > 0 ? filteredItems : entities;
+        const answer = await queryKnowledgeBase(askQuery, itemsToSearch);
         setAiAnswer(answer);
         setIsAsking(false);
     };

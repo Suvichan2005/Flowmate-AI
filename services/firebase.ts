@@ -45,10 +45,37 @@ const googleProvider = new GoogleAuthProvider();
 googleProvider.addScope('https://www.googleapis.com/auth/calendar');
 googleProvider.addScope('https://www.googleapis.com/auth/calendar.events');
 
-// Store the access token for Calendar API
-let googleAccessToken: string | null = null;
+// Store the access token for Calendar API (with localStorage persistence)
+const GOOGLE_TOKEN_KEY = 'flowmate_google_calendar_token';
+let googleAccessToken: string | null = localStorage.getItem(GOOGLE_TOKEN_KEY);
 
 export const getGoogleAccessToken = () => googleAccessToken;
+
+export const setGoogleAccessToken = (token: string | null) => {
+    googleAccessToken = token;
+    if (token) {
+        localStorage.setItem(GOOGLE_TOKEN_KEY, token);
+    } else {
+        localStorage.removeItem(GOOGLE_TOKEN_KEY);
+    }
+};
+
+// Re-authenticate to get fresh Google Calendar token
+export const refreshGoogleCalendarToken = async (): Promise<string | null> => {
+    try {
+        const result = await signInWithPopup(auth, googleProvider);
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) {
+            setGoogleAccessToken(credential.accessToken);
+            console.log('[Firebase] Google Calendar token refreshed');
+            return credential.accessToken;
+        }
+        return null;
+    } catch (error: any) {
+        console.error('[Firebase] Failed to refresh Google token:', error);
+        return null;
+    }
+};
 
 // --- Auth Functions ---
 
@@ -77,7 +104,7 @@ export const signInWithGoogle = async () => {
         // Extract OAuth access token for Google Calendar API
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (credential?.accessToken) {
-            googleAccessToken = credential.accessToken;
+            setGoogleAccessToken(credential.accessToken);
             console.log('[Firebase] Google Calendar access token obtained');
         }
 

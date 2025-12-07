@@ -176,8 +176,8 @@ export const GoogleCalendarAdapter = {
       const params = new URLSearchParams({
         timeMin,
         timeMax,
-        singleEvents: 'true',
-        orderBy: 'startTime'
+        singleEvents: 'false',  // Keep recurring events as single entity with RRULE
+        maxResults: '250'
       });
 
       const response = await fetch(`${CALENDAR_API_BASE}/calendars/primary/events?${params}`, {
@@ -205,20 +205,75 @@ export const GoogleCalendarAdapter = {
    * Convert a Google Calendar event to Flowmate Entity format
    */
   convertGoogleEventToEntity: (gcEvent: any): Partial<Entity> => {
-    const startTime = gcEvent.start?.dateTime || gcEvent.start?.date;
-    const endTime = gcEvent.end?.dateTime || gcEvent.end?.date;
+    // Detect all-day events (dateTime vs date)
+    const isAllDay = !gcEvent.start?.dateTime && !!gcEvent.start?.date;
+
+    let startTimeISO: string | undefined;
+    let endTimeISO: string | undefined;
+
+    if (isAllDay) {
+      // All-day events: parse date as local midnight (not UTC)
+      // Google sends "YYYY-MM-DD" format
+      const startDateParts = gcEvent.start.date.split('-');
+      const endDateParts = gcEvent.end?.date?.split('-');
+
+      // Create date at local midnight
+      startTimeISO = new Date(
+        parseInt(startDateParts[0]),
+        parseInt(startDateParts[1]) - 1,
+        parseInt(startDateParts[2]),
+        0, 0, 0
+      ).toISOString();
+
+      if (endDateParts) {
+        // Google Calendar all-day end date is exclusive, so Dec 26 means event ends at midnight Dec 25
+        // We'll set end time to 23:59:59 of the day BEFORE
+        const endDate = new Date(
+          parseInt(endDateParts[0]),
+          parseInt(endDateParts[1]) - 1,
+          parseInt(endDateParts[2]) - 1,  // Day before (exclusive → inclusive)
+          23, 59, 59
+        );
+        endTimeISO = endDate.toISOString();
+      }
+    } else {
+      // Timed events: use dateTime as-is
+      startTimeISO = gcEvent.start?.dateTime ? new Date(gcEvent.start.dateTime).toISOString() : undefined;
+      endTimeISO = gcEvent.end?.dateTime ? new Date(gcEvent.end.dateTime).toISOString() : undefined;
+    }
+
+    // Map Google Calendar RRULE to Flowmate recurrence type
+    let recurrence = null;
+    if (gcEvent.recurrence && gcEvent.recurrence.length > 0) {
+      const rrule = gcEvent.recurrence[0] || '';
+      if (rrule.includes('FREQ=DAILY')) recurrence = 'DAILY';
+      else if (rrule.includes('FREQ=WEEKLY')) recurrence = 'WEEKLY';
+      else if (rrule.includes('FREQ=MONTHLY')) recurrence = 'MONTHLY';
+      else if (rrule.includes('FREQ=YEARLY')) recurrence = 'YEARLY';
+    }
+
+    // Map Google Calendar colorId to hex color
+    const GCAL_COLORS: Record<string, string> = {
+      '1': '#7986cb', '2': '#33b679', '3': '#8e24aa', '4': '#e67c73',
+      '5': '#f6bf26', '6': '#f4511e', '7': '#039be5', '8': '#616161',
+      '9': '#3f51b5', '10': '#0b8043', '11': '#d50000'
+    };
+    const colorHex = gcEvent.colorId ? GCAL_COLORS[gcEvent.colorId] : undefined;
 
     return {
       kind: EntityKind.EVENT,
       title: gcEvent.summary || 'Untitled Event',
       description: gcEvent.description || '',
-      start_time: startTime ? new Date(startTime).toISOString() : undefined,
-      end_time: endTime ? new Date(endTime).toISOString() : undefined,
+      start_time: startTimeISO,
+      end_time: endTimeISO,
+      recurrence: recurrence,
       metadata: {
         google_calendar_id: gcEvent.id,
         google_calendar_etag: gcEvent.etag,
         location: gcEvent.location,
         calendar_color: gcEvent.colorId,
+        color_hex: colorHex,
+        is_all_day: isAllDay,
         source: 'google_calendar'
       }
     };
@@ -229,13 +284,17 @@ export const GoogleCalendarAdapter = {
    * Returns entities that don't already exist in Flowmate
    */
   importFromGoogleCalendar: async (existingEntities: Entity[]): Promise<Partial<Entity>[]> => {
-    // Fetch events for next 30 days
-    const now = new Date();
-    const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    // Fetch events - extend range to catch recurring events with past start dates
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    const sixMonthsFromNow = new Date();
+    sixMonthsFromNow.setMonth(sixMonthsFromNow.getMonth() + 6);
+
+    console.log('[GoogleSync] Fetching events from', oneYearAgo.toISOString(), 'to', sixMonthsFromNow.toISOString());
 
     const events = await GoogleCalendarAdapter.fetchEvents(
-      now.toISOString(),
-      thirtyDaysFromNow.toISOString()
+      oneYearAgo.toISOString(),
+      sixMonthsFromNow.toISOString()
     );
 
     // Filter out events that already exist (by google_calendar_id)
@@ -245,30 +304,18 @@ export const GoogleCalendarAdapter = {
         .map(e => e.metadata.google_calendar_id)
     );
 
+    console.log('[GoogleSync] Existing Google IDs in Flowmate:', [...existingGoogleIds]);
+    console.log('[GoogleSync] Fetched events from GCal:', events.map((e: any) => ({ id: e.id, title: e.summary, recurrence: e.recurrence })));
+
     const newEvents = events
-      .filter((e: any) => !existingGoogleIds.has(e.id))
+      .filter((e: any) => {
+        const exists = existingGoogleIds.has(e.id);
+        if (exists) console.log('[GoogleSync] Skipping existing:', e.summary);
+        return !exists;
+      })
       .map((e: any) => GoogleCalendarAdapter.convertGoogleEventToEntity(e));
 
-    console.log(`[GoogleSync] Found ${newEvents.length} new events to import`);
+    console.log(`[GoogleSync] Found ${newEvents.length} new events to import:`, newEvents.map(e => e.title));
     return newEvents;
-  },
-
-  /**
-   * Push a Flowmate entity to Google Calendar (auto-triggered on create/update)
-   */
-  pushToGoogleCalendar: async (entity: Entity, settings: UserSettings): Promise<SyncResult> => {
-    if (entity.kind !== EntityKind.EVENT) {
-      return { success: true }; // Only sync events
-    }
-
-    const existingGoogleId = entity.metadata?.google_calendar_id;
-
-    if (existingGoogleId) {
-      // Update existing
-      return GoogleCalendarAdapter.updateEvent(entity, existingGoogleId, settings);
-    } else {
-      // Create new
-      return GoogleCalendarAdapter.createEvent(entity, settings);
-    }
   }
 };

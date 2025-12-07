@@ -1,8 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { EntityKind, EntityStatus, Entity, RecurrenceType } from '../types';
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, CheckSquare, Clock, Plus, Grid3X3, List, CalendarDays, LayoutGrid, Repeat } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, CheckSquare, Clock, Plus, Grid3X3, List, CalendarDays, LayoutGrid, Repeat, RefreshCw, Cloud } from 'lucide-react';
 import CreateEntityModal from './CreateEntityModal';
+import { GoogleCalendarAdapter } from '../services/googleSync';
+import { refreshGoogleCalendarToken } from '../services/firebase';
+import { v4 as uuidv4 } from 'uuid';
 
 type ViewMode = 'month' | 'week' | 'day' | 'agenda';
 
@@ -35,7 +38,7 @@ const matchesRecurrence = (originalDate: Date, targetDate: Date, recurrence: Rec
 };
 
 const CalendarView: React.FC = () => {
-    const { entities, selectEntity, applyOperations } = useStore();
+    const { entities, selectEntity, applyOperations, addToast } = useStore();
     const [currentDate, setCurrentDate] = useState(new Date());
     const [createModalDate, setCreateModalDate] = useState<string | null>(null);
     const [createModalStartTime, setCreateModalStartTime] = useState<string | null>(null);
@@ -43,6 +46,7 @@ const CalendarView: React.FC = () => {
     const [viewMode, setViewMode] = useState<ViewMode>('agenda');
     const [showEvents, setShowEvents] = useState(true);
     const [showTasks, setShowTasks] = useState(true);
+    const [isSyncing, setIsSyncing] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
 
     // Initial scroll to 8 AM
@@ -81,6 +85,98 @@ const CalendarView: React.FC = () => {
     };
 
     const handleToday = () => setCurrentDate(new Date());
+
+    // Google Calendar Sync (2-WAY: Import from GCal + Export to GCal)
+    const handleGoogleSync = async () => {
+        setIsSyncing(true);
+        const settings = useStore.getState().settings;
+        let importCount = 0;
+        let exportCount = 0;
+
+        // Check if we have a valid token, if not try to refresh
+        if (!GoogleCalendarAdapter.isConnected()) {
+            addToast('Refreshing Google Calendar access...', 'info');
+            const newToken = await refreshGoogleCalendarToken();
+            if (!newToken) {
+                addToast('Please sign in with Google and grant Calendar access', 'error');
+                setIsSyncing(false);
+                return;
+            }
+        }
+
+        try {
+            // 1. IMPORT: Fetch events from Google Calendar → create in Flowmate
+            console.log('[Sync] Starting import from Google Calendar...');
+            const newEvents = await GoogleCalendarAdapter.importFromGoogleCalendar(entities);
+
+            if (newEvents.length > 0) {
+                const ops = newEvents.map(e => ({
+                    type: 'create_entity' as const,
+                    payload: {
+                        id: uuidv4(),
+                        ...e,
+                        status: EntityStatus.ACTIVE,
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                    }
+                }));
+                applyOperations(ops);
+                importCount = newEvents.length;
+                console.log(`[Sync] Imported ${importCount} events from GCal`);
+            }
+
+            // 2. EXPORT: Push Flowmate events (without google_calendar_id) → Google Calendar
+            console.log('[Sync] Starting export to Google Calendar...');
+            const eventsToExport = entities.filter(e =>
+                e.kind === EntityKind.EVENT &&
+                e.start_time &&
+                !e.metadata?.google_calendar_id &&
+                e.status !== EntityStatus.ARCHIVED
+            );
+
+            for (const event of eventsToExport) {
+                const result = await GoogleCalendarAdapter.createEvent(event, settings);
+                if (result.success && result.externalId) {
+                    // Update entity with google_calendar_id (use fields wrapper!)
+                    applyOperations([{
+                        type: 'update_entity',
+                        payload: {
+                            id: event.id,
+                            fields: {
+                                metadata: {
+                                    ...event.metadata,
+                                    google_calendar_id: result.externalId
+                                }
+                            }
+                        }
+                    }]);
+                    exportCount++;
+                    console.log(`[Sync] Exported "${event.title}" to GCal`);
+                } else {
+                    console.error(`[Sync] Failed to export "${event.title}":`, result.error);
+                }
+            }
+
+            // Show results
+            if (importCount === 0 && exportCount === 0) {
+                addToast('Calendar is fully synced!', 'success');
+            } else {
+                const messages = [];
+                if (importCount > 0) messages.push(`Imported ${importCount}`);
+                if (exportCount > 0) messages.push(`Exported ${exportCount}`);
+                addToast(`${messages.join(', ')} events`, 'success');
+            }
+        } catch (error: any) {
+            console.error('[CalendarView] Sync error:', error);
+            if (error.message?.includes('401') || error.message?.includes('unauthorized')) {
+                addToast('Token expired, please try again', 'info');
+            } else {
+                addToast('Failed to sync with Google Calendar', 'error');
+            }
+        } finally {
+            setIsSyncing(false);
+        }
+    };
 
     // Drag handlers
     const handleDragStart = (e: React.DragEvent, id: string) => {
@@ -134,17 +230,34 @@ const CalendarView: React.FC = () => {
     const month = currentDate.getMonth();
     const now = new Date();
 
-    // Get items for a specific date (including recurring occurrences)
-    const getItemsForDate = (date: Date): { entity: Entity; isRecurring: boolean }[] => {
+    // Get items for a specific date (including recurring occurrences AND multi-day events)
+    const getItemsForDate = (date: Date): { entity: Entity; isRecurring: boolean; isSpanning?: boolean }[] => {
         const dateStr = date.toDateString();
-        const results: { entity: Entity; isRecurring: boolean }[] = [];
+        const targetDateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+        const results: { entity: Entity; isRecurring: boolean; isSpanning?: boolean }[] = [];
 
         calendarItems.forEach(e => {
             const originalDate = new Date(e.kind === EntityKind.EVENT ? e.start_time! : e.deadline!);
+            const originalDateStr = originalDate.toDateString();
 
-            // Check if this is the original date
-            if (originalDate.toDateString() === dateStr) {
+            // Check if this is the original start date
+            if (originalDateStr === dateStr) {
                 results.push({ entity: e, isRecurring: false });
+            }
+            // Check for multi-day events: date is between start and end (exclusive of start, inclusive of end)
+            else if (e.kind === EntityKind.EVENT && e.start_time && e.end_time) {
+                const startDate = new Date(e.start_time);
+                const endDate = new Date(e.end_time);
+
+                // Convert to date-only for comparison (ignore time)
+                const eventStartDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+                const eventEndDateOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+
+                // Check if target date is after start date and on or before end date
+                if (targetDateOnly > eventStartDateOnly && targetDateOnly <= eventEndDateOnly) {
+                    results.push({ entity: e, isRecurring: false, isSpanning: true });
+                }
             }
             // Check if this date matches a recurring pattern
             else if (e.recurrence && matchesRecurrence(originalDate, date, e.recurrence)) {
@@ -170,46 +283,16 @@ const CalendarView: React.FC = () => {
         }
     };
 
-    const renderEventPill = (item: Entity, isRecurring: boolean = false, compact: boolean = false) => (
-        <div
-            key={`${item.id}-${isRecurring ? 'r' : 'o'}`}
-            draggable={!isRecurring}
-            onDragStart={!isRecurring ? (e) => handleDragStart(e, item.id) : undefined}
-            onClick={(e) => { e.stopPropagation(); selectEntity(item.id); }}
-            className={`text-[10px] px-1.5 py-0.5 rounded border-l-2 truncate cursor-pointer transition-colors flex items-center gap-1 ${item.kind === EntityKind.EVENT
-                ? 'bg-indigo-600/20 text-indigo-200 border-indigo-500 hover:bg-indigo-600/40'
-                : 'bg-emerald-600/20 text-emerald-200 border-emerald-500 hover:bg-emerald-600/40'
-                } ${draggedId === item.id ? 'opacity-50' : ''} ${isRecurring ? 'opacity-75' : ''} ${!isRecurring ? 'cursor-grab active:cursor-grabbing' : ''}`}
-            title={`${item.title}${isRecurring ? ' (recurring)' : ''}`}
-        >
-            {item.kind === EntityKind.EVENT ? <Clock size={8} /> : <CheckSquare size={8} />}
-            {isRecurring && <Repeat size={7} className="text-amber-400" />}
-            {!compact && <span className="truncate">{item.title}</span>}
-            {compact && <span className="truncate max-w-[50px]">{item.title}</span>}
-        </div>
-    );
+    const renderEventPill = (item: Entity, isRecurring: boolean = false, compact: boolean = false) => {
+        const customColor = item.metadata?.color_hex;
+        const isEvent = item.kind === EntityKind.EVENT;
 
-    const renderAbsoluteEvent = (item: Entity, isRecurring: boolean, containerDate: Date) => {
-        const startTime = item.start_time || item.deadline;
-        if (!startTime) return null;
-
-        const dateObj = new Date(startTime);
-        // Correct time for recurring events if necessary (for now assuming standard recurrence keeps time)
-        // Actually, we use the containerDate's date but the item's time
-        const startHour = dateObj.getHours();
-        const startMin = dateObj.getMinutes();
-        const startY = (startHour * 60 + startMin); // relative pixels
-
-        let durationMin = 60;
-        if (item.end_time) {
-            const endObj = new Date(item.end_time);
-            durationMin = (endObj.getTime() - dateObj.getTime()) / 60000;
-        } else if (item.duration_minutes) {
-            durationMin = item.duration_minutes;
-        }
-
-        // Min height 30px for visibility
-        const height = Math.max(30, durationMin);
+        // Use custom color if available, otherwise default colors
+        const colorStyle = customColor ? {
+            backgroundColor: `${customColor}20`,
+            borderColor: customColor,
+            color: customColor
+        } : undefined;
 
         return (
             <div
@@ -217,26 +300,108 @@ const CalendarView: React.FC = () => {
                 draggable={!isRecurring}
                 onDragStart={!isRecurring ? (e) => handleDragStart(e, item.id) : undefined}
                 onClick={(e) => { e.stopPropagation(); selectEntity(item.id); }}
+                className={`text-[10px] px-1.5 py-0.5 rounded border-l-2 truncate cursor-pointer transition-colors flex items-center gap-1 ${!customColor ? (isEvent
+                    ? 'bg-indigo-600/20 text-indigo-200 border-indigo-500 hover:bg-indigo-600/40'
+                    : 'bg-emerald-600/20 text-emerald-200 border-emerald-500 hover:bg-emerald-600/40')
+                    : 'hover:opacity-80'
+                    } ${draggedId === item.id ? 'opacity-50' : ''} ${isRecurring ? 'opacity-75' : ''} ${!isRecurring ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                style={colorStyle}
+                title={`${item.title}${isRecurring ? ' (recurring)' : ''}`}
+            >
+                {isEvent ? <Clock size={8} /> : <CheckSquare size={8} />}
+                {isRecurring && <Repeat size={7} className="text-amber-400" />}
+                {!compact && <span className="truncate">{item.title}</span>}
+                {compact && <span className="truncate max-w-[50px]">{item.title}</span>}
+            </div>
+        );
+    };
+
+    const renderAbsoluteEvent = (item: Entity, isRecurring: boolean, containerDate: Date, isSpanning: boolean = false) => {
+        const startTime = item.start_time || item.deadline;
+        if (!startTime) return null;
+
+        const eventStartDate = new Date(startTime);
+        const eventEndDate = item.end_time ? new Date(item.end_time) : null;
+
+        // Container day bounds
+        const dayStart = new Date(containerDate.getFullYear(), containerDate.getMonth(), containerDate.getDate(), 0, 0, 0);
+        const dayEnd = new Date(containerDate.getFullYear(), containerDate.getMonth(), containerDate.getDate(), 23, 59, 59);
+
+        // Determine if this is a multi-day event
+        const isMultiDay = eventEndDate &&
+            eventStartDate.toDateString() !== eventEndDate.toDateString();
+
+        let displayStartTime: Date;
+        let displayEndTime: Date;
+
+        if (isMultiDay || isSpanning) {
+            // For multi-day or spanning events, clamp to container day
+            const isStartDay = eventStartDate.toDateString() === containerDate.toDateString();
+            const isEndDay = eventEndDate && eventEndDate.toDateString() === containerDate.toDateString();
+
+            if (isStartDay) {
+                // Start day: original start time → end of day
+                displayStartTime = eventStartDate;
+                displayEndTime = dayEnd;
+            } else if (isEndDay) {
+                // End day: start of day → original end time
+                displayStartTime = dayStart;
+                displayEndTime = eventEndDate!;
+            } else {
+                // Middle spanning day: all day
+                displayStartTime = dayStart;
+                displayEndTime = dayEnd;
+            }
+        } else {
+            // Single-day event: use original times
+            displayStartTime = eventStartDate;
+            displayEndTime = eventEndDate || new Date(eventStartDate.getTime() + (item.duration_minutes || 60) * 60000);
+        }
+
+        const startHour = displayStartTime.getHours();
+        const startMin = displayStartTime.getMinutes();
+        const startY = (startHour * 60 + startMin); // pixels from top
+
+        const durationMin = (displayEndTime.getTime() - displayStartTime.getTime()) / 60000;
+
+        // Min height 30px for visibility, max 24 hours (1440 min)
+        const height = Math.min(1440, Math.max(30, durationMin));
+
+        // Custom color support
+        const customColor = item.metadata?.color_hex;
+        const colorStyle = customColor ? {
+            backgroundColor: `${customColor}30`,
+            borderColor: customColor,
+        } : undefined;
+
+        return (
+            <div
+                key={`${item.id}-${isRecurring ? 'r' : 'o'}-${containerDate.toDateString()}`}
+                draggable={!isRecurring && !isSpanning}
+                onDragStart={!isRecurring && !isSpanning ? (e) => handleDragStart(e, item.id) : undefined}
+                onClick={(e) => { e.stopPropagation(); selectEntity(item.id); }}
                 style={{
                     top: `${startY}px`,
                     height: `${height}px`,
                     left: '2px',
-                    right: '2px'
+                    right: '2px',
+                    ...colorStyle
                 }}
-                className={`absolute rounded border-l-2 cursor-pointer transition-all flex flex-col p-1 overflow-hidden z-10 ${item.kind === EntityKind.EVENT
+                className={`absolute rounded border-l-2 cursor-pointer transition-all flex flex-col p-1 overflow-hidden z-10 ${!customColor ? (item.kind === EntityKind.EVENT
                     ? 'bg-indigo-600/30 text-indigo-100 border-indigo-500 hover:bg-indigo-600/50 hover:z-20 shadow-sm'
-                    : 'bg-emerald-600/30 text-emerald-100 border-emerald-500 hover:bg-emerald-600/50 hover:z-20 shadow-sm'
-                    } ${draggedId === item.id ? 'opacity-50' : ''}`}
-                title={`${item.title}\n${dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                    : 'bg-emerald-600/30 text-emerald-100 border-emerald-500 hover:bg-emerald-600/50 hover:z-20 shadow-sm')
+                    : 'text-white hover:opacity-80 hover:z-20 shadow-sm'
+                    } ${draggedId === item.id ? 'opacity-50' : ''} ${isSpanning ? 'opacity-75 border-dashed' : ''}`}
+                title={`${item.title}${isSpanning ? ' (continues)' : ''}\n${displayStartTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${displayEndTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
             >
                 <div className="flex items-center gap-1 font-semibold text-[10px] leading-tight">
                     {item.kind === EntityKind.EVENT ? <Clock size={8} /> : <CheckSquare size={8} />}
-                    <span className="truncate">{item.title}</span>
+                    <span className="truncate">{item.title}{isSpanning ? ' ⋯' : ''}</span>
                 </div>
                 {height > 40 && (
                     <div className="text-[9px] opacity-80 truncate mt-0.5">
-                        {dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        {item.end_time && ` - ${new Date(new Date(item.end_time).getTime() + (isRecurring ? 0 : 0)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                        {displayStartTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {` - ${displayEndTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
                     </div>
                 )}
             </div>
@@ -310,7 +475,14 @@ const CalendarView: React.FC = () => {
                 <div className="grid grid-cols-8 gap-0 border-b border-slate-800 shrink-0 bg-slate-950 z-20">
                     <div className="p-2 text-xs text-slate-600 border-r border-slate-800"></div>
                     {weekDays.map(d => (
-                        <div key={d.toISOString()} className={`p-2 text-center border-r border-slate-800 ${d.toDateString() === now.toDateString() ? 'bg-indigo-500/10' : ''}`}>
+                        <div
+                            key={d.toISOString()}
+                            onClick={() => {
+                                setCurrentDate(new Date(d));
+                                setViewMode('day');
+                            }}
+                            className={`p-2 text-center border-r border-slate-800 cursor-pointer hover:bg-slate-800/50 transition-colors ${d.toDateString() === now.toDateString() ? 'bg-indigo-500/10' : ''}`}
+                        >
                             <div className="text-xs text-slate-500">{d.toLocaleDateString('en', { weekday: 'short' })}</div>
                             <div className={`text-lg font-semibold ${d.toDateString() === now.toDateString() ? 'text-indigo-400' : 'text-slate-300'}`}>
                                 {d.getDate()}
@@ -371,7 +543,7 @@ const CalendarView: React.FC = () => {
                                     ))}
 
                                     {/* Events */}
-                                    {dayItems.map(({ entity, isRecurring }) => renderAbsoluteEvent(entity, isRecurring, d))}
+                                    {dayItems.map(({ entity, isRecurring, isSpanning }) => renderAbsoluteEvent(entity, isRecurring, d, isSpanning))}
                                 </div>
                             );
                         })}
@@ -421,7 +593,7 @@ const CalendarView: React.FC = () => {
                             ))}
 
                             {/* Events */}
-                            {dayItems.map(({ entity, isRecurring }) => renderAbsoluteEvent(entity, isRecurring, currentDate))}
+                            {dayItems.map(({ entity, isRecurring, isSpanning }) => renderAbsoluteEvent(entity, isRecurring, currentDate, isSpanning))}
                         </div>
                     </div>
                 </div>
@@ -520,17 +692,29 @@ const CalendarView: React.FC = () => {
 
     return (
         <div className="flex-1 flex flex-col bg-slate-950 p-4 md:p-6 h-full overflow-hidden">
-            <header className="mb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-                <div className="flex items-center gap-4">
-                    <h1 className="text-xl md:text-2xl font-bold text-slate-100 min-w-[200px]">{getHeaderTitle()}</h1>
-                    <div className="flex bg-slate-900 rounded-lg border border-slate-800 p-1">
-                        <button onClick={handlePrev} className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors"><ChevronLeft size={18} /></button>
-                        <button onClick={handleToday} className="px-3 text-xs font-medium text-slate-400 hover:text-white transition-colors">Today</button>
-                        <button onClick={handleNext} className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors"><ChevronRight size={18} /></button>
+            <header className="mb-4 flex flex-wrap justify-between items-center gap-2 overflow-x-auto">
+                <div className="flex items-center gap-2 shrink-0">
+                    <h1 className="text-lg md:text-xl font-bold text-slate-100 truncate max-w-[180px] md:max-w-none">{getHeaderTitle()}</h1>
+                    <div className="flex bg-slate-900 rounded-lg border border-slate-800 p-0.5">
+                        <button onClick={handlePrev} className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors"><ChevronLeft size={16} /></button>
+                        <button onClick={handleToday} className="px-2 text-[10px] font-medium text-slate-400 hover:text-white transition-colors">Today</button>
+                        <button onClick={handleNext} className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors"><ChevronRight size={16} /></button>
                     </div>
+                    {/* Date Picker for quick navigation */}
+                    <input
+                        type="date"
+                        value={currentDate.toISOString().split('T')[0]}
+                        onChange={(e) => {
+                            if (e.target.value) {
+                                setCurrentDate(new Date(e.target.value + 'T12:00:00'));
+                            }
+                        }}
+                        className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 cursor-pointer hover:border-slate-500"
+                        title="Jump to date"
+                    />
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 flex-wrap">
                     <div className="flex bg-slate-900 rounded-lg border border-slate-800 p-1">
                         {viewModes.map(vm => (
                             <button
@@ -562,6 +746,19 @@ const CalendarView: React.FC = () => {
                             Tasks
                         </button>
                     </div>
+                    <button
+                        onClick={handleGoogleSync}
+                        disabled={isSyncing}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors text-xs font-medium disabled:opacity-50"
+                        title="Sync with Google Calendar"
+                    >
+                        {isSyncing ? (
+                            <RefreshCw size={14} className="animate-spin" />
+                        ) : (
+                            <Cloud size={14} />
+                        )}
+                        <span className="hidden md:inline">{isSyncing ? 'Syncing...' : 'Sync'}</span>
+                    </button>
                 </div>
             </header>
 
