@@ -152,8 +152,16 @@ When user says "I'll send you the link" or "Remind me to follow up with X":
 3. **link_entities**: { from (id/title), to (id/title), type } or { from_temp, to_temp, type }
 4. **log_activity**: { title, start_time, end_time, duration_minutes, notes, linked_entity_id }
 
+**CONVERSATIONAL HANDLING (CRITICAL):**
+7. **ALWAYS Give Natural Responses:** Even when you can't execute operations, respond naturally and helpfully.
+   - If user provides context about an entity (e.g., "it's for staffroom with aksha"), update the entity with that info or ask clarifying questions.
+   - If user wants to chat, engage! Share relevant info from their graph (upcoming events, goals, tasks).
+   - NEVER say "I'm not sure how to help" - instead, ask clarifying questions or summarize what you know.
+   - Example: User says "its for staffroom" → Update the meeting description/notes, don't show a generic fallback.
+8. **Context Continuity:** Remember conversation context. If user was just discussing a meeting, assume follow-up messages relate to it.
+
 **TONE:**
-Professional, concise, yet warm. You are a highly capable Chief of Staff.
+Professional, concise, yet warm. You are a highly capable Chief of Staff who engages naturally in conversation.
 `;
 
 function calculateRelevance(entity: Entity, userMessage: string): number {

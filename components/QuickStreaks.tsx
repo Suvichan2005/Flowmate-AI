@@ -3,8 +3,8 @@ import { useStore } from '../store';
 import { Flame, Plus, Check, Edit2, X, Calendar, Hash, Save } from 'lucide-react';
 import { EntityKind } from '../types';
 
-// Google Calendar color options
-export const CALENDAR_COLORS = [
+// Google Calendar color options (internal only - no export to avoid HMR issues)
+const CALENDAR_COLORS = [
     { id: '1', name: 'Lavender', hex: '#7986cb' },
     { id: '2', name: 'Sage', hex: '#33b679' },
     { id: '3', name: 'Grape', hex: '#8e24aa' },
@@ -31,7 +31,6 @@ const QuickStreaks: React.FC = () => {
 
     const handleIncrement = (streak: typeof miniStreaks[0]) => {
         if (isEditMode) {
-            // In edit mode, clicking opens edit form
             setEditingStreak(streak.id);
             setEditValue(String(streak.metadata?.current_streak || 0));
             setEditDate(streak.metadata?.last_date || new Date().toISOString().split('T')[0]);
@@ -50,16 +49,19 @@ const QuickStreaks: React.FC = () => {
         const isConsecutive = lastDate === yesterday;
         const newStreak = isConsecutive ? (streak.metadata?.current_streak || 0) + 1 : 1;
 
+        // FIXED: Use fields wrapper for update_entity
         applyOperations([{
             type: 'update_entity',
             payload: {
                 id: streak.id,
-                metadata: {
-                    ...streak.metadata,
-                    current_streak: newStreak,
-                    best_streak: Math.max(newStreak, streak.metadata?.best_streak || 0),
-                    last_date: today,
-                    total_days: (streak.metadata?.total_days || 0) + 1
+                fields: {
+                    metadata: {
+                        ...streak.metadata,
+                        current_streak: newStreak,
+                        best_streak: Math.max(newStreak, streak.metadata?.best_streak || 0),
+                        last_date: today,
+                        total_days: (streak.metadata?.total_days || 0) + 1
+                    }
                 }
             }
         }]);
@@ -70,15 +72,18 @@ const QuickStreaks: React.FC = () => {
     const saveEdit = (streak: typeof miniStreaks[0]) => {
         const newStreak = parseInt(editValue) || 0;
 
+        // FIXED: Use fields wrapper for update_entity
         applyOperations([{
             type: 'update_entity',
             payload: {
                 id: streak.id,
-                metadata: {
-                    ...streak.metadata,
-                    current_streak: newStreak,
-                    best_streak: Math.max(newStreak, streak.metadata?.best_streak || 0),
-                    last_date: editDate
+                fields: {
+                    metadata: {
+                        ...streak.metadata,
+                        current_streak: newStreak,
+                        best_streak: Math.max(newStreak, streak.metadata?.best_streak || 0),
+                        last_date: editDate
+                    }
                 }
             }
         }]);
@@ -89,9 +94,10 @@ const QuickStreaks: React.FC = () => {
 
     const handleDelete = (streak: typeof miniStreaks[0]) => {
         if (confirm(`Delete ${streak.title} streak?`)) {
+            // FIXED: Use fields wrapper for update_entity
             applyOperations([{
                 type: 'update_entity',
-                payload: { id: streak.id, status: 'ARCHIVED' }
+                payload: { id: streak.id, fields: { status: 'ARCHIVED' } }
             }]);
             addToast(`${streak.title} deleted`, 'info');
         }
@@ -146,7 +152,6 @@ const QuickStreaks: React.FC = () => {
 
     return (
         <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-4">
-            {/* Header with Add + Edit buttons */}
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                     <Flame size={18} className="text-orange-400" />
@@ -156,8 +161,8 @@ const QuickStreaks: React.FC = () => {
                     <button
                         onClick={() => setIsEditMode(!isEditMode)}
                         className={`p-1.5 rounded-lg transition-colors ${isEditMode
-                                ? 'bg-indigo-600 text-white'
-                                : 'text-slate-400 hover:text-indigo-400 hover:bg-slate-700'
+                            ? 'bg-indigo-600 text-white'
+                            : 'text-slate-400 hover:text-indigo-400 hover:bg-slate-700'
                             }`}
                         title={isEditMode ? 'Done editing' : 'Edit streaks'}
                     >
@@ -240,10 +245,10 @@ const QuickStreaks: React.FC = () => {
                             onClick={() => handleIncrement(streak)}
                             disabled={isDoneToday && !isEditMode}
                             className={`relative p-3 rounded-xl border transition-all ${isEditMode
-                                    ? 'bg-slate-800 border-indigo-500/30 hover:border-indigo-500'
-                                    : isDoneToday
-                                        ? 'bg-green-500/20 border-green-500/30 cursor-default'
-                                        : 'bg-slate-800 border-slate-700 hover:border-orange-500/50 hover:bg-slate-700/50'
+                                ? 'bg-slate-800 border-indigo-500/30 hover:border-indigo-500'
+                                : isDoneToday
+                                    ? 'bg-green-500/20 border-green-500/30 cursor-default'
+                                    : 'bg-slate-800 border-slate-700 hover:border-orange-500/50 hover:bg-slate-700/50'
                                 }`}
                             style={{ borderColor: (!isEditMode && !isDoneToday) ? streak.metadata?.color : undefined }}
                         >

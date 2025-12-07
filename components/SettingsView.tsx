@@ -233,6 +233,149 @@ const SettingsView: React.FC = () => {
           </div>
         </section>
 
+        {/* Debug Tools */}
+        <section>
+          <h2 className="text-lg font-semibold text-slate-200 mb-4">Debug Tools</h2>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+            <p className="text-sm text-slate-400">
+              Advanced tools for troubleshooting and maintenance.
+            </p>
+
+            <div className="space-y-3">
+              <button
+                onClick={async () => {
+                  const accessToken = localStorage.getItem('flowmate_google_calendar_token');
+                  if (!accessToken) {
+                    alert('❌ No Google Calendar token found. Please sync in Calendar first.');
+                    return;
+                  }
+
+                  if (!confirm('This will delete duplicate events from your Google Calendar. Continue?')) return;
+
+                  try {
+                    const oneYearAgo = new Date();
+                    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+                    const sixMonthsFromNow = new Date();
+                    sixMonthsFromNow.setMonth(sixMonthsFromNow.getMonth() + 6);
+
+                    const params = new URLSearchParams({
+                      timeMin: oneYearAgo.toISOString(),
+                      timeMax: sixMonthsFromNow.toISOString(),
+                      singleEvents: 'true',
+                      maxResults: '2500',
+                      orderBy: 'startTime'
+                    });
+
+                    const response = await fetch(
+                      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+                      { headers: { 'Authorization': `Bearer ${accessToken}` } }
+                    );
+
+                    if (!response.ok) {
+                      alert(`❌ API error: ${response.status}. Try syncing again first.`);
+                      return;
+                    }
+
+                    const data = await response.json();
+                    const events = data.items || [];
+
+                    // Group by title + start time
+                    const groups: Record<string, any[]> = {};
+                    events.forEach((e: any) => {
+                      const key = `${e.summary || 'Untitled'}|${e.start?.dateTime || e.start?.date}`;
+                      if (!groups[key]) groups[key] = [];
+                      groups[key].push(e);
+                    });
+
+                    const duplicates = Object.values(groups).filter(g => g.length > 1);
+                    if (duplicates.length === 0) {
+                      alert('✅ No duplicates found! Your Google Calendar is clean.');
+                      return;
+                    }
+
+                    const toDelete = duplicates.flatMap(g => g.slice(1));
+                    let deleted = 0;
+
+                    for (const event of toDelete) {
+                      const res = await fetch(
+                        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${event.id}`,
+                        { method: 'DELETE', headers: { 'Authorization': `Bearer ${accessToken}` } }
+                      );
+                      if (res.ok || res.status === 204) deleted++;
+                      await new Promise(r => setTimeout(r, 100));
+                    }
+
+                    alert(`✅ Cleaned up ${deleted} duplicate events from Google Calendar!`);
+                  } catch (err: any) {
+                    alert(`❌ Error: ${err.message}`);
+                  }
+                }}
+                className="w-full py-2.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-medium flex items-center justify-center gap-2 border border-amber-500/30 transition-colors"
+              >
+                <Trash2 size={16} />
+                Clean Google Calendar Duplicates
+              </button>
+
+              <button
+                onClick={() => {
+                  const currentEntities = entities;
+                  const duplicateIds: string[] = [];
+
+                  // Method 1: Same google_calendar_id
+                  const seenGcal = new Map<string, string>();
+                  currentEntities.forEach(e => {
+                    const gcalId = e.metadata?.google_calendar_id;
+                    if (gcalId) {
+                      if (seenGcal.has(gcalId)) {
+                        duplicateIds.push(e.id);
+                      } else {
+                        seenGcal.set(gcalId, e.id);
+                      }
+                    }
+                  });
+
+                  // Method 2: Same title + start_time (for events without gcal id)
+                  const seenTitleTime = new Map<string, string>();
+                  currentEntities.forEach(e => {
+                    if (!duplicateIds.includes(e.id)) { // Skip already marked as duplicate
+                      const key = `${e.title}|${e.start_time || e.deadline || ''}`;
+                      if (seenTitleTime.has(key)) {
+                        duplicateIds.push(e.id);
+                      } else {
+                        seenTitleTime.set(key, e.id);
+                      }
+                    }
+                  });
+
+                  if (duplicateIds.length === 0) {
+                    alert('✅ No duplicate entities found in Flowmate!');
+                    return;
+                  }
+
+                  if (!confirm(`Found ${duplicateIds.length} duplicate entities. Delete them?`)) return;
+
+                  const { applyOperations } = useStore.getState();
+                  const ops = duplicateIds.map(id => ({
+                    type: 'delete_entity' as const,
+                    payload: { id }
+                  }));
+                  applyOperations(ops);
+
+                  alert(`✅ Removed ${duplicateIds.length} duplicate entities from Flowmate!`);
+                }}
+                className="w-full py-2.5 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 font-medium flex items-center justify-center gap-2 border border-purple-500/30 transition-colors"
+              >
+                <Trash2 size={16} />
+                Clean Flowmate Cache Duplicates
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mt-2">
+              Use these if sync created duplicate events. Always backup first!
+            </p>
+          </div>
+        </section>
+
       </div>
     </div>
   );
