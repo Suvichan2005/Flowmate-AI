@@ -13,7 +13,8 @@ import {
   Redo2,
   Maximize2,
   Minimize2,
-  TrendingUp
+  TrendingUp,
+  MessageCircle
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -40,8 +41,9 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
   const showLabels = forceExpanded || !isZenMode;
   const isCompact = !forceExpanded && isZenMode;
 
-  // Streamlined nav: Dashboard, Analytics (has Habits), Chat+Graph, Library (has Goals/Projects), Calendar
+  // Streamlined nav: Chat (mobile-friendly), Dashboard, Analytics, Graph, Library, Calendar
   const navItems = [
+    { icon: MessageCircle, label: 'Chat', view: 'chat' as ViewType },
     { icon: LayoutDashboard, label: 'Dashboard', view: 'dashboard' as ViewType },
     { icon: TrendingUp, label: 'Analytics', view: 'analytics' as ViewType },
     { icon: MessageSquare, label: 'Graph', view: 'chat_graph' as ViewType },

@@ -23,7 +23,7 @@ const AnalyticsView: React.FC = () => {
         <div className="h-full flex flex-col bg-gray-900 text-gray-100 overflow-y-auto p-6 md:p-8">
 
             {/* Header Section */}
-            <div className="flex items-center justify-between mb-6 pl-14">
+            <div className="flex items-center justify-between mb-6 pl-4 md:pl-14">
                 <div>
                     <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-teal-400 to-blue-500 bg-clip-text text-transparent flex items-center gap-3">
                         <Brain className="text-teal-400" size={28} />

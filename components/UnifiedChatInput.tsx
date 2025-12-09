@@ -136,17 +136,17 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
         <form onSubmit={handleSubmit} className="relative">
             {/* Attachment Preview */}
             {attachment && (
-                <div className="mb-2 relative inline-block">
+                <div className="mb-3 relative inline-block">
                     <img
                         src={attachment}
                         alt="Attachment"
-                        className="h-20 w-20 object-cover rounded-lg border border-slate-700"
+                        className="h-20 w-20 object-cover rounded-xl border border-slate-600 shadow-lg"
                     />
                     {onRemoveAttachment && (
                         <button
                             type="button"
                             onClick={onRemoveAttachment}
-                            className="absolute -top-2 -right-2 p-1 bg-red-500 rounded-full text-white hover:bg-red-400 transition-colors"
+                            className="absolute -top-2 -right-2 p-1.5 bg-red-500 rounded-full text-white hover:bg-red-400 transition-colors shadow-lg"
                         >
                             <X size={12} />
                         </button>
@@ -154,8 +154,20 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                 </div>
             )}
 
-            {/* Input Row */}
-            <div className="flex items-end gap-2 bg-slate-800 border border-slate-700 rounded-2xl p-2 focus-within:border-indigo-500/50 transition-colors">
+            {/* Input Row - Premium ChatGPT-style */}
+            <div className={`
+                flex items-center gap-2
+                bg-gradient-to-r from-slate-800/90 to-slate-800/70
+                backdrop-blur-sm
+                border border-slate-600/50
+                rounded-2xl
+                ${isMobile ? 'p-2' : 'p-2.5'}
+                shadow-lg
+                focus-within:border-indigo-500/60
+                focus-within:shadow-indigo-500/10
+                focus-within:shadow-xl
+                transition-all duration-200
+            `}>
                 {/* Attachment Button */}
                 <input
                     ref={fileInputRef}
@@ -168,13 +180,21 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                 <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-700 rounded-lg transition-colors shrink-0"
-                    title="Attach image"
+                    className={`
+                        ${isMobile ? 'p-2' : 'p-2.5'}
+                        text-slate-400 hover:text-indigo-400
+                        hover:bg-slate-700/50
+                        rounded-xl
+                        transition-all duration-150
+                        active:scale-95
+                        shrink-0
+                    `}
+                    title="Attach file"
                 >
-                    <Paperclip size={18} />
+                    <Paperclip size={isMobile ? 18 : 20} />
                 </button>
 
-                {/* Textarea */}
+                {/* Textarea - Properly aligned */}
                 <textarea
                     ref={textareaRef}
                     value={input}
@@ -182,39 +202,65 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                     onKeyDown={handleKeyDown}
                     placeholder={isListening ? "Listening..." : placeholder}
                     rows={1}
-                    className="flex-1 bg-transparent text-slate-100 text-sm resize-none outline-none placeholder-slate-500 min-h-[24px] max-h-[150px] py-1"
+                    className={`
+                        flex-1
+                        bg-transparent
+                        text-slate-100
+                        ${isMobile ? 'text-base' : 'text-sm'}
+                        resize-none
+                        outline-none
+                        placeholder-slate-500
+                        min-h-[28px]
+                        max-h-[150px]
+                        py-1.5
+                        leading-relaxed
+                        self-center
+                    `}
                     disabled={loading}
+                    style={{ lineHeight: '1.5' }}
                 />
 
-                {/* Right buttons */}
-                <div className="flex items-center gap-1 shrink-0">
+                {/* Right buttons - Vertically centered */}
+                <div className="flex items-center gap-1 shrink-0 self-center">
                     {/* Mic Button */}
                     {speechSupported && (
                         <button
                             type="button"
                             onClick={toggleListening}
-                            className={`p-2 rounded-lg transition-all ${isListening
-                                ? 'bg-red-500 text-white animate-pulse'
-                                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700'
-                                }`}
+                            className={`
+                                ${isMobile ? 'p-2' : 'p-2.5'}
+                                rounded-xl
+                                transition-all duration-150
+                                active:scale-95
+                                ${isListening
+                                    ? 'bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse'
+                                    : 'text-slate-400 hover:text-indigo-400 hover:bg-slate-700/50'
+                                }
+                            `}
                             title={isListening ? "Stop listening" : "Voice input"}
                         >
-                            {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+                            {isListening ? <MicOff size={isMobile ? 18 : 20} /> : <Mic size={isMobile ? 18 : 20} />}
                         </button>
                     )}
 
-                    {/* Send Button - Always show on desktop, show when has content on mobile */}
+                    {/* Send Button - Always visible, styled nicely */}
                     {(!isMobile || hasContent) && (
                         <button
                             type="submit"
                             disabled={!hasContent || loading}
-                            className={`p-2 rounded-lg transition-all ${hasContent && !loading
-                                ? 'bg-indigo-600 text-white hover:bg-indigo-500'
-                                : 'bg-slate-700 text-slate-500'
-                                }`}
+                            className={`
+                                ${isMobile ? 'p-2' : 'p-2.5'}
+                                rounded-xl
+                                transition-all duration-150
+                                active:scale-95
+                                ${hasContent && !loading
+                                    ? 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/30'
+                                    : 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
+                                }
+                            `}
                             title="Send message"
                         >
-                            {loading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+                            {loading ? <Loader2 size={isMobile ? 18 : 20} className="animate-spin" /> : <Send size={isMobile ? 18 : 20} />}
                         </button>
                     )}
                 </div>
@@ -222,7 +268,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
 
             {/* Voice indicator */}
             {isListening && (
-                <div className="absolute -top-8 left-1/2 -translate-x-1/2 px-3 py-1 bg-red-500/20 border border-red-500/50 rounded-full text-red-400 text-xs flex items-center gap-2">
+                <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-4 py-1.5 bg-red-500/20 border border-red-500/50 rounded-full text-red-400 text-xs font-medium flex items-center gap-2 backdrop-blur-sm">
                     <span className="w-2 h-2 bg-red-400 rounded-full animate-pulse" />
                     Listening...
                 </div>

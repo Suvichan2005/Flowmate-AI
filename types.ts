@@ -207,4 +207,4 @@ export interface Toast {
   type: 'success' | 'error' | 'info';
 }
 
-export type ViewType = 'dashboard' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'analytics' | 'settings' | 'schedules' | 'habits';
+export type ViewType = 'dashboard' | 'chat' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'analytics' | 'settings' | 'schedules' | 'habits';

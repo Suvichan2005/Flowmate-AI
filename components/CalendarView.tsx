@@ -768,80 +768,84 @@ const CalendarView: React.FC = () => {
 
     return (
         <div className="flex-1 flex flex-col bg-slate-950 p-4 md:p-6 h-full min-h-0">
-            <header className="mb-4 flex flex-wrap justify-between items-center gap-2 shrink-0 pl-14">
-                <div className="flex items-center gap-2 shrink-0">
-                    <h1 className="text-lg md:text-xl font-bold text-slate-100 truncate max-w-[180px] md:max-w-none">{getHeaderTitle()}</h1>
-                    <div className="flex bg-slate-900 rounded-lg border border-slate-800 p-0.5">
-                        <button onClick={handlePrev} className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors"><ChevronLeft size={16} /></button>
-                        <button onClick={handleToday} className="px-2 text-[10px] font-medium text-slate-400 hover:text-white transition-colors">Today</button>
-                        <button onClick={handleNext} className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors"><ChevronRight size={16} /></button>
+            {/* Clean Google Calendar-style Header */}
+            <header className="mb-4 shrink-0 pl-4 md:pl-14">
+                {/* Row 1: Title + Nav */}
+                <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                        <h1 className="text-lg md:text-xl font-bold text-slate-100">
+                            {viewMode === 'agenda' ? 'Schedule' : getHeaderTitle()}
+                        </h1>
                     </div>
-                    {/* Date Picker for quick navigation */}
-                    <input
-                        type="date"
-                        value={currentDate.toISOString().split('T')[0]}
-                        onChange={(e) => {
-                            if (e.target.value) {
-                                setCurrentDate(new Date(e.target.value + 'T12:00:00'));
-                            }
-                        }}
-                        className="px-2 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 cursor-pointer hover:border-slate-500"
-                        title="Jump to date"
-                    />
+                    <div className="flex items-center gap-1">
+                        <button onClick={handlePrev} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors">
+                            <ChevronLeft size={18} />
+                        </button>
+                        <button onClick={handleToday} className="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors">
+                            Today
+                        </button>
+                        <button onClick={handleNext} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-colors">
+                            <ChevronRight size={18} />
+                        </button>
+                    </div>
                 </div>
 
-                <div className="flex items-center gap-2 flex-wrap">
-                    <div className="flex bg-slate-900 rounded-lg border border-slate-800 p-1">
+                {/* Row 2: View Tabs + Filters */}
+                <div className="flex items-center justify-between gap-2">
+                    {/* View Mode Pills */}
+                    <div className="flex bg-slate-900 rounded-lg border border-slate-800 p-0.5">
                         {viewModes.map(vm => (
                             <button
                                 key={vm.id}
                                 onClick={() => setViewMode(vm.id)}
-                                className={`px-2 py-1 text-xs font-medium rounded flex items-center gap-1 transition-colors ${viewMode === vm.id
-                                    ? 'bg-indigo-500/20 text-indigo-300'
+                                className={`px-3 py-1.5 text-xs font-medium rounded-md flex items-center gap-1.5 transition-all ${viewMode === vm.id
+                                    ? 'bg-indigo-500/20 text-indigo-300 shadow-sm'
                                     : 'text-slate-400 hover:text-slate-200'
                                     }`}
                             >
                                 {vm.icon}
-                                <span className="hidden md:inline">{vm.label}</span>
+                                <span className="hidden sm:inline">{vm.label}</span>
                             </button>
                         ))}
                     </div>
-                    <div className="flex gap-2 text-xs">
+
+                    {/* Quick Filters + Sync */}
+                    <div className="flex items-center gap-1">
+                        {/* Color-coded filter dots - always visible */}
+                        <div className="flex items-center bg-slate-900 rounded-lg border border-slate-800 p-1 gap-0.5">
+                            <button
+                                onClick={() => setShowEvents(!showEvents)}
+                                className={`w-6 h-6 rounded flex items-center justify-center transition-all ${showEvents ? 'bg-indigo-500/30' : 'opacity-40'}`}
+                                title="Events"
+                            >
+                                <div className={`w-2.5 h-2.5 rounded-full ${showEvents ? 'bg-indigo-500' : 'bg-slate-600'}`} />
+                            </button>
+                            <button
+                                onClick={() => setShowTasks(!showTasks)}
+                                className={`w-6 h-6 rounded flex items-center justify-center transition-all ${showTasks ? 'bg-emerald-500/30' : 'opacity-40'}`}
+                                title="Tasks"
+                            >
+                                <div className={`w-2.5 h-2.5 rounded-full ${showTasks ? 'bg-emerald-500' : 'bg-slate-600'}`} />
+                            </button>
+                            <button
+                                onClick={() => setShowLogs(!showLogs)}
+                                className={`w-6 h-6 rounded flex items-center justify-center transition-all ${showLogs ? 'bg-purple-500/30' : 'opacity-40'}`}
+                                title="Activity Logs"
+                            >
+                                <div className={`w-2.5 h-2.5 rounded-full ${showLogs ? 'bg-purple-500' : 'bg-slate-600'}`} />
+                            </button>
+                        </div>
+
+                        {/* Sync button */}
                         <button
-                            onClick={() => setShowEvents(!showEvents)}
-                            className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${showEvents ? 'bg-indigo-500/20 text-indigo-300' : 'bg-slate-800 text-slate-500 line-through'}`}
+                            onClick={handleGoogleSync}
+                            disabled={isSyncing}
+                            className="p-2 rounded-lg bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white transition-colors disabled:opacity-50"
+                            title="Sync with Google Calendar"
                         >
-                            <div className={`w-2 h-2 rounded ${showEvents ? 'bg-indigo-500' : 'bg-slate-600'}`} />
-                            Events
-                        </button>
-                        <button
-                            onClick={() => setShowTasks(!showTasks)}
-                            className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${showTasks ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-slate-500 line-through'}`}
-                        >
-                            <div className={`w-2 h-2 rounded ${showTasks ? 'bg-emerald-500' : 'bg-slate-600'}`} />
-                            Tasks
-                        </button>
-                        <button
-                            onClick={() => setShowLogs(!showLogs)}
-                            className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${showLogs ? 'bg-purple-500/20 text-purple-300' : 'bg-slate-800 text-slate-500 line-through'}`}
-                        >
-                            <div className={`w-2 h-2 rounded ${showLogs ? 'bg-purple-500' : 'bg-slate-600'}`} />
-                            Logs
+                            {isSyncing ? <RefreshCw size={16} className="animate-spin" /> : <Cloud size={16} />}
                         </button>
                     </div>
-                    <button
-                        onClick={handleGoogleSync}
-                        disabled={isSyncing}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors text-xs font-medium disabled:opacity-50"
-                        title="Sync with Google Calendar"
-                    >
-                        {isSyncing ? (
-                            <RefreshCw size={14} className="animate-spin" />
-                        ) : (
-                            <Cloud size={14} />
-                        )}
-                        <span className="hidden md:inline">{isSyncing ? 'Syncing...' : 'Sync'}</span>
-                    </button>
                 </div>
             </header>
 
