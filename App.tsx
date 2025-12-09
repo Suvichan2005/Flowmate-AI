@@ -26,6 +26,7 @@ import AuthModal from './components/AuthModal';
 import AnalyticsView from './components/AnalyticsView';
 import UnifiedChatInput from './components/UnifiedChatInput';
 import GraphFixingModal from './components/GraphFixingModal';
+import ConnectionStatus from './components/ConnectionStatus';
 import { EntityKind, ToonOperation } from './types';
 
 const App: React.FC = () => {
@@ -111,7 +112,7 @@ const App: React.FC = () => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, loading, selectedAttachment]);
+  }, [messages, loading, selectedAttachment, currentView]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -440,6 +441,7 @@ const App: React.FC = () => {
       )}
 
       <Confetti />
+      <ConnectionStatus />
 
       {/* Mobile Header Bar */}
       {isMobile && (
@@ -452,27 +454,19 @@ const App: React.FC = () => {
             <Menu size={22} />
           </button>
 
-          {/* Center: Title */}
+          {/* Center: Dynamic Title based on current view */}
           <span className="font-bold text-lg text-slate-100">
-            {isChatOpen ? 'Chat' : 'Flowmate'}
+            {currentView === 'chat' ? 'Chat' :
+              currentView === 'dashboard' ? 'Flowmate' :
+                currentView === 'calendar' ? 'Calendar' :
+                  currentView === 'knowledge' ? 'Library' :
+                    currentView === 'analytics' ? 'Analytics' :
+                      currentView === 'chat_graph' ? 'Graph' :
+                        'Flowmate'}
           </span>
 
-          {/* Right: Chat button or Back button */}
-          {isChatOpen ? (
-            <button
-              onClick={() => setIsChatOpen(false)}
-              className="p-2 hover:bg-slate-800 rounded-lg text-indigo-400 transition-colors"
-            >
-              <X size={22} />
-            </button>
-          ) : (
-            <button
-              onClick={() => setIsChatOpen(true)}
-              className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 transition-colors"
-            >
-              <MessageSquare size={22} />
-            </button>
-          )}
+          {/* Right: Placeholder for future actions */}
+          <div className="w-10" />
         </div>
       )}
 
@@ -692,8 +686,8 @@ const App: React.FC = () => {
       {/* Mobile Layout: Full Content + Bottom Chat Bar */}
       {isMobile && (
         <>
-          {/* Mobile Full-Screen Chat - No header, direct messages */}
-          {isChatOpen ? (
+          {/* Mobile Full-Screen Chat when Chat view is selected */}
+          {currentView === 'chat' ? (
             <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
 
               <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={!isMobile ? undefined : scrollRef}>
@@ -725,51 +719,24 @@ const App: React.FC = () => {
                 )}
               </div>
 
-              {/* Mobile Chat Input */}
+              {/* Mobile Chat Input - Using UnifiedChatInput for consistency */}
               <div className="p-3 bg-slate-900 border-t border-slate-800 shrink-0">
-                <form onSubmit={handleSubmit} className="flex items-end gap-2">
-                  <input type="file" accept="image/*,audio/*" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
-                  <button type="button" onClick={() => fileInputRef.current?.click()} className="p-2.5 bg-slate-800 text-slate-400 hover:bg-slate-700 rounded-xl"><Paperclip size={20} /></button>
-                  <div className="flex-1 relative">
-                    <textarea
-                      value={input}
-                      onChange={(e) => setInput(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      placeholder="Message..."
-                      rows={1}
-                      className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-xl py-3 pl-4 pr-12 focus:ring-2 focus:ring-indigo-500/50 outline-none resize-none min-h-[46px]"
-                    />
-                    <button type="submit" disabled={!input.trim() && !selectedAttachment} className="absolute right-2 bottom-2 p-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:bg-slate-700 text-white rounded-lg">
-                      <Send size={16} />
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </main>
-          ) : (
-            /* Mobile Main Content with Bottom Chat Bar */
-            <main className="flex-1 flex flex-col h-full overflow-hidden">
-              <div className="flex-1 overflow-auto">
-                {renderMainContent()}
-              </div>
-
-              {/* Persistent Bottom Chat Bar - Now unified with UnifiedChatInput */}
-              <div className="shrink-0 p-3 bg-slate-900 border-t border-slate-800">
                 <UnifiedChatInput
-                  onSend={(msg) => {
-                    setIsChatOpen(true); // Open full chat when sending
-                    sendDirectMessage(msg, selectedAttachment);
-                  }}
-                  onAttach={(file) => {
-                    processFile(file);
-                    setIsChatOpen(true); // Open full chat when attaching
-                  }}
+                  onSend={(msg) => sendDirectMessage(msg, selectedAttachment)}
+                  onAttach={(file) => processFile(file)}
                   loading={loading}
-                  placeholder="Ask AI anything..."
+                  placeholder="Message..."
                   attachment={selectedAttachment}
                   onRemoveAttachment={handleRemoveAttachment}
                   isMobile={true}
                 />
+              </div>
+            </main>
+          ) : (
+            /* Mobile Main Content - Show regular views */
+            <main className="flex-1 flex flex-col h-full overflow-hidden">
+              <div className="flex-1 overflow-auto">
+                {renderMainContent()}
               </div>
             </main>
           )}

@@ -192,7 +192,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
 
     return (
         <div className="flex-1 overflow-y-auto bg-slate-950 p-6 md:p-8">
-            <header className="mb-8 flex flex-col md:flex-row md:justify-between md:items-end gap-4 pl-14">
+            <header className="mb-8 flex flex-col md:flex-row md:justify-between md:items-end gap-4 pl-4 md:pl-14">
                 <div>
                     <h1 className="text-3xl font-bold text-slate-100 tracking-tight">Dashboard</h1>
                     <p className="text-slate-400 text-sm mt-1 flex items-center gap-2">
@@ -368,8 +368,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                 </div>
             </div>
 
-            {/* Insights Row - 3 Cards */}
-            <div className="grid grid-cols-3 gap-3 mb-8">
+            {/* Quick Actions Row - 4 Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
                 {/* Unlinked Items */}
                 <div
                     onClick={() => insights.orphans.length > 0 && setShowOrphansModal(true)}
@@ -410,11 +410,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                     <div className="text-[10px] text-slate-500 font-medium uppercase">Stalled</div>
                 </div>
 
-                {/* Fix Graph AI Button */}
+                {/* Chat Quick Action */}
+                <div
+                    onClick={() => setView('chat')}
+                    className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/30 rounded-xl p-4 hover:border-indigo-500/60 cursor-pointer transition-all"
+                >
+                    <div className="flex items-center gap-2 mb-2">
+                        <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-400">
+                            <Bot size={16} />
+                        </div>
+                    </div>
+                    <div className="text-sm font-bold text-indigo-300">Ask AI</div>
+                    <div className="text-[10px] text-indigo-400/70 font-medium">Quick Chat</div>
+                </div>
+
+                {/* Fix Graph AI Button - Spans 2 cols on mobile, 4 on desktop when visible */}
                 {(insights.orphans.length > 0 || insights.needsNextAction.length > 0) && onOpenGraphFixer && (
                     <div
                         onClick={onOpenGraphFixer}
-                        className="bg-gradient-to-br from-violet-500/10 to-indigo-500/10 border border-violet-500/30 rounded-xl p-4 hover:border-violet-500/60 cursor-pointer transition-all col-span-3"
+                        className="bg-gradient-to-br from-violet-500/10 to-indigo-500/10 border border-violet-500/30 rounded-xl p-4 hover:border-violet-500/60 cursor-pointer transition-all col-span-2 md:col-span-4"
                     >
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">
@@ -489,18 +503,23 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                             </div>
                         ) : (
                             upcomingEvents.map(evt => (
-                                <div key={evt.id} className="bg-slate-950 border border-slate-800 p-3 rounded-lg flex gap-3 items-center hover:border-slate-700 transition-colors">
+                                <div
+                                    key={evt.id}
+                                    onClick={() => selectEntity(evt.id)}
+                                    className="bg-slate-950 border border-slate-800 p-3 rounded-lg flex gap-3 items-center hover:border-indigo-500/50 cursor-pointer transition-colors"
+                                >
                                     <div className="bg-slate-900 p-2 rounded text-center min-w-[50px] border border-slate-800">
                                         <div className="text-[10px] text-slate-500 uppercase font-bold">{new Date(evt.start_time!).toLocaleString('default', { month: 'short' })}</div>
                                         <div className="text-lg font-bold text-slate-200">{new Date(evt.start_time!).getDate()}</div>
                                     </div>
-                                    <div>
+                                    <div className="flex-1 min-w-0">
                                         <p className="text-sm font-medium text-slate-200 line-clamp-1">{evt.title}</p>
                                         <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
                                             <Clock size={10} />
                                             {new Date(evt.start_time!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                         </p>
                                     </div>
+                                    <ArrowRight size={14} className="text-slate-600" />
                                 </div>
                             ))
                         )}
@@ -531,17 +550,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                         <p className="text-slate-500 text-sm italic">No recent activity.</p>
                     ) : (
                         recentActivities.map((act, idx) => (
-                            <div key={act.id} className="flex gap-4 items-center p-3 rounded-lg hover:bg-slate-800/50 transition-colors">
-                                <div className="text-xs font-mono text-slate-500 w-24 shrink-0 text-right">
-                                    {new Date(act.created_at).toLocaleDateString()}
+                            <div
+                                key={act.id}
+                                onClick={() => selectEntity(act.id)}
+                                className="flex gap-4 items-center p-3 rounded-lg hover:bg-slate-800/50 cursor-pointer transition-colors group"
+                            >
+                                <div className="text-xs font-mono text-slate-500 w-20 shrink-0 text-right">
+                                    {new Date(act.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
                                 </div>
                                 <div className={`w-2 h-2 rounded-full shrink-0 ${idx === 0 ? 'bg-indigo-500 ring-2 ring-indigo-500/20' : 'bg-slate-600'}`}></div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-sm text-slate-300 font-medium truncate">{act.title}</p>
+                                    <p className="text-sm text-slate-300 font-medium truncate group-hover:text-white">{act.title}</p>
                                     {act.duration_minutes && (
                                         <p className="text-xs text-slate-500 mt-0.5">{act.duration_minutes} mins logged</p>
                                     )}
                                 </div>
+                                <ArrowRight size={14} className="text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity" />
                             </div>
                         ))
                     )}

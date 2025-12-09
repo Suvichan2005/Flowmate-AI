@@ -252,7 +252,7 @@ const KnowledgeView: React.FC = () => {
 
             {/* 1. Header & Controls */}
             <div className="shrink-0 border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm z-10">
-                <div className="p-4 pl-16 flex flex-col gap-4">
+                <div className="p-4 pl-4 md:pl-16 flex flex-col gap-4">
 
                     {/* Top Row: Title, Search, Actions */}
                     <div className="flex items-center gap-3">
@@ -399,27 +399,29 @@ const KnowledgeView: React.FC = () => {
                     )}
 
                     {/* Kind Tabs (Horizontal Scroll) */}
-                    <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar -mx-4 px-4 mask-fade-sides">
-                        {kindTabs.map(tab => {
-                            const isActive = kindFilter === tab.id;
-                            const Icon = tab.icon as any;
-                            return (
-                                <button
-                                    key={tab.id}
-                                    onClick={() => setKindFilter(tab.id)}
-                                    className={`
-                                        flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border transition-all
-                                        ${isActive
-                                            ? 'bg-slate-100 text-slate-900 border-slate-100 shadow-sm'
-                                            : 'bg-slate-800/50 text-slate-400 border-slate-700/50 hover:bg-slate-800 hover:text-slate-200'
-                                        }
-                                    `}
-                                >
-                                    {tab.id !== 'all' && tab.icon}
-                                    {tab.label}
-                                </button>
-                            );
-                        })}
+                    <div className="w-full overflow-x-auto pb-2 -mx-4 px-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+                        <div className="flex items-center gap-2 min-w-max">
+                            {kindTabs.map(tab => {
+                                const isActive = kindFilter === tab.id;
+                                const Icon = tab.icon as any;
+                                return (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setKindFilter(tab.id)}
+                                        className={`
+                                            flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border transition-all shrink-0
+                                            ${isActive
+                                                ? 'bg-slate-100 text-slate-900 border-slate-100 shadow-sm'
+                                                : 'bg-slate-800/50 text-slate-400 border-slate-700/50 hover:bg-slate-800 hover:text-slate-200'
+                                            }
+                                        `}
+                                    >
+                                        {tab.id !== 'all' && tab.icon}
+                                        {tab.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
                     </div>
                 </div>
             </div>

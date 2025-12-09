@@ -25,6 +25,12 @@ const QuickStreaks: React.FC = () => {
     const [editValue, setEditValue] = useState('');
     const [editDate, setEditDate] = useState('');
 
+    // New streak creation form state (replaces prompt() for mobile compatibility)
+    const [showCreateForm, setShowCreateForm] = useState(false);
+    const [newStreakName, setNewStreakName] = useState('');
+    const [newStreakIcon, setNewStreakIcon] = useState('🔥');
+    const [newStreakCount, setNewStreakCount] = useState('0');
+
     const miniStreaks = useMemo(() => {
         return entities.filter(e => e.kind === EntityKind.MINI_STREAK && e.status !== 'ARCHIVED');
     }, [entities]);
@@ -103,31 +109,50 @@ const QuickStreaks: React.FC = () => {
         }
     };
 
+    // Toggle create form visibility (mobile-friendly replacement for prompt())
     const handleCreateNew = () => {
-        const name = prompt('Streak name (e.g., Duolingo, Snapchat):');
-        if (!name) return;
+        setShowCreateForm(true);
+        setNewStreakName('');
+        setNewStreakIcon('🔥');
+        setNewStreakCount('0');
+    };
 
-        const icon = prompt('Emoji icon:', '🔥');
-        const startingStreak = prompt('Current streak count (or 0 if starting fresh):', '0');
+    // Submit the new streak from the inline form
+    const handleCreateSubmit = () => {
+        if (!newStreakName.trim()) {
+            addToast('Please enter a streak name', 'error');
+            return;
+        }
 
         applyOperations([{
             type: 'create_entity',
             payload: {
                 kind: EntityKind.MINI_STREAK,
-                title: name,
+                title: newStreakName.trim(),
                 status: 'ACTIVE',
                 metadata: {
-                    icon: icon || '🔥',
-                    current_streak: parseInt(startingStreak || '0'),
-                    best_streak: parseInt(startingStreak || '0'),
+                    icon: newStreakIcon || '🔥',
+                    current_streak: parseInt(newStreakCount || '0'),
+                    best_streak: parseInt(newStreakCount || '0'),
                     last_date: new Date().toISOString().split('T')[0],
-                    total_days: parseInt(startingStreak || '0'),
+                    total_days: parseInt(newStreakCount || '0'),
                     color: CALENDAR_COLORS[Math.floor(Math.random() * CALENDAR_COLORS.length)].hex
                 }
             }
         }]);
 
-        addToast(`${name} streak created!`, 'success');
+        addToast(`${newStreakName} streak created!`, 'success');
+        setShowCreateForm(false);
+        setNewStreakName('');
+        setNewStreakIcon('🔥');
+        setNewStreakCount('0');
+    };
+
+    const handleCreateCancel = () => {
+        setShowCreateForm(false);
+        setNewStreakName('');
+        setNewStreakIcon('🔥');
+        setNewStreakCount('0');
     };
 
     if (miniStreaks.length === 0) {
@@ -139,13 +164,63 @@ const QuickStreaks: React.FC = () => {
                         <h3 className="text-sm font-medium text-slate-300">Quick Streaks</h3>
                     </div>
                 </div>
-                <button
-                    onClick={handleCreateNew}
-                    className="w-full py-3 border-2 border-dashed border-slate-600 rounded-lg text-slate-400 hover:border-orange-500/50 hover:text-orange-400 transition-colors flex items-center justify-center gap-2"
-                >
-                    <Plus size={16} />
-                    Add streak (Duolingo, Snapchat, etc.)
-                </button>
+
+                {/* Inline Create Form (replaces prompt() for mobile) */}
+                {showCreateForm ? (
+                    <div className="space-y-3 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="text"
+                                value={newStreakIcon}
+                                onChange={(e) => setNewStreakIcon(e.target.value)}
+                                className="w-12 h-10 bg-slate-800 border border-slate-600 rounded-lg text-center text-xl focus:border-orange-500 focus:outline-none"
+                                placeholder="🔥"
+                                maxLength={2}
+                            />
+                            <input
+                                type="text"
+                                value={newStreakName}
+                                onChange={(e) => setNewStreakName(e.target.value)}
+                                className="flex-1 h-10 bg-slate-800 border border-slate-600 rounded-lg px-3 text-sm text-white placeholder-slate-500 focus:border-orange-500 focus:outline-none"
+                                placeholder="Streak name (e.g., Duolingo)"
+                                autoFocus
+                            />
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Hash size={14} className="text-slate-500 shrink-0" />
+                            <input
+                                type="number"
+                                value={newStreakCount}
+                                onChange={(e) => setNewStreakCount(e.target.value)}
+                                className="flex-1 h-9 bg-slate-800 border border-slate-600 rounded-lg px-3 text-sm text-white placeholder-slate-500 focus:border-orange-500 focus:outline-none"
+                                placeholder="Starting count (0 if new)"
+                                min="0"
+                            />
+                        </div>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={handleCreateSubmit}
+                                className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-sm font-medium rounded-lg flex items-center justify-center gap-1 transition-colors"
+                            >
+                                <Save size={14} /> Create Streak
+                            </button>
+                            <button
+                                onClick={handleCreateCancel}
+                                className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    <button
+                        onClick={handleCreateNew}
+                        className="w-full py-3 border-2 border-dashed border-slate-600 rounded-lg text-slate-400 hover:border-orange-500/50 hover:text-orange-400 transition-colors flex items-center justify-center gap-2"
+                    >
+                        <Plus size={16} />
+                        Add streak (Duolingo, Snapchat, etc.)
+                    </button>
+                )}
             </div>
         );
     }
@@ -181,6 +256,55 @@ const QuickStreaks: React.FC = () => {
             {isEditMode && (
                 <div className="mb-3 text-xs text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded">
                     Tap a streak to edit count/date. Tap ✓ when done.
+                </div>
+            )}
+
+            {/* Inline Create Form (replaces prompt() for mobile) */}
+            {showCreateForm && (
+                <div className="mb-3 space-y-3 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="text"
+                            value={newStreakIcon}
+                            onChange={(e) => setNewStreakIcon(e.target.value)}
+                            className="w-12 h-10 bg-slate-800 border border-slate-600 rounded-lg text-center text-xl focus:border-orange-500 focus:outline-none"
+                            placeholder="🔥"
+                            maxLength={2}
+                        />
+                        <input
+                            type="text"
+                            value={newStreakName}
+                            onChange={(e) => setNewStreakName(e.target.value)}
+                            className="flex-1 h-10 bg-slate-800 border border-slate-600 rounded-lg px-3 text-sm text-white placeholder-slate-500 focus:border-orange-500 focus:outline-none"
+                            placeholder="Streak name (e.g., Duolingo)"
+                            autoFocus
+                        />
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Hash size={14} className="text-slate-500 shrink-0" />
+                        <input
+                            type="number"
+                            value={newStreakCount}
+                            onChange={(e) => setNewStreakCount(e.target.value)}
+                            className="flex-1 h-9 bg-slate-800 border border-slate-600 rounded-lg px-3 text-sm text-white placeholder-slate-500 focus:border-orange-500 focus:outline-none"
+                            placeholder="Starting count (0 if new)"
+                            min="0"
+                        />
+                    </div>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={handleCreateSubmit}
+                            className="flex-1 py-2 bg-orange-600 hover:bg-orange-500 text-white text-sm font-medium rounded-lg flex items-center justify-center gap-1 transition-colors"
+                        >
+                            <Save size={14} /> Create
+                        </button>
+                        <button
+                            onClick={handleCreateCancel}
+                            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm rounded-lg transition-colors"
+                        >
+                            Cancel
+                        </button>
+                    </div>
                 </div>
             )}
 
