@@ -389,10 +389,37 @@ export function getActivitySummary(entities: Entity[]) {
     const thisWeek = aggregateByWeek(entities)[0];
     const thisMonth = aggregateByMonth(entities)[0];
 
+    // Flowmate 3.2: Productive Hours Breakdown
+    let productiveMinutes = 0;
+    let neutralMinutes = 0;
+    let unproductiveMinutes = 0;
+
+    activities.forEach(a => {
+        const minutes = a.duration_minutes || 0;
+        const prodType = a.metadata?.productivity as string | undefined;
+
+        if (prodType === 'PRODUCTIVE') {
+            productiveMinutes += minutes;
+        } else if (prodType === 'UNPRODUCTIVE') {
+            unproductiveMinutes += minutes;
+        } else if (prodType === 'NEUTRAL') {
+            neutralMinutes += minutes;
+        } else {
+            // Default behavior if not tagged: treat as Neutral
+            neutralMinutes += minutes;
+        }
+    });
+
+    const totalMinutes = activities.reduce((sum, e) => sum + (e.duration_minutes || 0), 0);
+
     return {
         totalActivities: activities.length,
         totalCompletedTasks: completedTasks.length,
-        totalMinutes: activities.reduce((sum, e) => sum + (e.duration_minutes || 0), 0),
+        totalMinutes,
+        productiveMinutes,
+        neutralMinutes,
+        unproductiveMinutes,
+        focusScore: totalMinutes > 0 ? Math.round((productiveMinutes / totalMinutes) * 100) : 0,
         currentStreak: streak.current,
         longestStreak: streak.longest,
         activeToday: streak.isActiveToday,

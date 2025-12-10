@@ -148,6 +148,17 @@ For complex patterns (metadata.rrule): "every 2nd Saturday" → metadata: { rrul
 - CONTEXT (CTX): Domains/orgs (Academics, IEEE CS, Work, Gym)
 - TAG: Keywords (urgent, exam, revision)
 
+**PRODUCTIVE HOURS TRACKING:**
+Categorize EVERY activity/task/habit in \`metadata.productivity\`:
+- **PRODUCTIVE**: Work, coding, study, exercise, learning, creation. (Value: 1)
+- **NEUTRAL**: Chores, commute, eating, hygiene, maintenance, errands. (Value: 0)
+- **UNPRODUCTIVE**: Gaming, social media, TV, idle browsing, procrastination. (Value: -1)
+
+\`\`\`
+{ type: "log", payload: { entity_id: "...", t: "Studied React", dur: 60, m: { productivity: "PRODUCTIVE" } } }
+{ type: "c", payload: { k: "TSK", t: "Buy Groceries", m: { productivity: "NEUTRAL" } } }
+\`\`\`
+
 **DATES:** Always use +05:30 offset, never "Z".
 
 **BEHAVIOR:** Be proactive, extract everything, don't ask permission. Respond naturally.
