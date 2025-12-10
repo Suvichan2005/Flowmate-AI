@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
 import { useStore } from '../store';
 import { Entity, Relationship, EntityKind, EntityStatus, RelationshipType } from '../types';
-import { Filter, Eye, EyeOff, Maximize, Play, Edit3, Trash2, CheckSquare, Square, Sliders, Info, Magnet, RefreshCw } from 'lucide-react';
+import { Filter, Eye, EyeOff, Maximize, Play, Edit3, Trash2, CheckSquare, Square, Sliders, Info, Magnet, RefreshCw, Archive, Calendar, Unlink } from 'lucide-react';
+import { shouldShowInGraph, getGraphStats } from '../utils/graphVisibility';
 
 interface GraphViewProps {
     entities: Entity[];
@@ -20,6 +21,12 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
     );
     const [showFilterMenu, setShowFilterMenu] = useState(false);
     const [showPhysicsMenu, setShowPhysicsMenu] = useState(false);
+
+    // Smart Visibility Filters (Flowmate 3.0)
+    const [showArchived, setShowArchived] = useState(false);
+    const [showOldCompleted, setShowOldCompleted] = useState(false);
+    const [showPastEvents, setShowPastEvents] = useState(false);
+    const [showOrphans, setShowOrphans] = useState(true);
 
     // Physics State
     const [groupByKind, setGroupByKind] = useState(false);
@@ -63,11 +70,17 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
     const getLinkColor = (type: string) => relColors[type] || relColors['DEFAULT'];
 
     // Filter Data based on visibility
-    const { nodes, links } = useMemo(() => {
+    const { nodes, links, stats } = useMemo(() => {
         // Defensive Filter: Ensure basic properties exist
-        // Also exclude hidden entities from graph
+        // Apply smart visibility rules AND kind filter
         const activeNodes = safeEntities
-            .filter(e => e && e.id && e.kind && visibleKinds.has(e.kind) && !e.metadata?.hidden)
+            .filter(e => e && e.id && e.kind && visibleKinds.has(e.kind))
+            .filter(e => shouldShowInGraph(e, safeRelationships, {
+                showArchived,
+                showOldCompleted,
+                showPastEvents,
+                showOrphans
+            }))
             .map(e => ({
                 ...e,
                 id: e.id,
@@ -86,8 +99,11 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
                 id: r.id
             }));
 
-        return { nodes: activeNodes, links: activeLinks };
-    }, [safeEntities, safeRelationships, visibleKinds]);
+        // Calculate stats for display
+        const stats = getGraphStats(safeEntities, safeRelationships);
+
+        return { nodes: activeNodes, links: activeLinks, stats };
+    }, [safeEntities, safeRelationships, visibleKinds, showArchived, showOldCompleted, showPastEvents, showOrphans]);
 
     // Update Simulation Forces when props change
     useEffect(() => {
@@ -673,9 +689,63 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
                 )}
 
                 {showFilterMenu && (
-                    <div className="bg-slate-950/90 backdrop-blur-md border border-slate-800 p-3 rounded-lg shadow-xl w-48 flex flex-col gap-1 max-h-[80vh] overflow-y-auto animate-in fade-in zoom-in duration-100">
+                    <div className="bg-slate-950/90 backdrop-blur-md border border-slate-800 p-3 rounded-lg shadow-xl w-56 flex flex-col gap-1 max-h-[80vh] overflow-y-auto animate-in fade-in zoom-in duration-100">
+                        {/* Stats Header */}
+                        <div className="text-[10px] text-slate-500 mb-2 p-2 bg-slate-800/50 rounded">
+                            <div className="flex justify-between"><span>Total:</span><span>{stats.total}</span></div>
+                            <div className="flex justify-between"><span>Hidden:</span><span>{stats.hidden + stats.archived}</span></div>
+                            {stats.stale > 0 && <div className="flex justify-between text-amber-400"><span>Stale:</span><span>{stats.stale}</span></div>}
+                            {stats.duplicates > 0 && <div className="flex justify-between text-orange-400"><span>Duplicates:</span><span>{stats.duplicates}</span></div>}
+                        </div>
+
+                        {/* Smart Visibility Section */}
+                        <div className="border-b border-slate-800 pb-2 mb-2">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Smart Filters</span>
+
+                            <button
+                                onClick={() => setShowArchived(!showArchived)}
+                                className={`w-full flex items-center justify-between text-xs p-1.5 rounded transition-colors ${showArchived ? 'bg-amber-900/20' : 'hover:bg-slate-800'}`}
+                            >
+                                <span className={`flex items-center gap-1.5 ${showArchived ? 'text-amber-400' : 'text-slate-400'}`}>
+                                    <Archive size={12} /> Archived
+                                </span>
+                                {showArchived ? <Eye size={12} className="text-emerald-500" /> : <EyeOff size={12} className="text-slate-600" />}
+                            </button>
+
+                            <button
+                                onClick={() => setShowOldCompleted(!showOldCompleted)}
+                                className={`w-full flex items-center justify-between text-xs p-1.5 rounded transition-colors ${showOldCompleted ? 'bg-green-900/20' : 'hover:bg-slate-800'}`}
+                            >
+                                <span className={`flex items-center gap-1.5 ${showOldCompleted ? 'text-green-400' : 'text-slate-400'}`}>
+                                    <CheckSquare size={12} /> Old Completed
+                                </span>
+                                {showOldCompleted ? <Eye size={12} className="text-emerald-500" /> : <EyeOff size={12} className="text-slate-600" />}
+                            </button>
+
+                            <button
+                                onClick={() => setShowPastEvents(!showPastEvents)}
+                                className={`w-full flex items-center justify-between text-xs p-1.5 rounded transition-colors ${showPastEvents ? 'bg-purple-900/20' : 'hover:bg-slate-800'}`}
+                            >
+                                <span className={`flex items-center gap-1.5 ${showPastEvents ? 'text-purple-400' : 'text-slate-400'}`}>
+                                    <Calendar size={12} /> Past Events (60d+)
+                                </span>
+                                {showPastEvents ? <Eye size={12} className="text-emerald-500" /> : <EyeOff size={12} className="text-slate-600" />}
+                            </button>
+
+                            <button
+                                onClick={() => setShowOrphans(!showOrphans)}
+                                className={`w-full flex items-center justify-between text-xs p-1.5 rounded transition-colors ${!showOrphans ? 'bg-slate-700/50' : 'hover:bg-slate-800'}`}
+                            >
+                                <span className={`flex items-center gap-1.5 ${showOrphans ? 'text-slate-300' : 'text-slate-500'}`}>
+                                    <Unlink size={12} /> Old Orphans
+                                </span>
+                                {showOrphans ? <Eye size={12} className="text-emerald-500" /> : <EyeOff size={12} className="text-slate-600" />}
+                            </button>
+                        </div>
+
+                        {/* Entity Kind Toggles */}
                         <div className="flex justify-between items-center pb-2 mb-2 border-b border-slate-800">
-                            <span className="text-xs font-bold text-slate-400 uppercase">Filter Nodes</span>
+                            <span className="text-xs font-bold text-slate-400 uppercase">By Type</span>
                             <button onClick={toggleAll} className="text-[10px] text-indigo-400 hover:text-indigo-300">
                                 {visibleKinds.size === Object.keys(EntityKind).length ? 'Hide All' : 'Show All'}
                             </button>

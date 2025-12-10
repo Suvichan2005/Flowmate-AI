@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
-import { Entity, EntityKind } from '../types';
-import { getStreakInfo, getActivitySummary } from '../utils/streakCalculation';
+import { Entity, EntityKind, EntityStatus } from '../types';
+import { getStreakInfo, getActivitySummary, getActivityEntities } from '../utils/streakCalculation';
 import { Flame, Trophy, Calendar, Clock } from 'lucide-react';
 
 interface ContributionHeatmapProps {
@@ -18,18 +18,31 @@ const ContributionHeatmap: React.FC<ContributionHeatmapProps> = ({ entities, sho
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        // Count activities per day
+        // Count activities per day - use getActivityEntities which includes metadata.activity_log
         const counts: Record<string, number> = {};
         let total = 0;
 
-        entities.forEach(e => {
-            // Count completed tasks, activities, and logged work
-            if (e.kind === EntityKind.ACTIVITY ||
-                (e.status === 'COMPLETED' && (e.kind === EntityKind.TASK || e.kind === EntityKind.HABIT))) {
-                const dateStr = (e.start_time || e.updated_at || e.created_at).split('T')[0];
-                counts[dateStr] = (counts[dateStr] || 0) + 1;
-                total++;
-            }
+        // Get all activities (legacy ACTIVITY entities + metadata.activity_log entries)
+        const allActivities = getActivityEntities(entities);
+
+        // Also count completed tasks and habits
+        const completedItems = entities.filter(e =>
+            e.status === EntityStatus.COMPLETED &&
+            (e.kind === EntityKind.TASK || e.kind === EntityKind.HABIT)
+        );
+
+        // Count activities
+        allActivities.forEach(e => {
+            const dateStr = (e.start_time || e.updated_at || e.created_at).split('T')[0];
+            counts[dateStr] = (counts[dateStr] || 0) + 1;
+            total++;
+        });
+
+        // Count completed tasks/habits
+        completedItems.forEach(e => {
+            const dateStr = (e.start_time || e.updated_at || e.created_at).split('T')[0];
+            counts[dateStr] = (counts[dateStr] || 0) + 1;
+            total++;
         });
 
         // Build grid (52 weeks x 7 days)

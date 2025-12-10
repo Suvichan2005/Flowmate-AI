@@ -23,7 +23,14 @@ import {
     RecurrenceType,
     Toast,
     TagDefinition,
-    HabitMetadata
+    HabitMetadata,
+    Subtask,
+    ActivityLogEntry,
+    FoodLogEntry,
+    Subject,
+    ClassSchedule,
+    Holiday,
+    AttendanceLog
 } from './types';
 
 // --- Normalization & Validation Helper ---
@@ -31,6 +38,18 @@ import {
 const normalizePayload = (type: ToonOperationType, payload: any): any => {
     if (!payload) return {};
     const p = { ...payload };
+
+    // 0. Short Field Aliases (Flowmate 3.1 — Token Optimization)
+    if (p.k && !p.kind) p.kind = p.k;
+    if (p.t && !p.title) p.title = p.t;
+    if (p.d && !p.description) p.description = p.d;
+    if (p.p && !p.parent && !p.parent_id) p.parent = p.p;
+    if (p.s && !p.status) p.status = p.s;
+    if (p.m && !p.metadata) p.metadata = p.m;
+    if (p.dur && !p.duration_minutes) p.duration_minutes = p.dur;
+    if (p.start && !p.start_time) p.start_time = p.start;
+    if (p.end && !p.end_time) p.end_time = p.end;
+    if (p.due && !p.deadline) p.deadline = p.due;
 
     // 1. Common Field Aliases (LLM Hallucination Fixes)
     if (p.name && !p.title) p.title = p.name;
@@ -41,7 +60,7 @@ const normalizePayload = (type: ToonOperationType, payload: any): any => {
     // Date aliases
     if (p.due_date && !p.deadline) p.deadline = p.due_date;
     if (p.target_date && !p.deadline) p.deadline = p.target_date;
-    if (p.end && !p.deadline) p.deadline = p.end; // Contextual, but safe fallback
+    // Removed: end -> deadline alias (was incorrectly setting deadline on events)
     if (p.date && !p.start_time) p.start_time = p.date;
     if (p.start && !p.start_time) p.start_time = p.start;
 
@@ -76,20 +95,53 @@ const normalizePayload = (type: ToonOperationType, payload: any): any => {
     // 3. Kind Validation/Normalization
     if (p.kind) {
         const k = p.kind.toUpperCase();
-        if (Object.values(EntityKind).includes(k)) {
+
+        // Short kind aliases (Flowmate 3.1)
+        const shortKindMap: Record<string, EntityKind> = {
+            'CTX': EntityKind.CONTEXT,
+            'GOL': EntityKind.GOAL,
+            'PRJ': EntityKind.PROJECT,
+            'TSK': EntityKind.TASK,
+            'EVT': EntityKind.EVENT,
+            'HAB': EntityKind.HABIT,
+            'NOT': EntityKind.NOTE,
+            'PER': EntityKind.PERSON,
+            // Legacy aliases
+            'MEETING': EntityKind.EVENT,
+            'REMINDER': EntityKind.TASK,
+            'SUBTASK': EntityKind.TASK,
+            'IDEA': EntityKind.NOTE,
+            'AREA': EntityKind.CONTEXT,
+            'DOMAIN': EntityKind.CONTEXT,
+            'SPACE': EntityKind.CONTEXT,
+        };
+
+        if (Object.values(EntityKind).includes(k as EntityKind)) {
             p.kind = k;
+        } else if (shortKindMap[k]) {
+            p.kind = shortKindMap[k];
         } else {
-            // Fallback mapping
-            if (k === 'MEETING') p.kind = EntityKind.EVENT;
-            else if (k === 'REMINDER') p.kind = EntityKind.TASK;
-            else if (k === 'SUBTASK') p.kind = EntityKind.TASK;
-            else if (k === 'IDEA') p.kind = EntityKind.NOTE;
-            else if (k === 'AREA' || k === 'DOMAIN' || k === 'SPACE') p.kind = EntityKind.CONTEXT;
-            else p.kind = EntityKind.TASK; // Default
+            p.kind = EntityKind.TASK; // Default fallback
         }
     }
 
     return p;
+};
+
+// --- Short Operation Type Expansion (Flowmate 3.1) ---
+const SHORT_OP_MAP: Record<string, ToonOperationType> = {
+    'c': 'create_entity',
+    'u': 'update_entity',
+    'd': 'delete_entity',
+    'l': 'link_entities',
+    's': 'add_subtask',
+    'f': 'log_food',
+    'log': 'log_to_entity',
+    'arc': 'archive_entity',
+};
+
+const expandOperationType = (shortType: string): ToonOperationType => {
+    return (SHORT_OP_MAP[shortType] || shortType) as ToonOperationType;
 };
 
 // --- Helper: Calculate Next Recurrence ---
@@ -158,6 +210,12 @@ interface FlowmateState {
     debugLogs: DebugLogEntry[];
     focusSession: FocusSession | null;
     dailyBriefing: DailyBriefing | null;
+    foodLogs: FoodLogEntry[]; // Flowmate 3.0: Food Tracking
+    // Flowmate 3.1: Attendance Tracking
+    subjects: Subject[];
+    classSchedule: ClassSchedule[];
+    holidays: Holiday[];
+    attendanceLogs: AttendanceLog[];
 
     // Auth State
     currentUser: User | null;
@@ -172,6 +230,7 @@ interface FlowmateState {
     toasts: Toast[];
     showConfetti: boolean;
     pendingOrchestration: string | null;
+    knowledgeInitialFilters: string[] | null;  // Filters to apply when navigating to Knowledge
 
     // History
     history: HistorySnapshot[];
@@ -185,7 +244,7 @@ interface FlowmateState {
     applyOperations: (ops: ToonOperation[]) => void;
     processSyncQueue: () => Promise<void>;
     getSnapshot: () => { entities: Entity[]; relationships: Relationship[] };
-    setView: (view: ViewType) => void;
+    setView: (view: ViewType, knowledgeFilters?: string[]) => void;
     selectEntity: (id: string | null) => void;
     updateSettings: (settings: Partial<UserSettings>) => void;
     addDebugLog: (type: DebugLogEntry['type'], summary: string, details?: any) => void;
@@ -260,10 +319,17 @@ export const useStore = create<FlowmateState>()(
             debugLogs: [],
             focusSession: null,
             dailyBriefing: null,
+            foodLogs: [], // Flowmate 3.0: Food Tracking
+            // Flowmate 3.1: Attendance Tracking
+            subjects: [],
+            classSchedule: [],
+            holidays: [],
+            attendanceLogs: [],
             isZenMode: false,
             toasts: [],
             showConfetti: false,
             pendingOrchestration: null,
+            knowledgeInitialFilters: null,  // Filters for Knowledge view
             history: [],
             historyPointer: -1,
 
@@ -348,7 +414,10 @@ export const useStore = create<FlowmateState>()(
 
             setHydrated: (val) => set({ isHydrated: val }),
 
-            setView: (view) => set({ currentView: view }),
+            setView: (view, knowledgeFilters) => set({
+                currentView: view,
+                knowledgeInitialFilters: knowledgeFilters || null
+            }),
 
             selectEntity: (id) => set({ selectedEntityId: id }),
 
@@ -392,6 +461,62 @@ export const useStore = create<FlowmateState>()(
             },
 
             clearDebugLogs: () => set({ debugLogs: [] }),
+
+            // Flowmate 3.0: Auto-Archive Stale Entities
+            autoArchiveStaleEntities: () => {
+                const { entities, addDebugLog } = get();
+                const now = Date.now();
+                const dayMs = 24 * 60 * 60 * 1000;
+
+                const completedTaskDays = 30;
+                const pastEventDays = 60;
+                const canceledDays = 14;
+
+                let archivedCount = 0;
+
+                const updatedEntities = entities.map(e => {
+                    // Skip already archived
+                    if (e.metadata?.archived) return e;
+
+                    let shouldArchive = false;
+
+                    // Completed tasks older than 30 days
+                    if (e.status === EntityStatus.COMPLETED && e.kind === EntityKind.TASK) {
+                        const updatedAt = new Date(e.updated_at).getTime();
+                        if ((now - updatedAt) / dayMs > completedTaskDays) shouldArchive = true;
+                    }
+
+                    // Past events older than 60 days
+                    if (e.kind === EntityKind.EVENT && e.start_time) {
+                        const eventTime = new Date(e.start_time).getTime();
+                        if ((now - eventTime) / dayMs > pastEventDays) shouldArchive = true;
+                    }
+
+                    // Canceled entities older than 14 days
+                    if (e.status === EntityStatus.CANCELED) {
+                        const updatedAt = new Date(e.updated_at).getTime();
+                        if ((now - updatedAt) / dayMs > canceledDays) shouldArchive = true;
+                    }
+
+                    if (shouldArchive) {
+                        archivedCount++;
+                        return {
+                            ...e,
+                            metadata: { ...e.metadata, archived: true },
+                            updated_at: new Date().toISOString()
+                        };
+                    }
+
+                    return e;
+                });
+
+                if (archivedCount > 0) {
+                    set({ entities: updatedEntities });
+                    addDebugLog('system', `Auto-archived ${archivedCount} stale entities`);
+                }
+
+                return archivedCount;
+            },
 
             importData: (data) => {
                 set((state) => ({
@@ -601,7 +726,8 @@ export const useStore = create<FlowmateState>()(
 
                     ops.forEach(op => {
                         try {
-                            const { type } = op;
+                            // Expand short operation types (c→create_entity, u→update_entity, etc.)
+                            const type = expandOperationType(op.type);
                             const payload = normalizePayload(type, op.payload);
                             const now = new Date().toISOString();
 
@@ -610,6 +736,10 @@ export const useStore = create<FlowmateState>()(
                                     if (!payload.title) {
                                         throw new Error("Missing title for create_entity");
                                     }
+
+                                    // Resolve parent_id from parent shorthand
+                                    const parentRef = payload.parent_id || payload.parent_temp || payload.parent;
+                                    const resolvedParentId = parentRef ? resolveEntityId(parentRef, newEntities) : null;
 
                                     const entity: Entity = {
                                         id: payload.id || uuidv4(),
@@ -626,7 +756,8 @@ export const useStore = create<FlowmateState>()(
                                         metadata: payload.metadata || {},
                                         created_at: now,
                                         updated_at: now,
-                                        canonical_tags: []
+                                        canonical_tags: [],
+                                        parent_id: resolvedParentId  // New: direct parent reference
                                     };
                                     newEntities.push(entity);
 
@@ -662,6 +793,43 @@ export const useStore = create<FlowmateState>()(
                                             addDebugLog('system', 'Calendar sync failed', { error: err.message });
                                         });
                                     }
+
+                                    // NOTE: PART_OF is now handled via parent_id field directly on entity
+
+                                    // === SHORTHAND: Auto-link context (creates TAGGED_WITH) ===
+                                    const contextRef = payload.context_id || payload.context_temp || payload.context;
+                                    if (contextRef) {
+                                        const contextId = resolveEntityId(contextRef, newEntities);
+                                        if (contextId) {
+                                            newRelationships.push({
+                                                id: uuidv4(),
+                                                from: entity.id,
+                                                to: contextId,
+                                                type: RelationshipType.TAGGED_WITH,
+                                                meta: {},
+                                                created_at: now
+                                            });
+                                        }
+                                    }
+
+                                    // === SHORTHAND: Auto-link tags array (creates TAGGED_WITH for each) ===
+                                    const tagsArray = payload.tags || payload.tags_temp;
+                                    if (Array.isArray(tagsArray)) {
+                                        tagsArray.forEach((tagRef: string) => {
+                                            const tagId = resolveEntityId(tagRef, newEntities);
+                                            if (tagId) {
+                                                newRelationships.push({
+                                                    id: uuidv4(),
+                                                    from: entity.id,
+                                                    to: tagId,
+                                                    type: RelationshipType.TAGGED_WITH,
+                                                    meta: {},
+                                                    created_at: now
+                                                });
+                                            }
+                                        });
+                                    }
+
                                     break;
                                 }
 
@@ -684,6 +852,20 @@ export const useStore = create<FlowmateState>()(
                                     }
 
                                     const updates = payload.fields || {};
+
+                                    // Merge direct payload fields (AI hallucination tolerance)
+                                    // Allow status, title, description, priority, etc. to be set directly in payload
+                                    if (payload.status && !updates.status) updates.status = payload.status;
+                                    if (payload.title && !updates.title) updates.title = payload.title;
+                                    if (payload.description && !updates.description) updates.description = payload.description;
+                                    if (payload.priority && !updates.priority) updates.priority = payload.priority;
+                                    if (payload.deadline && !updates.deadline) updates.deadline = payload.deadline;
+                                    if (payload.start_time && !updates.start_time) updates.start_time = payload.start_time;
+                                    if (payload.end_time && !updates.end_time) updates.end_time = payload.end_time;
+                                    if (payload.recurrence && !updates.recurrence) updates.recurrence = payload.recurrence;
+                                    if (payload.metadata && !updates.metadata) updates.metadata = { ...targetEntity.metadata, ...payload.metadata };
+                                    // NEW: Allow kind changes (e.g., HABIT → TASK)
+                                    if (payload.kind && !updates.kind) updates.kind = payload.kind;
 
                                     // Handle Rename Sync for Tags
                                     if (updates.title && (targetEntity.kind === EntityKind.TAG || targetEntity.kind === EntityKind.CONTEXT)) {
@@ -1044,6 +1226,210 @@ export const useStore = create<FlowmateState>()(
                                             ? { ...e, canonical_tags: tags, updated_at: now }
                                             : e
                                     );
+                                    break;
+                                }
+
+                                // === FLOWMATE 3.0: NESTED ENTITY OPERATIONS ===
+
+                                case 'add_subtask': {
+                                    const entityId = payload.entity_id || payload.id;
+                                    const resolvedId = resolveEntityId(entityId, newEntities);
+                                    if (!resolvedId) {
+                                        addDebugLog('system', 'add_subtask: Entity not found', { entity_id: entityId });
+                                        break;
+                                    }
+
+                                    const newSubtask: Subtask = {
+                                        id: payload.subtask_id || uuidv4(),
+                                        title: payload.title || payload.subtask?.title || 'Subtask',
+                                        completed: false,
+                                        created_at: now,
+                                        estimated_minutes: payload.estimated_minutes || payload.subtask?.estimated_minutes,
+                                        order: payload.order || payload.subtask?.order
+                                    };
+
+                                    newEntities = newEntities.map(e => {
+                                        if (e.id === resolvedId) {
+                                            const subtasks = [...(e.metadata?.subtasks || []), newSubtask];
+                                            return {
+                                                ...e,
+                                                metadata: { ...e.metadata, subtasks },
+                                                updated_at: now
+                                            };
+                                        }
+                                        return e;
+                                    });
+                                    break;
+                                }
+
+                                case 'toggle_subtask': {
+                                    const entityId = payload.entity_id || payload.id;
+                                    const subtaskId = payload.subtask_id;
+                                    const resolvedId = resolveEntityId(entityId, newEntities);
+                                    if (!resolvedId || !subtaskId) break;
+
+                                    newEntities = newEntities.map(e => {
+                                        if (e.id === resolvedId) {
+                                            const subtasks = (e.metadata?.subtasks || []).map((st: Subtask) =>
+                                                st.id === subtaskId
+                                                    ? { ...st, completed: !st.completed, completed_at: !st.completed ? now : undefined }
+                                                    : st
+                                            );
+
+                                            // Auto-recalculate progress
+                                            const total = subtasks.length;
+                                            const done = subtasks.filter((s: Subtask) => s.completed).length;
+                                            const manual_progress = total > 0 ? Math.round((done / total) * 100) : 0;
+
+                                            return {
+                                                ...e,
+                                                metadata: { ...e.metadata, subtasks, manual_progress },
+                                                updated_at: now
+                                            };
+                                        }
+                                        return e;
+                                    });
+
+                                    // Confetti if all done
+                                    const targetEnt = newEntities.find(e => e.id === resolvedId);
+                                    if (targetEnt?.metadata?.subtasks?.every((s: Subtask) => s.completed) && targetEnt?.metadata?.subtasks?.length > 0) {
+                                        triggerConfetti();
+                                    }
+                                    break;
+                                }
+
+                                case 'delete_subtask': {
+                                    const entityId = payload.entity_id || payload.id;
+                                    const subtaskId = payload.subtask_id;
+                                    const resolvedId = resolveEntityId(entityId, newEntities);
+                                    if (!resolvedId || !subtaskId) break;
+
+                                    newEntities = newEntities.map(e => {
+                                        if (e.id === resolvedId) {
+                                            const subtasks = (e.metadata?.subtasks || []).filter((st: Subtask) => st.id !== subtaskId);
+
+                                            // Recalculate progress
+                                            const total = subtasks.length;
+                                            const done = subtasks.filter((s: Subtask) => s.completed).length;
+                                            const manual_progress = total > 0 ? Math.round((done / total) * 100) : 0;
+
+                                            return {
+                                                ...e,
+                                                metadata: { ...e.metadata, subtasks, manual_progress },
+                                                updated_at: now
+                                            };
+                                        }
+                                        return e;
+                                    });
+                                    break;
+                                }
+
+                                case 'log_to_entity': {
+                                    const entityId = payload.entity_id || payload.id || payload.linked_entity_id;
+                                    const resolvedId = resolveEntityId(entityId, newEntities);
+                                    if (!resolvedId) {
+                                        addDebugLog('system', 'log_to_entity: Entity not found', { entity_id: entityId });
+                                        break;
+                                    }
+
+                                    const logEntry: ActivityLogEntry = {
+                                        id: uuidv4(),
+                                        timestamp: now,
+                                        title: payload.title || 'Activity',
+                                        duration_minutes: payload.duration_minutes || 0,
+                                        notes: payload.notes
+                                    };
+
+                                    newEntities = newEntities.map(e => {
+                                        if (e.id === resolvedId) {
+                                            const activity_log = [...(e.metadata?.activity_log || []), logEntry];
+                                            const meta = { ...e.metadata, activity_log, last_interaction: now };
+
+                                            // HABIT: Update streak if applicable
+                                            if (e.kind === EntityKind.HABIT) {
+                                                const habitMeta = meta as HabitMetadata & { activity_log: ActivityLogEntry[]; last_interaction: string };
+
+                                                // Update Counts
+                                                habitMeta.total_completions = (habitMeta.total_completions || 0) + 1;
+                                                if (habitMeta.habit_type === 'BAD' && logEntry.duration_minutes) {
+                                                    habitMeta.time_spent_minutes = (habitMeta.time_spent_minutes || 0) + logEntry.duration_minutes;
+                                                }
+
+                                                // Streak Calculation
+                                                const todayStr = new Date().toISOString().split('T')[0];
+                                                const lastDateStr = habitMeta.last_completed_at ? habitMeta.last_completed_at.split('T')[0] : null;
+
+                                                if (lastDateStr !== todayStr) {
+                                                    const yesterday = new Date();
+                                                    yesterday.setDate(yesterday.getDate() - 1);
+                                                    const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+                                                    if (lastDateStr === yesterdayStr) {
+                                                        habitMeta.streak_current = (habitMeta.streak_current || 0) + 1;
+                                                    } else {
+                                                        habitMeta.streak_current = 1;
+                                                    }
+
+                                                    if ((habitMeta.streak_current || 0) > (habitMeta.streak_best || 0)) {
+                                                        habitMeta.streak_best = habitMeta.streak_current;
+                                                    }
+
+                                                    habitMeta.last_completed_at = now;
+                                                }
+                                            }
+
+                                            return { ...e, metadata: meta, updated_at: now };
+                                        }
+                                        return e;
+                                    });
+
+                                    triggerConfetti();
+                                    break;
+                                }
+
+                                case 'archive_entity': {
+                                    const entityId = payload.entity_id || payload.id;
+                                    const archived = payload.archived !== undefined ? payload.archived : true;
+                                    const resolvedId = resolveEntityId(entityId, newEntities);
+                                    if (!resolvedId) break;
+
+                                    newEntities = newEntities.map(e =>
+                                        e.id === resolvedId
+                                            ? { ...e, metadata: { ...e.metadata, archived }, updated_at: now }
+                                            : e
+                                    );
+                                    break;
+                                }
+
+                                case 'log_food': {
+                                    const foodEntry: FoodLogEntry = {
+                                        id: uuidv4(),
+                                        timestamp: payload.timestamp || now,
+                                        food_name: payload.food_name || payload.title || payload.t || 'Unknown Food',
+                                        meal_type: payload.meal_type,
+                                        calories: payload.calories,
+                                        protein_g: payload.protein_g,
+                                        carbs_g: payload.carbs_g,
+                                        fat_g: payload.fat_g,
+                                        cost: payload.cost,
+                                        notes: payload.notes,
+                                        is_favorite: payload.is_favorite,
+                                        // Enhanced tracking fields
+                                        source: payload.source, // mess, ordered, homemade, outside
+                                        vendor: payload.vendor, // "Sardarji", "Zomato", etc.
+                                        rating: payload.rating, // 1-5
+                                        skipped: payload.skipped // For skipped meals
+                                    };
+
+                                    // Store will add this to foodLogs after the switch
+                                    // For now, we'll use a side effect
+                                    setTimeout(() => {
+                                        set(state => ({
+                                            foodLogs: [...state.foodLogs, foodEntry]
+                                        }));
+                                    }, 0);
+
+                                    triggerConfetti();
                                     break;
                                 }
                             }

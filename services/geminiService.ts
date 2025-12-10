@@ -54,11 +54,21 @@ const applyChangesTool: FunctionDeclaration = {
             type: {
               type: Type.STRING,
               enum: [
+                // Short aliases (Flowmate 3.1 — Token Optimization)
+                'c', 'u', 'd', 'l', 's', 'f', 'log', 'arc',
+                // Full names (backward compat)
                 'create_entity',
                 'update_entity',
                 'delete_entity',
                 'link_entities',
                 'unlink_entities',
+                'add_subtask',
+                'toggle_subtask',
+                'delete_subtask',
+                'log_to_entity',
+                'archive_entity',
+                'log_food',
+                // Deprecated (still supported)
                 'log_activity',
                 'schedule_event',
                 'set_goal_progress',
@@ -79,83 +89,83 @@ const applyChangesTool: FunctionDeclaration = {
 };
 
 const SYSTEM_INSTRUCTION_BASE = `
-You are Flowmate Orchestrator v2.5, the central intelligence of a personal productivity ecosystem.
-Your goal is to maintain a perfect, interconnected graph of the user's life.
+You are Flowmate v3.1 — a personal productivity AI. Maintain the user's life graph via operations.
 
-**CRITICAL RULES FOR "CONTEXT" vs "TAGS" (MUST FOLLOW):**
+**OPERATION SHORTCUTS (USE THESE!):**
+| Short | Full | Use For |
+|-------|------|---------|
+| c | create_entity | Create entities |
+| u | update_entity | Update fields |
+| l | link_entities | DEPENDS_ON, RELATED_TO only |
+| s | add_subtask | Add subtask to entity |
+| f | log_food | Food/meal logging |
+| log | log_to_entity | Log activity to entity |
 
-1. **Domains are CONTEXTS**: If the user mentions an organization, society, company, class group, workspace, club, role-domain, or broad area (e.g., "IEEE CS", "E-Cell", "Academics", "Gym", "Semester 5"), ALWAYS create it as \`kind: 'CONTEXT'\`.
-   - **NEVER** create these as TAG, PROJECT, GOAL, or ROLE.
+**COMPACT PAYLOAD FORMAT:**
+\`\`\`
+{ type: "c", payload: { k: "PRJ", t: "SQL Course", p: "Coursera Cert", context: "Academics" }}
+\`\`\`
 
-2. **TAGS are Atomic**: Use \`kind: 'TAG'\` ONLY for simple keywords like "urgent", "exam", "revision", "teamwork", "coding".
+**FIELD SHORTCUTS:**
+k→kind, t→title, d→description, p→parent, m→metadata, dur→duration_minutes, start→start_time, end→end_time, due→deadline
 
-3. **Linking to Context/Tags**:
-   - Every new GOAL, PROJECT, TASK, ROLE, or EVENT that relates to a Context/Tag MUST be linked via \`type: 'TAGGED_WITH'\`.
-   - **FORBIDDEN**: Do NOT use \`PART_OF\` to link a Role/Goal to a Context. \`PART_OF\` is for structural hierarchy (Project->Task).
+**KIND SHORTCUTS:**
+CTX→CONTEXT, GOL→GOAL, PRJ→PROJECT, TSK→TASK, EVT→EVENT, HAB→HABIT, NOT→NOTE, PER→PERSON
 
-**LINKING RULES (Batch Creation - CRITICAL):**
+**HIERARCHIES:**
+Use \`p\` (parent) field for hierarchy. Creates parent_id directly, no link_entities needed.
+\`\`\`
+{ type: "c", payload: { k: "PRJ", t: "Course 1", p: "Certificate Goal" }}
+\`\`\`
 
-When creating multiple entities in ONE batch, you don't know their IDs yet.
-- Use the **exact title** of the new entity in \`from_temp\` or \`to_temp\` fields.
-- Example: 
-  ops: [
-    { type: "create_entity", payload: { kind: "CONTEXT", title: "IEEE CS" } },
-    { type: "create_entity", payload: { kind: "GOAL", title: "Deploy Project" } },
-    { type: "link_entities", payload: { from_temp: "Deploy Project", to_temp: "IEEE CS", type: "TAGGED_WITH" } }
-  ]
+**CONTEXTS/TAGS:**
+Use \`context\` or \`tags\` field. Auto-creates TAGGED_WITH.
+\`\`\`
+{ type: "c", payload: { k: "TSK", t: "Study", context: "Academics", tags: ["exam"] }}
+\`\`\`
 
-**PAYLOAD SCHEMAS (USE EXACTLY - CRITICAL):**
+**SUBTASKS (not entities!):**
+\`\`\`
+{ type: "s", payload: { entity_id: "Goal Title", t: "Module 1", estimated_minutes: 600 }}
+\`\`\`
 
-1. **create_entity**: 
-   { type: "create_entity", payload: { kind, title, description?, start_time?, end_time?, deadline?, priority?, recurrence?, metadata? } }
+**LOG ACTIVITY:**
+\`\`\`
+{ type: "log", payload: { entity_id: "Habit Name", t: "Did 30 min", dur: 30 }}
+\`\`\`
 
-2. **update_entity**: 
-   { type: "update_entity", payload: { id: "UUID", fields: { ...props } } }
 
-3. **link_entities**: 
-   { type: "link_entities", payload: { from_temp?: "title", to_temp?: "title", from?: "UUID", to?: "UUID", type: "PART_OF"|"DEPENDS_ON"|"TAGGED_WITH"|"RELATED_TO" } }
-   - Use from_temp/to_temp for entities created THIS turn
-   - Use from/to (UUIDs) for EXISTING entities from context
 
-4. **log_activity**: 
-   { type: "log_activity", payload: { title, duration_minutes?, notes?, linked_entity_id? } }
+**EVENTS (MUST have start/end, optional recurrence):**
+\`\`\`
+{ type: "c", payload: { k: "EVT", t: "Meeting", start: "2025-12-10T14:00:00+05:30", end: "2025-12-10T15:00:00+05:30" }}
+{ type: "c", payload: { k: "EVT", t: "Weekly Standup", start: "...", end: "...", rec: "WEEKLY" }}
+\`\`\`
+Recurrence: rec: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY"
+For complex patterns (metadata.rrule): "every 2nd Saturday" → metadata: { rrule: "FREQ=MONTHLY;BYDAY=2SA" }
 
-**ENTITY KINDS:**
+**CONTEXT vs TAG:**
+- CONTEXT (CTX): Domains/orgs (Academics, IEEE CS, Work, Gym)
+- TAG: Keywords (urgent, exam, revision)
 
-- CONTEXT: High-level domains (Work, Academics, IEEE CS, E-Cell)
-- GOAL: Outcomes (Get 10.0 GPA, Deploy App)
-- PROJECT: Multi-step collections
-- TASK: Actionable items
-- EVENT: Time-bound. MUST have start_time and end_time.
-- NOTE: Thoughts, ideas
-- HABIT: Recurring behavior. Metadata: { habit_type: 'GOOD'|'BAD', frequency_goal: 'DAILY'|'WEEKLY' }
-- TAG: Simple keywords (urgent, exam)
-- MINI_STREAK: Quick tap streaks. Metadata: { current_streak, best_streak, last_date }
+**DATES:** Always use +05:30 offset, never "Z".
 
-**TEMPORAL ACCURACY (CRITICAL - NEVER USE "Z"):**
+**BEHAVIOR:** Be proactive, extract everything, don't ask permission. Respond naturally.
+`;
 
-- User timezone: Asia/Kolkata = UTC+5:30
-- Output dates as ISO8601 WITH offset, NOT "Z"
-- Example for "10 PM tomorrow" on 2025-12-07:
-  ✅ "2025-12-08T22:00:00+05:30"
-  ❌ "2025-12-08T22:00:00Z"
+// Separate food instructions - conditionally included based on feature_toggles
+const FOOD_INSTRUCTIONS = `
+**LOG FOOD (with source tracking):**
+\`\`\`
+{ type: "f", payload: { food_name: "Chhola Bhatura", cost: 130, vendor: "Sardarji", source: "ordered" }}
+{ type: "f", payload: { food_name: "Rice Dal", meal_type: "lunch", source: "mess", skipped: false }}
+\`\`\`
+Fields: food_name, cost, vendor, source (mess/ordered/homemade/outside), meal_type, rating (1-5), skipped (bool)
 
-**BEHAVIOR RULES:**
-
-1. Extract EVERYTHING: Meetings, goals, feelings.
-2. Container First: Create Context/Project first, then children.
-3. Be Proactive: Don't ask permission, just create/link.
-4. Smart Updates: "I'm done with X" → update status to COMPLETED.
-5. Analyze Requests: When asked to "analyze/link" entities by ID, use those IDs from context.
-
-**CONVERSATIONAL:**
-
-- ALWAYS respond naturally. Never say "I'm not sure how to help."
-- If user provides context, update the entity.
-- Ask clarifying questions when needed.
-- Always be conversational, do not refer to goals and events in quotes, but in natural language.
-
-**TONE:** Professional, concise, warm Chief of Staff.
+**FOOD CONTEXT:** You have FOOD stats in context (meals, spending, vendors, top foods). Answer food questions using this data:
+- "What's my favorite food?" → Check top_foods in FOOD context
+- "How much did I spend?" → Use total_spent from FOOD context
+- "Where do I order from?" → List vendors with counts
 `;
 
 function calculateRelevance(entity: Entity, userMessage: string): number {
@@ -278,9 +288,17 @@ export const orchestrateMessage = async (
   const customInstructions = settings?.custom_instructions || '';
   const ai = getAiClient();
 
+  // Build system instruction with optional food instructions based on feature toggles
+  const featureToggles = settings?.feature_toggles || { food_tracking: true, attendance_tracking: true, people_tracking: true };
+
+  let systemInstruction = SYSTEM_INSTRUCTION_BASE;
+  if (featureToggles.food_tracking) {
+    systemInstruction += FOOD_INSTRUCTIONS;
+  }
+
   const finalSystemInstruction = customInstructions
-    ? `${SYSTEM_INSTRUCTION_BASE}\n\nUSER CUSTOM INSTRUCTIONS:\n${customInstructions}`
-    : SYSTEM_INSTRUCTION_BASE;
+    ? `${systemInstruction} \n\nUSER CUSTOM INSTRUCTIONS: \n${customInstructions} `
+    : systemInstruction;
 
   // --- Context Building ---
   const recentLimit = 15;
@@ -324,16 +342,64 @@ export const orchestrateMessage = async (
   };
 
   // Compact tags list
-  const tagList = (universalTags || []).slice(0, 20).map(t => `${t.title}(${t.kind[0]})`).join(', ');
+  const tagList = (universalTags || []).slice(0, 20).map(t => `${t.title} (${t.kind[0]})`).join(', ');
+
+  // --- FOOD CONTEXT ---
+  const { foodLogs } = useStore.getState();
+  const now = new Date();
+  const last30DaysLogs = foodLogs.filter(l => {
+    const d = new Date(l.timestamp);
+    return (now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24) <= 30;
+  });
+
+  // Calculate food stats for AI
+  const foodStats = {
+    total_meals: last30DaysLogs.length,
+    total_spent: last30DaysLogs.reduce((sum, l) => sum + (l.cost || 0), 0),
+    vendors: {} as Record<string, { count: number; spent: number }>,
+    top_foods: {} as Record<string, number>
+  };
+
+  last30DaysLogs.forEach(l => {
+    const vendor = l.vendor || l.notes?.match(/from\s+(\w+)/i)?.[1] || 'unknown';
+    if (!foodStats.vendors[vendor]) foodStats.vendors[vendor] = { count: 0, spent: 0 };
+    foodStats.vendors[vendor].count++;
+    foodStats.vendors[vendor].spent += l.cost || 0;
+
+    const food = l.food_name.toLowerCase();
+    foodStats.top_foods[food] = (foodStats.top_foods[food] || 0) + 1;
+  });
+
+  // Top 5 foods and vendors for context
+  const topFoods = Object.entries(foodStats.top_foods)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([name, count]) => `${name}(${count})`)
+    .join(', ');
+
+  const topVendors = Object.entries(foodStats.vendors)
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, 3)
+    .map(([name, data]) => `${name}:${data.count}x/₹${data.spent}`)
+    .join(', ');
+
+  // Recent 5 food logs for immediate context
+  const recentFoods = last30DaysLogs.slice(-5).map(l =>
+    `${l.food_name}${l.cost ? '/₹' + l.cost : ''}${l.vendor ? '@' + l.vendor : ''}`
+  ).join(', ');
+
+  const foodContext = last30DaysLogs.length > 0
+    ? `FOOD(30d): ${foodStats.total_meals} meals, ₹${foodStats.total_spent} spent | Top: ${topFoods || 'none'} | Vendors: ${topVendors || 'none'} | Recent: ${recentFoods || 'none'}`
+    : 'FOOD: No food logs yet';
 
   const userTimezone = settings.timezone || 'Asia/Kolkata';
-  const now = new Date();
   const hour = parseInt(now.toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: userTimezone }));
   const timeOfDay = hour >= 5 && hour < 12 ? 'morning' : hour >= 12 && hour < 17 ? 'afternoon' : hour >= 17 && hour < 21 ? 'evening' : 'late night';
 
   const contextPrompt = `NOW: ${now.toLocaleString('en-US', { timeZone: userTimezone })} (${timeOfDay}) | TZ: ${userTimezone}
 TAGS: ${tagList || 'none'}
-CONTEXT: ${JSON.stringify(contextSnapshot)}`;
+${foodContext}
+CONTEXT: ${JSON.stringify(contextSnapshot)} `;
 
   // --- Sliding Window History ---
   const HISTORY_WINDOW = 12;
@@ -359,7 +425,7 @@ CONTEXT: ${JSON.stringify(contextSnapshot)}`;
   contents.push({ role: 'user', parts: currentParts });
 
   // Log COMPLETE LLM input for debugging
-  addDebugLog('orchestrator', `LLM Request (${modelName})`, {
+  addDebugLog('orchestrator', `LLM Request(${modelName})`, {
     model: modelName,
     systemInstruction: finalSystemInstruction,
     contextPrompt: contextPrompt,

@@ -34,12 +34,14 @@ const matchesRecurrence = (originalDate: Date, targetDate: Date, recurrence: Rec
             const dayCode = bydayMatch[2];
             const dayMap: Record<string, number> = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
             const targetDayOfWeek = dayMap[dayCode];
+            const targetWeekOfMonth = Math.ceil(targetDate.getDate() / 7);
 
             if (targetDayOfWeek !== undefined && targetDate.getDay() === targetDayOfWeek) {
                 if (weekNum !== 0) {
                     // Nth weekday of month (e.g., 2nd Saturday)
-                    const targetWeekOfMonth = Math.ceil(targetDate.getDate() / 7);
-                    if (weekNum > 0 && targetWeekOfMonth === weekNum) return true;
+                    if (weekNum > 0 && targetWeekOfMonth === weekNum) {
+                        return true;
+                    }
                     // Negative means from end (-1 = last)
                     if (weekNum < 0) {
                         const lastDayOfMonth = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0).getDate();
@@ -100,15 +102,96 @@ const CalendarView: React.FC = () => {
 
     // Filter events AND tasks with deadlines based on toggle state
     // Also exclude hidden entities
-    const calendarItems = useMemo(() => entities.filter(e => {
-        // Exclude hidden entities
-        if (e.metadata?.hidden) return false;
-        if (e.kind === EntityKind.EVENT && e.start_time) return showEvents;
-        if (e.kind === EntityKind.TASK && e.deadline && e.status !== EntityStatus.COMPLETED) return showTasks;
-        // Activities: show if they have start_time or created_at for date placement
-        if (e.kind === EntityKind.ACTIVITY && (e.start_time || e.created_at)) return showLogs;
-        return false;
-    }), [entities, showEvents, showTasks, showLogs]);
+    // Also extract metadata.activity_log entries as pseudo-activities
+    // Also expand rrule-based recurring tasks
+    const calendarItems = useMemo(() => {
+        const items: Entity[] = [];
+
+        entities.forEach(e => {
+            // Exclude hidden entities
+            if (e.metadata?.hidden) return;
+
+            // Add standard calendar items
+            if (e.kind === EntityKind.EVENT && e.start_time && showEvents) {
+                items.push(e);
+            } else if (e.kind === EntityKind.TASK && e.status !== EntityStatus.COMPLETED && showTasks) {
+                // Show tasks with deadline, start_time, or rrule
+                if (e.deadline || e.start_time || e.metadata?.rrule) {
+                    items.push(e);
+
+                    // Expand rrule-based recurring tasks for next 30 days
+                    if (e.metadata?.rrule && e.start_time) {
+                        const rrule = e.metadata.rrule as string;
+                        const baseDate = new Date(e.start_time);
+                        const now = new Date();
+                        const endRange = new Date(now);
+                        endRange.setDate(endRange.getDate() + 30);
+
+                        // Parse simple rrules (FREQ=DAILY;INTERVAL=N)
+                        const freqMatch = rrule.match(/FREQ=(\w+)/);
+                        const intervalMatch = rrule.match(/INTERVAL=(\d+)/);
+                        const freq = freqMatch?.[1] || 'DAILY';
+                        const interval = parseInt(intervalMatch?.[1] || '1', 10);
+
+                        let currentDate = new Date(baseDate);
+                        let occurrence = 0;
+
+                        while (currentDate <= endRange && occurrence < 10) {
+                            // Skip the first occurrence (already added above)
+                            if (occurrence > 0 && currentDate > now) {
+                                items.push({
+                                    ...e,
+                                    id: `${e.id}-rrule-${occurrence}`,
+                                    start_time: currentDate.toISOString(),
+                                    metadata: { ...e.metadata, is_rrule_instance: true, parent_id: e.id }
+                                });
+                            }
+
+                            // Calculate next occurrence
+                            if (freq === 'DAILY') {
+                                currentDate.setDate(currentDate.getDate() + interval);
+                            } else if (freq === 'WEEKLY') {
+                                currentDate.setDate(currentDate.getDate() + (7 * interval));
+                            } else if (freq === 'MONTHLY') {
+                                currentDate.setMonth(currentDate.getMonth() + interval);
+                            }
+                            occurrence++;
+                        }
+                    }
+                }
+            } else if (e.kind === EntityKind.ACTIVITY && (e.start_time || e.created_at) && showLogs) {
+                items.push(e);
+            }
+
+            // Extract metadata.activity_log entries as pseudo-ACTIVITY entities
+            if (showLogs && e.metadata?.activity_log && Array.isArray(e.metadata.activity_log)) {
+                e.metadata.activity_log.forEach((log: any, idx: number) => {
+                    if (log.timestamp) {
+                        items.push({
+                            id: `${e.id}-log-${idx}`,
+                            kind: EntityKind.ACTIVITY,
+                            title: log.title || log.note || `Log: ${e.title}`,
+                            description: log.note || log.description || null,
+                            status: EntityStatus.COMPLETED,
+                            priority: 1,
+                            start_time: log.timestamp,
+                            end_time: null,
+                            deadline: null,
+                            duration_minutes: log.duration_minutes || null,
+                            recurrence: null,
+                            metadata: { parent_title: e.title, is_nested_log: true },
+                            created_at: log.timestamp,
+                            updated_at: log.timestamp,
+                            canonical_tags: [],
+                            parent_id: e.id
+                        });
+                    }
+                });
+            }
+        });
+
+        return items;
+    }, [entities, showEvents, showTasks, showLogs]);
 
     // Navigation helpers
     const handlePrev = () => {
@@ -288,12 +371,18 @@ const CalendarView: React.FC = () => {
         const results: { entity: Entity; isRecurring: boolean; isSpanning?: boolean }[] = [];
 
         calendarItems.forEach(e => {
+
             // Get date for this item
             let itemDate: Date | null = null;
             if (e.kind === EntityKind.EVENT && e.start_time) {
                 itemDate = new Date(e.start_time);
-            } else if (e.kind === EntityKind.TASK && e.deadline) {
-                itemDate = new Date(e.deadline);
+            } else if (e.kind === EntityKind.TASK) {
+                // Tasks can use start_time (for rrule tasks) or deadline
+                if (e.start_time) {
+                    itemDate = new Date(e.start_time);
+                } else if (e.deadline) {
+                    itemDate = new Date(e.deadline);
+                }
             } else if (e.kind === EntityKind.ACTIVITY) {
                 // Activities use start_time or fall back to created_at
                 itemDate = new Date(e.start_time || e.created_at);
@@ -308,6 +397,7 @@ const CalendarView: React.FC = () => {
                 results.push({ entity: e, isRecurring: false });
             }
             // Check for multi-day events: date is between start and end (exclusive of start, inclusive of end)
+            // Only check if event actually spans multiple days
             else if (e.kind === EntityKind.EVENT && e.start_time && e.end_time) {
                 const startDate = new Date(e.start_time);
                 const endDate = new Date(e.end_time);
@@ -316,17 +406,33 @@ const CalendarView: React.FC = () => {
                 const eventStartDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
                 const eventEndDateOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
 
+                // Only process as multi-day if it actually spans multiple days
+                const isMultiDay = eventEndDateOnly > eventStartDateOnly;
+
                 // Check if target date is after start date and on or before end date
-                if (targetDateOnly > eventStartDateOnly && targetDateOnly <= eventEndDateOnly) {
+                if (isMultiDay && targetDateOnly > eventStartDateOnly && targetDateOnly <= eventEndDateOnly) {
                     results.push({ entity: e, isRecurring: false, isSpanning: true });
                 }
+                // If not a multi-day match, check for recurrence
+                else if (e.metadata?.rrule) {
+                    if (matchesRecurrence(itemDate, date, e.recurrence, e.metadata.rrule)) {
+                        results.push({ entity: e, isRecurring: true });
+                    }
+                }
+                else if (e.recurrence && e.recurrence !== 'None' && matchesRecurrence(itemDate, date, e.recurrence)) {
+                    results.push({ entity: e, isRecurring: true });
+                }
             }
-            // Check if this date matches a recurring pattern
-            else if (e.recurrence && matchesRecurrence(itemDate, date, e.recurrence, e.metadata?.rrule)) {
-                results.push({ entity: e, isRecurring: true });
+            // Check if this date matches a recurring pattern (rrule takes priority)
+            // Check rrule first (handles complex patterns like "every 2nd Saturday")
+            else if (e.metadata?.rrule) {
+                console.log('[RRULE Check]', { title: e.title, itemDate: itemDate.toDateString(), targetDate: date.toDateString() });
+                if (matchesRecurrence(itemDate, date, e.recurrence, e.metadata.rrule)) {
+                    results.push({ entity: e, isRecurring: true });
+                }
             }
-            // Also check for RRULE in metadata even without simple recurrence type
-            else if (e.metadata?.rrule && matchesRecurrence(itemDate, date, null as any, e.metadata.rrule)) {
+            // Then check simple recurrence (DAILY, WEEKLY, etc.) - skip if recurrence is null/undefined/'None'
+            else if (e.recurrence && e.recurrence !== 'None' && matchesRecurrence(itemDate, date, e.recurrence)) {
                 results.push({ entity: e, isRecurring: true });
             }
         });

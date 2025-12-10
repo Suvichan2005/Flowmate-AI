@@ -1,27 +1,45 @@
-import { Entity, Relationship, EntityKind, EntityStatus, RelationshipType } from '../types';
+import { Entity, Relationship, EntityKind, EntityStatus, RelationshipType, Subtask } from '../types';
 
 export const calculateProgress = (entity: Entity, allEntities: Entity[], allRelationships: Relationship[]): number => {
-    // 1. Manual Progress in Metadata (Priority for Goals if set explicitly)
+    // 1. Manual Progress in Metadata (Priority if set explicitly)
     if (typeof entity.metadata?.progress_percent === 'number') {
         return entity.metadata.progress_percent;
     }
 
-    // 2. Derived Progress from Children (Projects, or Goals with sub-goals/tasks)
-    // Find entities that are PART_OF this entity
+    // 2. Check metadata.manual_progress (set by toggle_subtask)
+    if (typeof entity.metadata?.manual_progress === 'number') {
+        return entity.metadata.manual_progress;
+    }
+
+    // 3. Calculate from metadata.subtasks if present (with optional weighted hours)
+    const subtasks: Subtask[] = entity.metadata?.subtasks || [];
+    if (subtasks.length > 0) {
+        const hasWeights = subtasks.some(s => s.estimated_minutes && s.estimated_minutes > 0);
+
+        if (hasWeights) {
+            const totalMinutes = subtasks.reduce((sum, s) => sum + (s.estimated_minutes || 60), 0);
+            const completedMinutes = subtasks
+                .filter(s => s.completed)
+                .reduce((sum, s) => sum + (s.estimated_minutes || 60), 0);
+            return Math.round((completedMinutes / totalMinutes) * 100);
+        } else {
+            const completed = subtasks.filter(s => s.completed).length;
+            return Math.round((completed / subtasks.length) * 100);
+        }
+    }
+
+    // 4. Find children via BOTH parent_id field (new) AND PART_OF relationships (legacy)
+    const childrenViaParentId = allEntities.filter(e => e.parent_id === entity.id);
     const childrenLinks = allRelationships.filter(r => r.to === entity.id && r.type === RelationshipType.PART_OF);
-    
-    if (childrenLinks.length === 0) {
-        // If it's a Goal/Project with no children and no manual progress:
-        // If COMPLETED -> 100%, else 0%
+    const childrenViaRelationship = allEntities.filter(e => childrenLinks.some(r => r.from === e.id));
+
+    // Combine and deduplicate
+    const allChildren = [...new Map([...childrenViaParentId, ...childrenViaRelationship].map(e => [e.id, e])).values()];
+
+    if (allChildren.length === 0) {
         return entity.status === EntityStatus.COMPLETED ? 100 : 0;
     }
 
-    const childrenIds = new Set(childrenLinks.map(r => r.from));
-    const children = allEntities.filter(e => childrenIds.has(e.id));
-    
-    if (children.length === 0) return entity.status === EntityStatus.COMPLETED ? 100 : 0;
-
-    const completed = children.filter(e => e.status === EntityStatus.COMPLETED).length;
-    
-    return Math.round((completed / children.length) * 100);
+    const completed = allChildren.filter(e => e.status === EntityStatus.COMPLETED).length;
+    return Math.round((completed / allChildren.length) * 100);
 };

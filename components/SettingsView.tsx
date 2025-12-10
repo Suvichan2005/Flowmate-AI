@@ -105,6 +105,64 @@ const SettingsView: React.FC = () => {
           </div>
         </section>
 
+        {/* Feature Toggles */}
+        <section>
+          <h2 className="text-lg font-semibold text-slate-200 mb-4">Features</h2>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+            <p className="text-sm text-slate-400 mb-2">
+              Enable or disable features to customize your experience.
+            </p>
+
+            <div className="flex items-center justify-between py-2 border-b border-slate-800">
+              <div>
+                <label className="block text-sm font-medium text-slate-200">🍕 Food Tracking</label>
+                <p className="text-xs text-slate-500">Track meals, spending, and eating habits</p>
+              </div>
+              <button
+                onClick={() => {
+                  const current = settings.feature_toggles || { food_tracking: true, attendance_tracking: true, people_tracking: true };
+                  handleChange('feature_toggles', { ...current, food_tracking: !current.food_tracking });
+                }}
+                className={`w-12 h-6 rounded-full transition-colors relative ${(settings.feature_toggles?.food_tracking ?? true) ? 'bg-indigo-600' : 'bg-slate-700'}`}
+              >
+                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${(settings.feature_toggles?.food_tracking ?? true) ? 'translate-x-6' : ''}`} />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between py-2 border-b border-slate-800">
+              <div>
+                <label className="block text-sm font-medium text-slate-200">📚 Attendance Tracking</label>
+                <p className="text-xs text-slate-500">Track class attendance and calculate skip limits</p>
+              </div>
+              <button
+                onClick={() => {
+                  const current = settings.feature_toggles || { food_tracking: true, attendance_tracking: true, people_tracking: true };
+                  handleChange('feature_toggles', { ...current, attendance_tracking: !current.attendance_tracking });
+                }}
+                className={`w-12 h-6 rounded-full transition-colors relative ${(settings.feature_toggles?.attendance_tracking ?? true) ? 'bg-indigo-600' : 'bg-slate-700'}`}
+              >
+                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${(settings.feature_toggles?.attendance_tracking ?? true) ? 'translate-x-6' : ''}`} />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <label className="block text-sm font-medium text-slate-200">👥 People Tracking</label>
+                <p className="text-xs text-slate-500">Track relationships, promises, and contacts</p>
+              </div>
+              <button
+                onClick={() => {
+                  const current = settings.feature_toggles || { food_tracking: true, attendance_tracking: true, people_tracking: true };
+                  handleChange('feature_toggles', { ...current, people_tracking: !current.people_tracking });
+                }}
+                className={`w-12 h-6 rounded-full transition-colors relative ${(settings.feature_toggles?.people_tracking ?? true) ? 'bg-indigo-600' : 'bg-slate-700'}`}
+              >
+                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${(settings.feature_toggles?.people_tracking ?? true) ? 'translate-x-6' : ''}`} />
+              </button>
+            </div>
+          </div>
+        </section>
+
         {/* AI Persona Settings */}
         <section>
           <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">

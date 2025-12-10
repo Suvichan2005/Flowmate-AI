@@ -8,7 +8,7 @@ import MarkdownText from './MarkdownText';
 type FilterKind = 'all' | EntityKind.PERSON | EntityKind.ROLE | EntityKind.COURSE | EntityKind.TASK | EntityKind.PROJECT | EntityKind.GOAL | EntityKind.EVENT;
 
 const KnowledgeView: React.FC = () => {
-    const { entities = [], relationships = [], universalTags = [], selectEntity, applyOperations, selectedEntityId } = useStore();
+    const { entities = [], relationships = [], universalTags = [], selectEntity, applyOperations, selectedEntityId, knowledgeInitialFilters } = useStore();
     const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
 
     // UI State
@@ -22,9 +22,18 @@ const KnowledgeView: React.FC = () => {
     const [aiAnswer, setAiAnswer] = useState<string | null>(null);
     const [askQuery, setAskQuery] = useState('');
 
-    // Filters
+    // Filters - kindFilters is now a Set for multi-select
     const [showFilters, setShowFilters] = useState(false);
-    const [kindFilter, setKindFilter] = useState<FilterKind>('all');
+    const [kindFilters, setKindFilters] = useState<Set<FilterKind>>(new Set(['all']));
+
+    // Apply initial filters from navigation
+    useEffect(() => {
+        if (knowledgeInitialFilters && knowledgeInitialFilters.length > 0) {
+            setKindFilters(new Set(knowledgeInitialFilters as FilterKind[]));
+            // Clear the initial filters after applying
+            useStore.setState({ knowledgeInitialFilters: null });
+        }
+    }, [knowledgeInitialFilters]);
 
     // Selection
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -67,13 +76,14 @@ const KnowledgeView: React.FC = () => {
         return relatedIds;
     };
 
-    const hasActiveFilters = Boolean(searchQuery || selectedTag || selectedContext || kindFilter !== 'all' || statusFilter !== 'all');
+    const hasActiveFilters = Boolean(searchQuery || selectedTag || selectedContext || !kindFilters.has('all') || statusFilter !== 'all');
 
     // Filter Logic
     const filteredItems = useMemo(() => {
         let items = entities.filter(e => {
             if (e.status === EntityStatus.ARCHIVED || e.status === EntityStatus.CANCELED) return false;
-            if (kindFilter !== 'all' && e.kind !== kindFilter) return false;
+            // Multi-select kind filter: if 'all' is selected, show all. Otherwise, entity must match one of selected kinds
+            if (!kindFilters.has('all') && !kindFilters.has(e.kind as FilterKind)) return false;
 
             // Status filter
             if (statusFilter === 'active' && e.status === EntityStatus.COMPLETED) return false;
@@ -116,7 +126,7 @@ const KnowledgeView: React.FC = () => {
         }
 
         return items;
-    }, [entities, searchQuery, selectedTag, selectedContext, kindFilter, statusFilter, sortBy, relationships]);
+    }, [entities, searchQuery, selectedTag, selectedContext, kindFilters, statusFilter, sortBy, relationships]);
 
     // Keyboard Shortcuts
     useEffect(() => {
@@ -152,9 +162,10 @@ const KnowledgeView: React.FC = () => {
     const handleCreateEntity = () => {
         let kindToCreate: EntityKind = EntityKind.TASK;
 
-        // If filtering by a specific kind, create that kind
-        if (kindFilter !== 'all') {
-            kindToCreate = kindFilter as EntityKind;
+        // If filtering by specific kinds, create the first selected kind
+        if (!kindFilters.has('all') && kindFilters.size > 0) {
+            const firstKind = Array.from(kindFilters)[0];
+            if (firstKind !== 'all') kindToCreate = firstKind as EntityKind;
         } else {
             // Ask user for kind if not filtered, defaulting to Task usually but maybe Person here?
             // Let's just create a Task for generic quick add, or prompt.
@@ -176,7 +187,7 @@ const KnowledgeView: React.FC = () => {
         setSearchQuery('');
         setSelectedTag(null);
         setSelectedContext(null);
-        setKindFilter('all');
+        setKindFilters(new Set(['all']));
         setStatusFilter('all');
         setSortBy('recent');
     };
@@ -402,12 +413,32 @@ const KnowledgeView: React.FC = () => {
                     <div className="w-full overflow-x-auto pb-2 -mx-4 px-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
                         <div className="flex items-center gap-2 min-w-max">
                             {kindTabs.map(tab => {
-                                const isActive = kindFilter === tab.id;
+                                const isActive = kindFilters.has(tab.id);
                                 const Icon = tab.icon as any;
                                 return (
                                     <button
                                         key={tab.id}
-                                        onClick={() => setKindFilter(tab.id)}
+                                        onClick={() => {
+                                            setKindFilters(prev => {
+                                                const next = new Set(prev);
+                                                if (tab.id === 'all') {
+                                                    // Clicking 'All' clears others and sets only 'all'
+                                                    return new Set(['all']);
+                                                }
+                                                // Toggle the specific kind
+                                                if (next.has(tab.id)) {
+                                                    next.delete(tab.id);
+                                                    // If nothing left, default to 'all'
+                                                    if (next.size === 0 || (next.size === 1 && next.has('all'))) {
+                                                        return new Set(['all']);
+                                                    }
+                                                } else {
+                                                    next.add(tab.id);
+                                                    next.delete('all'); // Remove 'all' when specific kinds selected
+                                                }
+                                                return next;
+                                            });
+                                        }}
                                         className={`
                                             flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border transition-all shrink-0
                                             ${isActive
