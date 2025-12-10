@@ -428,6 +428,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                             <div className="text-xs text-slate-500">Total Focus</div>
                         </div>
                     </div>
+
+                    {/* Focus Score (Productive Hours) */}
+                    <div className="flex items-center gap-3">
+                        <div className="p-3 rounded-xl bg-teal-500/20">
+                            <Zap className="w-6 h-6 text-teal-400" />
+                        </div>
+                        <div>
+                            <div className="text-2xl font-bold text-teal-300">{activitySummary.focusScore}%</div>
+                            <div className="text-xs text-slate-500">Focus Score</div>
+                        </div>
+                    </div>
                 </div>
             </div>
 

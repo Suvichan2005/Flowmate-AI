@@ -20,6 +20,14 @@ export enum EntityKind {
   MINI_STREAK = 'MINI_STREAK', // Quick one-tap streaks (Duolingo, Snapchat, etc.)
 }
 
+// Flowmate 3.2: Productive Hours Tracking
+export type ProductivityType = 'PRODUCTIVE' | 'NEUTRAL' | 'UNPRODUCTIVE';
+export const ProductivityValue: Record<ProductivityType, number> = {
+  PRODUCTIVE: 1,
+  NEUTRAL: 0,
+  UNPRODUCTIVE: -1
+};
+
 export type HabitType = 'GOOD' | 'BAD';
 export type HabitFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY';
 
