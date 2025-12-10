@@ -14,7 +14,9 @@ import {
   Maximize2,
   Minimize2,
   TrendingUp,
-  MessageCircle
+  MessageCircle,
+  UtensilsCrossed,
+  GraduationCap
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -24,7 +26,7 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpanded = false }) => {
-  const { currentView, setView, getXP, undo, redo, canUndo, canRedo, toggleZenMode, isZenMode } = useStore();
+  const { currentView, setView, getXP, undo, redo, canUndo, canRedo, toggleZenMode, isZenMode, settings } = useStore();
 
   const handleNav = (view: ViewType) => {
     setView(view);
@@ -41,14 +43,19 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
   const showLabels = forceExpanded || !isZenMode;
   const isCompact = !forceExpanded && isZenMode;
 
-  // Streamlined nav: Chat (mobile-friendly), Dashboard, Analytics, Graph, Library, Calendar
+  // Streamlined nav: Chat (mobile-only), Dashboard, Analytics, Graph, Library, Calendar, Food, Attendance
+  // Feature toggles control visibility of Food and Attendance
+  const toggles = settings.feature_toggles || { food_tracking: true, attendance_tracking: true, people_tracking: true };
+
   const navItems = [
-    { icon: MessageCircle, label: 'Chat', view: 'chat' as ViewType },
+    { icon: MessageCircle, label: 'Chat', view: 'chat' as ViewType, mobileOnly: true },
     { icon: LayoutDashboard, label: 'Dashboard', view: 'dashboard' as ViewType },
     { icon: TrendingUp, label: 'Analytics', view: 'analytics' as ViewType },
     { icon: MessageSquare, label: 'Graph', view: 'chat_graph' as ViewType },
     { icon: Library, label: 'Library', view: 'knowledge' as ViewType },
     { icon: Calendar, label: 'Calendar', view: 'calendar' as ViewType },
+    ...(toggles.food_tracking ? [{ icon: UtensilsCrossed, label: 'Food', view: 'food' as ViewType }] : []),
+    ...(toggles.attendance_tracking ? [{ icon: GraduationCap, label: 'Attendance', view: 'attendance' as ViewType }] : []),
   ];
 
   return (
@@ -81,27 +88,29 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
 
       {/* Navigation */}
       <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
-        {navItems.map(({ icon: Icon, label, view }) => {
-          const isActive = currentView === view;
-          return (
-            <button
-              key={view}
-              onClick={() => handleNav(view)}
-              className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all duration-200 text-sm relative group ${isActive
-                ? 'bg-indigo-500/15 text-indigo-300 font-medium'
-                : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-100'
-                } ${isCompact ? 'justify-center' : ''}`}
-              title={isCompact ? label : ''}
-            >
-              {/* Active indicator line */}
-              {isActive && (
-                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-indigo-400 rounded-r-full" />
-              )}
-              <Icon size={18} className={`transition-transform duration-200 group-hover:scale-110 ${isActive ? 'text-indigo-400' : ''}`} />
-              {showLabels && <span className={forceExpanded ? '' : 'hidden md:block'}>{label}</span>}
-            </button>
-          );
-        })}
+        {navItems
+          .filter(item => !item.mobileOnly || forceExpanded) // Hide mobileOnly items on desktop
+          .map(({ icon: Icon, label, view }) => {
+            const isActive = currentView === view;
+            return (
+              <button
+                key={view}
+                onClick={() => handleNav(view)}
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all duration-200 text-sm relative group ${isActive
+                  ? 'bg-indigo-500/15 text-indigo-300 font-medium'
+                  : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-100'
+                  } ${isCompact ? 'justify-center' : ''}`}
+                title={isCompact ? label : ''}
+              >
+                {/* Active indicator line */}
+                {isActive && (
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-indigo-400 rounded-r-full" />
+                )}
+                <Icon size={18} className={`transition-transform duration-200 group-hover:scale-110 ${isActive ? 'text-indigo-400' : ''}`} />
+                {showLabels && <span className={forceExpanded ? '' : 'hidden md:block'}>{label}</span>}
+              </button>
+            );
+          })}
       </nav>
 
       {/* Undo/Redo */}

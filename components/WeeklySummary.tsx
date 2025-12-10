@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Entity, EntityKind, EntityStatus, Relationship, RelationshipType } from '../types';
+import { getActivityEntities } from '../utils/streakCalculation';
 import { CheckCircle, Clock, Flame, TrendingUp, TrendingDown } from 'lucide-react';
 
 interface WeeklySummaryProps {
@@ -24,9 +25,9 @@ const WeeklySummary: React.FC<WeeklySummaryProps> = ({ entities, relationships }
         let tasksCompletedLastWeek = 0;
         let hoursLoggedLastWeek = 0;
 
+        // Count completed tasks
         entities.forEach(e => {
             const updatedAt = new Date(e.updated_at);
-            const createdAt = new Date(e.created_at);
 
             // Tasks completed this week
             if (e.kind === EntityKind.TASK && e.status === EntityStatus.COMPLETED) {
@@ -36,16 +37,19 @@ const WeeklySummary: React.FC<WeeklySummaryProps> = ({ entities, relationships }
                     tasksCompletedLastWeek++;
                 }
             }
+        });
 
-            // Activities logged
-            if (e.kind === EntityKind.ACTIVITY) {
-                const actDate = new Date(e.start_time || e.created_at);
-                if (actDate >= weekAgo) {
-                    activitiesThisWeek++;
-                    hoursLoggedThisWeek += (e.duration_minutes || 0) / 60;
-                } else if (actDate >= twoWeeksAgo && actDate < weekAgo) {
-                    hoursLoggedLastWeek += (e.duration_minutes || 0) / 60;
-                }
+        // Get all activities (legacy ACTIVITY entities + metadata.activity_log entries)
+        const allActivities = getActivityEntities(entities);
+
+        // Count activities and hours
+        allActivities.forEach(e => {
+            const actDate = new Date(e.start_time || e.created_at);
+            if (actDate >= weekAgo) {
+                activitiesThisWeek++;
+                hoursLoggedThisWeek += (e.duration_minutes || 0) / 60;
+            } else if (actDate >= twoWeeksAgo && actDate < weekAgo) {
+                hoursLoggedLastWeek += (e.duration_minutes || 0) / 60;
             }
         });
 

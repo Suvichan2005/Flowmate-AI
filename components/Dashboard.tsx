@@ -97,11 +97,83 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
-    const { entities, relationships, selectEntity, dailyBriefing, refreshDailyBriefing, setView, addMessage, addToast, setPendingOrchestration } = useStore();
+    const { entities, relationships, selectEntity, dailyBriefing, refreshDailyBriefing, setView, addMessage, addToast, setPendingOrchestration, applyOperations } = useStore();
     const [briefingLoading, setBriefingLoading] = useState(false);
     const [showOrphansModal, setShowOrphansModal] = useState(false);
     const [showDueModal, setShowDueModal] = useState(false);
     const [showProjectsModal, setShowProjectsModal] = useState(false);
+    const [tapCounts, setTapCounts] = useState<Record<string, number>>({});
+    const [showConfirmPopup, setShowConfirmPopup] = useState<string | null>(null);
+
+    // Events from past 24h that need confirmation (no confirmation_status set)
+    const unconfirmedPastEvents = useMemo(() => {
+        const now = new Date();
+        const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+        return entities.filter(e => {
+            if (e.kind !== EntityKind.EVENT) return false;
+            if (!e.end_time && !e.start_time) return false;
+            const eventEnd = new Date(e.end_time || e.start_time!);
+            // Past event (ended before now), within 24h, not yet confirmed
+            return eventEnd < now && eventEnd > yesterday && !e.metadata?.confirmation_status;
+        }).sort((a, b) => new Date(b.start_time!).getTime() - new Date(a.start_time!).getTime());
+    }, [entities]);
+
+    // Timeout refs for delayed confirmation
+    const confirmTimeouts = React.useRef<Record<string, NodeJS.Timeout>>({});
+
+    // Handle tap to cycle: 1=green preview, 2=red preview, 3=popup
+    // Apply confirmation only after 1.5s pause
+    const handleEventTap = (eventId: string) => {
+        // Clear any existing timeout for this event
+        if (confirmTimeouts.current[eventId]) {
+            clearTimeout(confirmTimeouts.current[eventId]);
+        }
+
+        const currentTaps = (tapCounts[eventId] || 0) + 1;
+
+        if (currentTaps >= 3) {
+            // Open popup for more options
+            setShowConfirmPopup(eventId);
+            setTapCounts(prev => ({ ...prev, [eventId]: 0 }));
+            return;
+        }
+
+        // Update visual state (1=green, 2=red)
+        setTapCounts(prev => ({ ...prev, [eventId]: currentTaps }));
+
+        // Set timeout to apply after 1.5s of no taps
+        confirmTimeouts.current[eventId] = setTimeout(() => {
+            const finalTapCount = currentTaps;
+
+            if (finalTapCount === 1) {
+                applyOperations([{
+                    type: 'update_entity',
+                    payload: { id: eventId, fields: { metadata: { confirmation_status: 'confirmed' } } }
+                }]);
+                addToast('✅ Marked as done!', 'success');
+            } else if (finalTapCount === 2) {
+                applyOperations([{
+                    type: 'update_entity',
+                    payload: { id: eventId, fields: { metadata: { confirmation_status: 'skipped' } } }
+                }]);
+                addToast('❌ Marked as skipped', 'info');
+            }
+
+            // Reset state
+            setTapCounts(prev => ({ ...prev, [eventId]: 0 }));
+            delete confirmTimeouts.current[eventId];
+        }, 1500);
+    };
+
+    const handleConfirmOption = (eventId: string, status: 'postponed' | 'cancelled' | 'rescheduled') => {
+        applyOperations([{
+            type: 'update_entity',
+            payload: { id: eventId, fields: { metadata: { confirmation_status: status } } }
+        }]);
+        addToast(`Marked as ${status}`, 'info');
+        setShowConfirmPopup(null);
+    };
 
     const activeGoals = entities.filter(e => e.kind === EntityKind.GOAL && e.status === EntityStatus.ACTIVE);
     const pendingTasks = entities.filter(e => e.kind === EntityKind.TASK && e.status !== EntityStatus.COMPLETED);
@@ -111,10 +183,56 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
         .sort((a, b) => new Date(a.start_time!).getTime() - new Date(b.start_time!).getTime())
         .slice(0, 3);
 
-    const recentActivities = entities
-        .filter(e => e.kind === EntityKind.ACTIVITY)
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-        .slice(0, 5);
+    // Combine legacy ACTIVITY entities with nested metadata.activity_log entries
+    const recentActivities = useMemo(() => {
+        type ActivityItem = {
+            id: string;
+            title: string;
+            created_at: string;
+            duration_minutes?: number | null;
+            parentId?: string;
+            parentTitle?: string;
+            isNestedLog?: boolean;
+        };
+
+        const activities: ActivityItem[] = [];
+
+        // 1. Add legacy ACTIVITY entities
+        entities
+            .filter(e => e.kind === EntityKind.ACTIVITY)
+            .forEach(e => {
+                activities.push({
+                    id: e.id,
+                    title: e.title,
+                    created_at: e.created_at,
+                    duration_minutes: e.duration_minutes
+                });
+            });
+
+        // 2. Extract metadata.activity_log entries from all entities
+        entities.forEach(e => {
+            if (e.metadata?.activity_log && Array.isArray(e.metadata.activity_log)) {
+                e.metadata.activity_log.forEach((log: any, idx: number) => {
+                    if (log.timestamp) {
+                        activities.push({
+                            id: `${e.id}-log-${idx}`,
+                            title: log.title || log.note || `Activity on ${e.title}`,
+                            created_at: log.timestamp,
+                            duration_minutes: log.duration_minutes,
+                            parentId: e.id,
+                            parentTitle: e.title,
+                            isNestedLog: true
+                        });
+                    }
+                });
+            }
+        });
+
+        // Sort by created_at descending and take top 5
+        return activities
+            .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+            .slice(0, 5);
+    }, [entities]);
 
     // Calculate streak stats
     const streakInfo = useMemo(() => getStreakInfo(entities), [entities]);
@@ -142,13 +260,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
         const relatedIds = new Set<string>();
         relationships.forEach(r => { relatedIds.add(r.from); relatedIds.add(r.to); });
 
-        // 1. Orphans: No connections, excluding Tags, Notes, and Activities which might be standalone
+        // 1. Orphans: No connections, excluding Tags, Notes, Activities, and hidden entities
         const orphans = entities.filter(e =>
             !relatedIds.has(e.id) &&
             e.kind !== EntityKind.TAG &&
             e.kind !== EntityKind.NOTE &&
             e.kind !== EntityKind.ACTIVITY &&
-            e.kind !== EntityKind.MINI_STREAK
+            e.kind !== EntityKind.MINI_STREAK &&
+            !e.metadata?.hidden  // Exclude hidden from AI
         );
 
         // 2. Due Soon: Active tasks/goals with upcoming deadlines (sorted chronologically)
@@ -329,7 +448,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                 </div>
 
                 <div
-                    onClick={() => setView('projects')}
+                    onClick={() => setView('knowledge', ['PROJECT'])}
                     className="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-blue-500/50 cursor-pointer transition-colors"
                 >
                     <div className="flex items-center gap-2 mb-2">
@@ -342,7 +461,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                 </div>
 
                 <div
-                    onClick={() => setView('goals')}
+                    onClick={() => setView('knowledge', ['GOAL'])}
                     className="bg-slate-900 border border-slate-800 rounded-xl p-4 hover:border-indigo-500/50 cursor-pointer transition-colors"
                 >
                     <div className="flex items-center gap-2 mb-2">
@@ -367,6 +486,93 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                     <div className="text-[10px] text-slate-500 font-medium uppercase">Events</div>
                 </div>
             </div>
+
+            {/* Confirm Past Events - Tap to Cycle */}
+            {unconfirmedPastEvents.length > 0 && (
+                <div className="mb-6 bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
+                    <h3 className="text-sm font-semibold text-amber-300 mb-3 flex items-center gap-2">
+                        <CalendarClock size={16} /> Confirm Past Events
+                        <span className="text-xs text-amber-500/70 font-normal">Tap: 1×=✓ done, 2×=✗ skip, 3×=options</span>
+                    </h3>
+                    <div className="space-y-2">
+                        {unconfirmedPastEvents.slice(0, 5).map(event => (
+                            <div
+                                key={event.id}
+                                onClick={() => handleEventTap(event.id)}
+                                className={`flex items-center justify-between p-3 rounded-lg cursor-pointer transition-all ${tapCounts[event.id] === 1 ? 'bg-emerald-500/20 border border-emerald-500/40' :
+                                    tapCounts[event.id] === 2 ? 'bg-red-500/20 border border-red-500/40' :
+                                        'bg-slate-800/50 hover:bg-slate-800 border border-transparent'
+                                    }`}
+                            >
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <div className={`p-2 rounded-lg ${tapCounts[event.id] === 1 ? 'bg-emerald-500/20 text-emerald-400' :
+                                        tapCounts[event.id] === 2 ? 'bg-red-500/20 text-red-400' :
+                                            'bg-amber-500/10 text-amber-400'
+                                        }`}>
+                                        <Calendar size={14} />
+                                    </div>
+                                    <div className="min-w-0">
+                                        <div className="text-sm font-medium text-slate-200 truncate">{event.title}</div>
+                                        <div className="text-[10px] text-slate-500">
+                                            {new Date(event.start_time!).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className={`text-xs font-medium px-2 py-1 rounded ${tapCounts[event.id] === 1 ? 'text-emerald-400 bg-emerald-500/20' :
+                                    tapCounts[event.id] === 2 ? 'text-red-400 bg-red-500/20' :
+                                        tapCounts[event.id] === 3 ? 'text-purple-400 bg-purple-500/20' :
+                                            'text-slate-500'
+                                    }`}>
+                                    {tapCounts[event.id] === 1 ? '✓ Done' :
+                                        tapCounts[event.id] === 2 ? '✗ Skip' :
+                                            tapCounts[event.id] === 3 ? '⋯' : 'Tap'}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    {unconfirmedPastEvents.length > 5 && (
+                        <p className="text-xs text-slate-500 mt-2 text-center">+{unconfirmedPastEvents.length - 5} more events</p>
+                    )}
+                </div>
+            )}
+
+            {/* Confirmation Popup Modal */}
+            {showConfirmPopup && (
+                <>
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" onClick={() => setShowConfirmPopup(null)} />
+                    <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
+                        <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+                            <h3 className="text-lg font-semibold text-slate-100 mb-4">What happened?</h3>
+                            <div className="space-y-2">
+                                <button
+                                    onClick={() => handleConfirmOption(showConfirmPopup, 'postponed')}
+                                    className="w-full py-3 px-4 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded-lg text-sm font-medium border border-amber-500/30 transition-colors"
+                                >
+                                    ⏰ Postponed to later
+                                </button>
+                                <button
+                                    onClick={() => handleConfirmOption(showConfirmPopup, 'cancelled')}
+                                    className="w-full py-3 px-4 bg-red-500/10 hover:bg-red-500/20 text-red-300 rounded-lg text-sm font-medium border border-red-500/30 transition-colors"
+                                >
+                                    ❌ Cancelled
+                                </button>
+                                <button
+                                    onClick={() => handleConfirmOption(showConfirmPopup, 'rescheduled')}
+                                    className="w-full py-3 px-4 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 rounded-lg text-sm font-medium border border-blue-500/30 transition-colors"
+                                >
+                                    📅 Rescheduled (will create new)
+                                </button>
+                            </div>
+                            <button
+                                onClick={() => setShowConfirmPopup(null)}
+                                className="w-full mt-4 py-2 text-slate-500 text-sm hover:text-slate-300 transition-colors"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
 
             {/* Quick Actions Row - 4 Cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
@@ -552,7 +758,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                         recentActivities.map((act, idx) => (
                             <div
                                 key={act.id}
-                                onClick={() => selectEntity(act.id)}
+                                onClick={() => selectEntity(act.isNestedLog && act.parentId ? act.parentId : act.id)}
                                 className="flex gap-4 items-center p-3 rounded-lg hover:bg-slate-800/50 cursor-pointer transition-colors group"
                             >
                                 <div className="text-xs font-mono text-slate-500 w-20 shrink-0 text-right">
@@ -561,9 +767,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                                 <div className={`w-2 h-2 rounded-full shrink-0 ${idx === 0 ? 'bg-indigo-500 ring-2 ring-indigo-500/20' : 'bg-slate-600'}`}></div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm text-slate-300 font-medium truncate group-hover:text-white">{act.title}</p>
-                                    {act.duration_minutes && (
-                                        <p className="text-xs text-slate-500 mt-0.5">{act.duration_minutes} mins logged</p>
-                                    )}
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                        {act.duration_minutes && (
+                                            <span className="text-xs text-slate-500">{act.duration_minutes} mins</span>
+                                        )}
+                                        {act.isNestedLog && act.parentTitle && (
+                                            <span className="text-[10px] text-indigo-400/70 bg-indigo-400/10 px-1.5 py-0.5 rounded">
+                                                {act.parentTitle}
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
                                 <ArrowRight size={14} className="text-slate-600 opacity-0 group-hover:opacity-100 transition-opacity" />
                             </div>

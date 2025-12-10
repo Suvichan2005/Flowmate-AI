@@ -58,6 +58,26 @@ export interface PromiseMetadata {
   broken_reason?: string;
 }
 
+// Flowmate 3.0 — Nested Subtask (NOT a graph entity, stored in metadata)
+export interface Subtask {
+  id: string;
+  title: string;
+  completed: boolean;
+  created_at: string;
+  completed_at?: string;
+  estimated_minutes?: number;
+  order?: number; // For drag-drop reordering
+}
+
+// Flowmate 3.0 — Embedded Activity Log Entry (NOT a graph entity, stored in metadata)
+export interface ActivityLogEntry {
+  id: string;
+  timestamp: string;
+  title: string;
+  duration_minutes: number;
+  notes?: string;
+}
+
 // Flowmate 2.5 — Opportunity Metadata (Opportunity Engine)
 export interface OpportunityMetadata {
   type: 'lead' | 'competition' | 'connection' | 'internship' | 'collaboration';
@@ -95,6 +115,8 @@ export interface Entity {
   created_at: string;
   updated_at: string;
   canonical_tags: string[];
+  // Flowmate 3.1: Direct parent reference (replaces PART_OF relationship)
+  parent_id?: string | null;
 }
 
 export interface TagDefinition {
@@ -146,7 +168,15 @@ export type ToonOperationType =
   | 'set_goal_progress'
   | 'log_activity'
   | 'schedule_event'
-  | 'tag_update';
+  | 'tag_update'
+  // Flowmate 3.0 — Nested Entity Operations
+  | 'add_subtask'
+  | 'toggle_subtask'
+  | 'delete_subtask'
+  | 'log_to_entity'
+  | 'archive_entity'
+  // Flowmate 3.0 — Food Tracking
+  | 'log_food';
 
 export interface ToonOperation {
   type: ToonOperationType;
@@ -172,12 +202,63 @@ export interface SyncQueueItem {
   created_at: string;
 }
 
+// Flowmate 3.1: Feature Toggles
+export interface FeatureToggles {
+  food_tracking: boolean;
+  attendance_tracking: boolean;
+  people_tracking: boolean;
+}
+
 export interface UserSettings {
   timezone: string;
   preferred_model: string;
   sync_enabled: boolean;
   debug_mode: boolean;
   custom_instructions?: string;
+  // Flowmate 3.0: Food Tracking
+  food_preferences?: FoodPreferences;
+  // Flowmate 3.1: Feature Toggles
+  feature_toggles?: FeatureToggles;
+}
+
+// Flowmate 3.0: Food Tracking
+export type DietaryType = 'veg' | 'non-veg' | 'vegan' | 'eggetarian';
+
+export interface FoodPreferences {
+  dietary_type: DietaryType;
+  allergies?: string[];
+  favorite_foods?: string[];
+  disliked_foods?: string[];
+}
+
+export type FoodSource = 'mess' | 'ordered' | 'homemade' | 'outside';
+
+export interface FoodLogEntry {
+  id: string;
+  timestamp: string;
+  food_name: string;
+  meal_type?: 'breakfast' | 'lunch' | 'dinner' | 'snack';
+  calories?: number;
+  protein_g?: number;
+  carbs_g?: number;
+  fat_g?: number;
+  cost?: number; // In user's currency
+  notes?: string;
+  is_favorite?: boolean;
+  // Flowmate 3.1: Enhanced tracking
+  source?: FoodSource; // mess, ordered, homemade, outside
+  vendor?: string;     // "Sardarji", "Zomato", "Swiggy", etc.
+  rating?: number;     // 1-5 stars
+  skipped?: boolean;   // Mark skipped meal (didn't eat)
+}
+
+// Mess Menu Entry (for calendar integration)
+export interface MessMenuEntry {
+  id: string;
+  day_of_week: 0 | 1 | 2 | 3 | 4 | 5 | 6; // Sunday-Saturday
+  meal_type: 'breakfast' | 'lunch' | 'dinner';
+  items: string[];
+  is_special?: boolean;
 }
 
 export interface DebugLogEntry {
@@ -207,4 +288,36 @@ export interface Toast {
   type: 'success' | 'error' | 'info';
 }
 
-export type ViewType = 'dashboard' | 'chat' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'analytics' | 'settings' | 'schedules' | 'habits';
+// Flowmate 3.1: Attendance Tracking
+export interface Subject {
+  id: string;
+  name: string;
+  code?: string;  // "CS101"
+  teacher_name?: string;  // "Prof. Ronaly Padhy"
+  min_attendance: number;  // Required % (75, 85, etc.)
+  color?: string;  // For display
+}
+
+export interface ClassSchedule {
+  id: string;
+  subject_id: string;
+  day_of_week: 0 | 1 | 2 | 3 | 4 | 5 | 6;  // Sunday-Saturday
+  start_time: string;  // "09:00"
+  end_time: string;    // "10:00"
+  room?: string;
+}
+
+export interface Holiday {
+  id: string;
+  date: string;  // ISO date "2025-01-26"
+  name: string;
+}
+
+export interface AttendanceLog {
+  id: string;
+  subject_id: string;
+  date: string;  // ISO date
+  status: 'present' | 'absent' | 'cancelled';
+}
+
+export type ViewType = 'dashboard' | 'chat' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'analytics' | 'settings' | 'schedules' | 'habits' | 'food' | 'attendance';

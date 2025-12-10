@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { v4 as uuidv4 } from 'uuid';
 import { X, Calendar, Clock, Tag, Link2, AlertCircle, Trash2, Edit3, Save, RotateCcw, Plus, CheckSquare, Square, ChevronRight, ArrowUpRight, Sparkles, Timer, Repeat, Wand2, Shield, ShieldAlert, CornerRightDown, CornerRightUp, Lightbulb, TrendingUp, Eye, EyeOff } from 'lucide-react';
-import { EntityKind, EntityStatus, RelationshipType, RecurrenceType, ToonOperation } from '../types';
+import { EntityKind, EntityStatus, RelationshipType, RecurrenceType, ToonOperation, Subtask, ActivityLogEntry } from '../types';
 import SmartEditor from './SmartEditor';
 import MarkdownText from './MarkdownText';
 import { improveText } from '../services/geminiService';
@@ -254,27 +254,14 @@ const EntityDetailPanel: React.FC = () => {
         e.preventDefault();
         if (!subtaskTitle.trim()) return;
 
-        const newId = uuidv4();
-        applyOperations([
-            {
-                type: 'create_entity',
-                payload: {
-                    id: newId,
-                    title: subtaskTitle,
-                    kind: EntityKind.TASK,
-                    status: EntityStatus.ACTIVE,
-                    priority: 1
-                }
-            },
-            {
-                type: 'link_entities',
-                payload: {
-                    from: newId,
-                    to: entity.id,
-                    type: RelationshipType.PART_OF
-                }
+        // NEW: Use nested subtask via add_subtask operation
+        applyOperations([{
+            type: 'add_subtask',
+            payload: {
+                entity_id: entity.id,
+                title: subtaskTitle.trim()
             }
-        ]);
+        }]);
         setSubtaskTitle('');
         setShowAddSubtask(false);
     };
@@ -407,10 +394,10 @@ const EntityDetailPanel: React.FC = () => {
                         </button>
                     )}
 
-                    {/* Status & Priority */}
+                    {/* Status & Priority - Quick Toggle */}
                     <div className="flex gap-4">
                         <div className="flex-1 bg-slate-800/50 p-3 rounded-lg border border-slate-800">
-                            <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">Status</span>
+                            <span className="text-xs text-slate-500 uppercase tracking-wider block mb-2">Status</span>
                             {isEditing ? (
                                 <select
                                     value={editForm?.status}
@@ -422,11 +409,51 @@ const EntityDetailPanel: React.FC = () => {
                                     ))}
                                 </select>
                             ) : (
-                                <span className="text-sm font-medium text-slate-200">{entity.status}</span>
+                                <div className="flex gap-1">
+                                    <button
+                                        onClick={() => {
+                                            if (entity.status !== EntityStatus.ACTIVE) {
+                                                applyOperations([{ type: 'update_entity', payload: { id: entity.id, status: EntityStatus.ACTIVE } }]);
+                                            }
+                                        }}
+                                        className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors ${entity.status === EntityStatus.ACTIVE
+                                                ? 'bg-blue-500/20 text-blue-300 border border-blue-500/50'
+                                                : 'bg-slate-900 text-slate-500 hover:bg-slate-800 border border-slate-700'
+                                            }`}
+                                    >
+                                        ⏳ Active
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            if (entity.status !== EntityStatus.COMPLETED) {
+                                                applyOperations([{ type: 'update_entity', payload: { id: entity.id, status: EntityStatus.COMPLETED } }]);
+                                            }
+                                        }}
+                                        className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors ${entity.status === EntityStatus.COMPLETED
+                                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
+                                                : 'bg-slate-900 text-slate-500 hover:bg-slate-800 border border-slate-700'
+                                            }`}
+                                    >
+                                        ✅ Done
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            if (entity.status !== EntityStatus.ARCHIVED) {
+                                                applyOperations([{ type: 'update_entity', payload: { id: entity.id, status: EntityStatus.ARCHIVED } }]);
+                                            }
+                                        }}
+                                        className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors ${entity.status === EntityStatus.ARCHIVED
+                                                ? 'bg-slate-600/20 text-slate-400 border border-slate-500/50'
+                                                : 'bg-slate-900 text-slate-500 hover:bg-slate-800 border border-slate-700'
+                                            }`}
+                                    >
+                                        📦 Archived
+                                    </button>
+                                </div>
                             )}
                         </div>
-                        <div className="flex-1 bg-slate-800/50 p-3 rounded-lg border border-slate-800">
-                            <span className="text-xs text-slate-500 uppercase tracking-wider block mb-1">Priority</span>
+                        <div className="w-28 bg-slate-800/50 p-3 rounded-lg border border-slate-800">
+                            <span className="text-xs text-slate-500 uppercase tracking-wider block mb-2">Priority</span>
                             {isEditing ? (
                                 <input
                                     type="number"
@@ -437,7 +464,28 @@ const EntityDetailPanel: React.FC = () => {
                                     className="w-full bg-slate-950 border border-slate-700 text-slate-200 text-sm rounded p-1 outline-none"
                                 />
                             ) : (
-                                <span className="text-sm font-medium text-slate-200">{entity.priority}</span>
+                                <div className="flex gap-1">
+                                    {[1, 2, 3, 4, 5].map(p => (
+                                        <button
+                                            key={p}
+                                            onClick={() => {
+                                                if (entity.priority !== p) {
+                                                    applyOperations([{ type: 'update_entity', payload: { id: entity.id, priority: p } }]);
+                                                }
+                                            }}
+                                            className={`w-6 h-6 rounded text-xs font-bold transition-colors ${entity.priority === p
+                                                    ? p === 1 ? 'bg-red-500/30 text-red-300 border border-red-500/50'
+                                                        : p === 2 ? 'bg-orange-500/30 text-orange-300 border border-orange-500/50'
+                                                            : p === 3 ? 'bg-yellow-500/30 text-yellow-300 border border-yellow-500/50'
+                                                                : p === 4 ? 'bg-green-500/30 text-green-300 border border-green-500/50'
+                                                                    : 'bg-slate-500/30 text-slate-300 border border-slate-500/50'
+                                                    : 'bg-slate-900 text-slate-600 hover:bg-slate-800 border border-slate-700'
+                                                }`}
+                                        >
+                                            {p}
+                                        </button>
+                                    ))}
+                                </div>
                             )}
                         </div>
                     </div>
@@ -502,7 +550,12 @@ const EntityDetailPanel: React.FC = () => {
                                 <option value="YEARLY">Yearly</option>
                             </select>
                         ) : (
-                            <span className="text-sm font-medium text-slate-200">{entity.recurrence || 'None'}</span>
+                            <div className="flex flex-col gap-1">
+                                <span className="text-sm font-medium text-slate-200">{entity.recurrence || 'None'}</span>
+                                {entity.metadata?.rrule && (
+                                    <span className="text-xs text-amber-400 font-mono">{entity.metadata.rrule}</span>
+                                )}
+                            </div>
                         )}
                     </div>
 
@@ -705,74 +758,150 @@ const EntityDetailPanel: React.FC = () => {
                         )}
                     </div>
 
-                    {/* Children / Subtasks */}
-                    {(childEntities.length > 0 || !isEditing) && (
-                        <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-800">
-                            <div className="flex items-center justify-between mb-2">
-                                <span className="text-xs text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                                    <CheckSquare size={12} /> Subtasks ({childEntities.length})
-                                </span>
-                                {!isEditing && (
-                                    <div className="flex gap-2">
-                                        <button
-                                            onClick={() => setShowAddSubtask(!showAddSubtask)}
-                                            className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
-                                        >
-                                            <Plus size={12} /> Add
+                    {/* Nested Subtasks (NEW: from metadata.subtasks) */}
+                    {(() => {
+                        const nestedSubtasks: Subtask[] = entity.metadata?.subtasks || [];
+                        const totalSubtasks = nestedSubtasks.length + childEntities.length;
+
+                        const toggleNestedSubtask = (subtaskId: string) => {
+                            applyOperations([{
+                                type: 'toggle_subtask',
+                                payload: { entity_id: entity.id, subtask_id: subtaskId }
+                            }]);
+                        };
+
+                        const deleteNestedSubtask = (subtaskId: string) => {
+                            applyOperations([{
+                                type: 'delete_subtask',
+                                payload: { entity_id: entity.id, subtask_id: subtaskId }
+                            }]);
+                        };
+
+                        return (totalSubtasks > 0 || !isEditing) && (
+                            <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-800">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-xs text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                                        <CheckSquare size={12} /> Subtasks ({totalSubtasks})
+                                    </span>
+                                    {!isEditing && (
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => setShowAddSubtask(!showAddSubtask)}
+                                                className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                                            >
+                                                <Plus size={12} /> Add
+                                            </button>
+                                            <button
+                                                onClick={handleAiBreakdown}
+                                                className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                                            >
+                                                <Sparkles size={12} /> Auto-Break
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {showAddSubtask && (
+                                    <form onSubmit={handleCreateSubtask} className="flex gap-2 mb-2">
+                                        <input
+                                            type="text"
+                                            value={subtaskTitle}
+                                            onChange={e => setSubtaskTitle(e.target.value)}
+                                            placeholder="Subtask title..."
+                                            className="flex-1 bg-slate-950 border border-slate-700 text-slate-200 text-sm rounded px-2 py-1 outline-none"
+                                            autoFocus
+                                        />
+                                        <button type="submit" className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded">
+                                            Add
                                         </button>
-                                        <button
-                                            onClick={handleAiBreakdown}
-                                            className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
-                                        >
-                                            <Sparkles size={12} /> Auto-Break
-                                        </button>
-                                    </div>
+                                    </form>
                                 )}
+
+                                <div className="space-y-1">
+                                    {/* NEW: Render nested subtasks from metadata */}
+                                    {nestedSubtasks.map(subtask => (
+                                        <div
+                                            key={subtask.id}
+                                            className="flex items-center gap-2 p-2 rounded hover:bg-slate-700/50 group"
+                                        >
+                                            <button
+                                                onClick={() => toggleNestedSubtask(subtask.id)}
+                                                className="text-slate-400 hover:text-indigo-400"
+                                            >
+                                                {subtask.completed ? (
+                                                    <CheckSquare size={16} className="text-green-400" />
+                                                ) : (
+                                                    <Square size={16} />
+                                                )}
+                                            </button>
+                                            <span className={`text-sm flex-1 ${subtask.completed ? 'line-through text-slate-500' : 'text-slate-200'}`}>
+                                                {subtask.title}
+                                            </span>
+                                            <button
+                                                onClick={() => deleteNestedSubtask(subtask.id)}
+                                                className="text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                title="Delete subtask"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    ))}
+
+                                    {/* Legacy: Render PART_OF child entities for backwards compatibility */}
+                                    {childEntities.map(child => (
+                                        <div
+                                            key={child.id}
+                                            className="flex items-center gap-2 p-2 rounded hover:bg-slate-700/50 cursor-pointer group"
+                                        >
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); toggleTaskStatus(child); }}
+                                                className="text-slate-400 hover:text-indigo-400"
+                                            >
+                                                {child.status === EntityStatus.COMPLETED ? (
+                                                    <CheckSquare size={16} className="text-green-400" />
+                                                ) : (
+                                                    <Square size={16} />
+                                                )}
+                                            </button>
+                                            <span
+                                                onClick={() => selectEntity(child.id)}
+                                                className={`text-sm flex-1 ${child.status === EntityStatus.COMPLETED ? 'line-through text-slate-500' : 'text-slate-200'}`}
+                                            >
+                                                {child.title}
+                                            </span>
+                                            <ChevronRight size={14} className="text-slate-500 opacity-0 group-hover:opacity-100" />
+                                        </div>
+                                    ))}
+
+                                    {totalSubtasks === 0 && !showAddSubtask && (
+                                        <span className="text-slate-500 text-xs italic">No subtasks</span>
+                                    )}
+                                </div>
                             </div>
+                        );
+                    })()}
 
-                            {showAddSubtask && (
-                                <form onSubmit={handleCreateSubtask} className="flex gap-2 mb-2">
-                                    <input
-                                        type="text"
-                                        value={subtaskTitle}
-                                        onChange={e => setSubtaskTitle(e.target.value)}
-                                        placeholder="Subtask title..."
-                                        className="flex-1 bg-slate-950 border border-slate-700 text-slate-200 text-sm rounded px-2 py-1 outline-none"
-                                        autoFocus
-                                    />
-                                    <button type="submit" className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded">
-                                        Add
-                                    </button>
-                                </form>
-                            )}
-
-                            <div className="space-y-1">
-                                {childEntities.map(child => (
-                                    <div
-                                        key={child.id}
-                                        className="flex items-center gap-2 p-2 rounded hover:bg-slate-700/50 cursor-pointer group"
-                                    >
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); toggleTaskStatus(child); }}
-                                            className="text-slate-400 hover:text-indigo-400"
-                                        >
-                                            {child.status === EntityStatus.COMPLETED ? (
-                                                <CheckSquare size={16} className="text-green-400" />
-                                            ) : (
-                                                <Square size={16} />
-                                            )}
-                                        </button>
-                                        <span
-                                            onClick={() => selectEntity(child.id)}
-                                            className={`text-sm flex-1 ${child.status === EntityStatus.COMPLETED ? 'line-through text-slate-500' : 'text-slate-200'}`}
-                                        >
-                                            {child.title}
-                                        </span>
-                                        <ChevronRight size={14} className="text-slate-500 opacity-0 group-hover:opacity-100" />
+                    {/* Activity Log (NEW: from metadata.activity_log) */}
+                    {(entity.metadata?.activity_log?.length > 0 || entity.kind === EntityKind.HABIT) && (
+                        <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-800">
+                            <span className="text-xs text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-2">
+                                <Clock size={12} /> Activity Log ({entity.metadata?.activity_log?.length || 0})
+                            </span>
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                                {(entity.metadata?.activity_log as ActivityLogEntry[] || []).slice(-5).reverse().map((log: ActivityLogEntry) => (
+                                    <div key={log.id} className="flex items-center justify-between text-sm p-1 rounded hover:bg-slate-700/30">
+                                        <div className="flex-1">
+                                            <span className="text-slate-300">{log.title}</span>
+                                            {log.notes && <p className="text-[10px] text-slate-500 truncate">{log.notes}</p>}
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-slate-400 text-xs font-mono">{log.duration_minutes}m</span>
+                                            <p className="text-[9px] text-slate-600">{new Date(log.timestamp).toLocaleDateString()}</p>
+                                        </div>
                                     </div>
                                 ))}
-                                {childEntities.length === 0 && !showAddSubtask && (
-                                    <span className="text-slate-500 text-xs italic">No subtasks</span>
+                                {(!entity.metadata?.activity_log || entity.metadata.activity_log.length === 0) && (
+                                    <span className="text-slate-500 text-xs italic">No activity logged yet</span>
                                 )}
                             </div>
                         </div>

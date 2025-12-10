@@ -91,12 +91,46 @@ function getWeekStart(date: Date): string {
 
 /**
  * Filter entities to only include activities
+ * IMPORTANT: Also extracts embedded metadata.activity_log entries and creates pseudo-entities
+ * This ensures hours/heatmap calculations include ALL logged activities
  */
 export function getActivityEntities(entities: Entity[]): Entity[] {
-    return entities.filter(e =>
-        e.kind === EntityKind.ACTIVITY &&
-        e.status !== EntityStatus.CANCELED
-    );
+    const result: Entity[] = [];
+
+    // 1. Add legacy ACTIVITY entities
+    entities
+        .filter(e => e.kind === EntityKind.ACTIVITY && e.status !== EntityStatus.CANCELED)
+        .forEach(e => result.push(e));
+
+    // 2. Extract metadata.activity_log entries from ALL entities and create pseudo-entities
+    entities.forEach(e => {
+        if (e.metadata?.activity_log && Array.isArray(e.metadata.activity_log)) {
+            e.metadata.activity_log.forEach((log: any, idx: number) => {
+                if (log.timestamp) {
+                    // Create a pseudo-entity that tracks this activity log entry
+                    result.push({
+                        id: `${e.id}-log-${idx}`,
+                        kind: EntityKind.ACTIVITY,
+                        title: log.title || log.note || `Activity on ${e.title}`,
+                        description: '',
+                        status: EntityStatus.COMPLETED,
+                        created_at: log.timestamp,
+                        updated_at: log.timestamp,
+                        priority: 0,
+                        start_time: null,
+                        end_time: null,
+                        deadline: null,
+                        recurrence: null,
+                        canonical_tags: [],
+                        duration_minutes: log.duration_minutes || 0,
+                        metadata: { parentId: e.id, isNestedLog: true }
+                    });
+                }
+            });
+        }
+    });
+
+    return result;
 }
 
 /**

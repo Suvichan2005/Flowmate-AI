@@ -3,10 +3,10 @@ import { useStore } from './store';
 import { orchestrateMessage } from './services/geminiService';
 import { processFileAttachment } from './utils/imageProcessing';
 import { onAuthChange, signOut } from './services/firebase';
-import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, Utensils, IndianRupee, Table2, Layers } from 'lucide-react';
+import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import GraphView from './components/GraphView';
-import PreviewModal from './components/PreviewModal';
+import OpsPreviewForm from './components/OpsPreviewForm';
 import Dashboard from './components/Dashboard';
 import EntityList from './components/EntityList';
 import CalendarView from './components/CalendarView';
@@ -20,6 +20,8 @@ import CommandPalette from './components/CommandPalette';
 import FocusTimer from './components/FocusTimer';
 import KnowledgeView from './components/KnowledgeView';
 import MarkdownText from './components/MarkdownText';
+import FoodTracker from './components/FoodTracker';
+import AttendanceTracker from './components/AttendanceTracker';
 import ToastNotification from './components/ToastNotification';
 import Confetti from './components/Confetti';
 import AuthModal from './components/AuthModal';
@@ -335,6 +337,10 @@ const App: React.FC = () => {
         return <CalendarView />;
       case 'schedules':
         return <SchedulesView />;
+      case 'food':
+        return <FoodTracker />;
+      case 'attendance':
+        return <AttendanceTracker />;
       case 'settings':
         return <SettingsView />;
       case 'chat_graph':
@@ -381,42 +387,89 @@ const App: React.FC = () => {
   };
 
   const renderOpsSummary = (ops: any[]) => {
+    // Expand short op types
+    const getOpType = (type: string) => {
+      const shortMap: Record<string, string> = {
+        'c': 'create_entity', 'u': 'update_entity', 'd': 'delete_entity',
+        'l': 'link_entities', 's': 'add_subtask', 'f': 'log_food',
+        'log': 'log_to_entity', 'arc': 'archive_entity'
+      };
+      return shortMap[type] || type;
+    };
+
+    // Expand short kind codes
+    const getKind = (k: string) => {
+      const kindMap: Record<string, string> = {
+        'CTX': 'CONTEXT', 'GOL': 'GOAL', 'PRJ': 'PROJECT', 'TSK': 'TASK',
+        'EVT': 'EVENT', 'HAB': 'HABIT', 'NOT': 'NOTE', 'PER': 'PERSON'
+      };
+      return kindMap[k?.toUpperCase()] || k || '?';
+    };
+
     return (
       <div className="mt-3 space-y-2">
         {ops.map((op, idx) => {
+          const opType = getOpType(op.type);
+          const p = op.payload || {};
           let icon = <CheckCircle2 size={12} className="text-slate-500" />;
-          let text = "Operation";
+          let text = opType;
           let sub = "";
 
-          if (op.type === 'create_entity') {
+          // Get title from various possible fields
+          const title = p.title || p.t || p.food_name || '';
+          const kind = getKind(p.kind || p.k);
+
+          if (opType === 'create_entity' || opType === 'c') {
             icon = <Plus size={12} className="text-emerald-400" />;
-            text = `Create ${op.payload.kind}`;
-            sub = op.payload.title;
-          } else if (op.type === 'update_entity') {
+            text = `Create ${kind}`;
+            sub = title;
+          } else if (opType === 'update_entity' || opType === 'u') {
             icon = <RefreshCw size={12} className="text-indigo-400" />;
             text = "Update";
-            const fields = Object.keys(op.payload.fields || {}).join(", ");
-            sub = fields ? `Updated: ${fields}` : "Updated entity";
-          } else if (op.type === 'link_entities') {
+            const fields = Object.keys(p.fields || {}).join(", ");
+            sub = fields ? `Updated: ${fields}` : (p.id?.slice(-6) || "entity");
+          } else if (opType === 'link_entities' || opType === 'l') {
             icon = <Link size={12} className="text-blue-400" />;
             text = "Link";
-            sub = `${op.payload.type} connection`;
-          } else if (op.type === 'schedule_event') {
-            icon = <Calendar size={12} className="text-purple-400" />;
-            text = "Schedule";
-            sub = op.payload.title;
-          } else if (op.type === 'log_activity') {
+            sub = `${p.type || 'RELATED_TO'} connection`;
+          } else if (opType === 'add_subtask' || opType === 's') {
+            icon = <Plus size={12} className="text-cyan-400" />;
+            text = "Add Subtask";
+            sub = title;
+          } else if (opType === 'log_food' || opType === 'f') {
             icon = <Activity size={12} className="text-orange-400" />;
-            text = "Log";
-            sub = op.payload.title;
+            text = "Log Food";
+            sub = title + (p.cost ? ` (₹${p.cost})` : '');
+          } else if (opType === 'log_to_entity' || opType === 'log') {
+            icon = <Activity size={12} className="text-yellow-400" />;
+            text = "Log Activity";
+            sub = title + (p.dur || p.duration_minutes ? ` (${p.dur || p.duration_minutes}m)` : '');
+          } else if (opType === 'archive_entity' || opType === 'arc') {
+            icon = <CheckCircle2 size={12} className="text-gray-400" />;
+            text = "Archive";
+            sub = p.entity_id?.slice(-6) || "";
+          } else if (opType === 'toggle_subtask') {
+            icon = <RefreshCw size={12} className="text-green-400" />;
+            text = "Toggle Subtask";
+            sub = p.subtask_id?.slice(-6) || "";
+          } else if (opType === 'delete_entity' || opType === 'd') {
+            icon = <X size={12} className="text-red-400" />;
+            text = "Delete";
+            sub = p.id?.slice(-6) || "";
           }
 
           return (
-            <div key={idx} className="flex items-center gap-2 text-xs bg-slate-900/50 p-1.5 rounded border border-slate-700/50">
-              {icon}
-              <span className="font-semibold text-slate-300">{text}:</span>
-              <span className="text-slate-400 truncate max-w-[150px]">{sub}</span>
-            </div>
+            <details key={idx} className="group">
+              <summary className="flex items-center gap-2 text-xs bg-slate-900/50 p-1.5 rounded border border-slate-700/50 cursor-pointer hover:bg-slate-800/50 transition-colors list-none">
+                {icon}
+                <span className="font-semibold text-slate-300">{text}:</span>
+                <span className="text-slate-400 truncate max-w-[150px]">{sub}</span>
+                <ChevronDown size={10} className="ml-auto text-slate-500 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="mt-1 p-2 bg-slate-950/80 rounded border border-slate-800 text-[10px] font-mono text-slate-400 max-h-32 overflow-auto">
+                <pre className="whitespace-pre-wrap">{JSON.stringify(op.payload, null, 2)}</pre>
+              </div>
+            </details>
           );
         })}
       </div>
@@ -554,17 +607,20 @@ const App: React.FC = () => {
       {/* Desktop Layout: Sidebar + Chat + Content */}
       {!isMobile && (
         <main className="flex-1 flex flex-row h-full overflow-hidden">
-          {/* Desktop Chat Panel */}
-          {isChatOpen && !isZenMode && (
+          {/* Desktop Chat Panel - Full width when Chat view, otherwise side panel */}
+          {(isChatOpen || currentView === 'chat') && !isZenMode && (
             <div
-              className="flex flex-col bg-slate-900 border-r border-slate-800 shrink-0 h-full relative"
-              style={{ width: `${chatWidth}px`, minWidth: '300px', maxWidth: '600px' }}
+              className={`flex flex-col bg-slate-900 border-r border-slate-800 shrink-0 h-full relative ${currentView === 'chat' ? 'flex-1' : ''
+                }`}
+              style={currentView === 'chat' ? {} : { width: `${chatWidth}px`, minWidth: '300px', maxWidth: '600px' }}
             >
-              {/* Resize Handle */}
-              <div
-                onMouseDown={handleMouseDown}
-                className={`absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-500/40 transition-colors z-20 ${isResizing ? 'bg-indigo-500' : ''}`}
-              />
+              {/* Resize Handle - only show when not full-screen chat */}
+              {currentView !== 'chat' && (
+                <div
+                  onMouseDown={handleMouseDown}
+                  className={`absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-500/40 transition-colors z-20 ${isResizing ? 'bg-indigo-500' : ''}`}
+                />
+              )}
               <div className="flex flex-col border-b border-slate-800 bg-slate-900/95 shrink-0 z-10">
                 <div className="h-14 flex items-center px-4 justify-between">
                   <h1 className="font-semibold text-base flex items-center gap-2">
@@ -576,13 +632,16 @@ const App: React.FC = () => {
                       <div className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
                       {settings.preferred_model || 'gemini-2.5-flash'}
                     </div>
-                    <button
-                      onClick={() => setIsChatOpen(false)}
-                      className="p-1.5 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors"
-                      title="Close (Cmd+B)"
-                    >
-                      <PanelLeftClose size={18} />
-                    </button>
+                    {/* Only show close button when not in full-screen Chat view */}
+                    {currentView !== 'chat' && (
+                      <button
+                        onClick={() => setIsChatOpen(false)}
+                        className="p-1.5 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors"
+                        title="Close (Cmd+B)"
+                      >
+                        <PanelLeftClose size={18} />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -665,21 +724,23 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* Desktop Main Content */}
-          <div className="flex-1 overflow-auto relative">
-            {renderMainContent()}
+          {/* Desktop Main Content - Hidden when in full-screen Chat view */}
+          {currentView !== 'chat' && (
+            <div className="flex-1 overflow-auto relative">
+              {renderMainContent()}
 
-            {/* Floating Chat Toggle Button - positioned inside content area */}
-            {!isChatOpen && !isZenMode && (
-              <button
-                onClick={() => setIsChatOpen(true)}
-                className="absolute left-4 top-4 z-20 p-2.5 rounded-xl bg-slate-800/90 backdrop-blur-sm text-slate-400 hover:text-indigo-400 hover:bg-slate-700 transition-all shadow-lg border border-slate-700"
-                title="Open Chat (Cmd+B)"
-              >
-                <PanelLeftOpen size={18} />
-              </button>
-            )}
-          </div>
+              {/* Floating Chat Toggle Button - positioned inside content area */}
+              {!isChatOpen && !isZenMode && (
+                <button
+                  onClick={() => setIsChatOpen(true)}
+                  className="absolute left-4 top-4 z-20 p-2.5 rounded-xl bg-slate-800/90 backdrop-blur-sm text-slate-400 hover:text-indigo-400 hover:bg-slate-700 transition-all shadow-lg border border-slate-700"
+                  title="Open Chat (Cmd+B)"
+                >
+                  <PanelLeftOpen size={18} />
+                </button>
+              )}
+            </div>
+          )}
         </main>
       )}
 
@@ -747,7 +808,7 @@ const App: React.FC = () => {
       {selectedEntityId && <EntityDetailPanel />}
 
       {pendingOps && (
-        <PreviewModal
+        <OpsPreviewForm
           ops={pendingOps.ops}
           onConfirm={handleConfirmOps}
           onCancel={clearPendingOps}
