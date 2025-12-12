@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Entity, EntityKind, ProductivityType } from '../types';
 import { Calendar, TrendingUp, Clock, Target } from 'lucide-react';
+import { getActivityEntities } from '../utils/streakCalculation';
 
 interface WeeklyProductivityInsightsProps {
     entities: Entity[];
@@ -45,31 +46,9 @@ const WeeklyProductivityInsights: React.FC<WeeklyProductivityInsightsProps> = ({
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-        // Get activities
-        const activities = entities.filter(e => 
-            e.kind === EntityKind.ACTIVITY && 
-            new Date(e.created_at) >= thirtyDaysAgo
-        );
-
-        // Extract nested activity logs
-        entities.forEach(entity => {
-            if (entity.metadata?.activity_log && Array.isArray(entity.metadata.activity_log)) {
-                entity.metadata.activity_log.forEach((log: any) => {
-                    if (log.timestamp && new Date(log.timestamp) >= thirtyDaysAgo) {
-                        activities.push({
-                            ...entity,
-                            id: `${entity.id}-log-${log.id}`,
-                            created_at: log.timestamp,
-                            duration_minutes: log.duration_minutes || 0,
-                            metadata: {
-                                ...entity.metadata,
-                                productivity: log.productivity || entity.metadata.productivity
-                            }
-                        });
-                    }
-                });
-            }
-        });
+        // Get all activities (including nested logs) using utility
+        const allActivities = getActivityEntities(entities);
+        const activities = allActivities.filter(a => new Date(a.created_at) >= thirtyDaysAgo);
 
         // Aggregate by day of week
         activities.forEach(activity => {
@@ -107,30 +86,9 @@ const WeeklyProductivityInsights: React.FC<WeeklyProductivityInsightsProps> = ({
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-        const activities = entities.filter(e => 
-            e.kind === EntityKind.ACTIVITY && 
-            new Date(e.created_at) >= thirtyDaysAgo
-        );
-
-        // Extract nested logs
-        entities.forEach(entity => {
-            if (entity.metadata?.activity_log && Array.isArray(entity.metadata.activity_log)) {
-                entity.metadata.activity_log.forEach((log: any) => {
-                    if (log.timestamp && new Date(log.timestamp) >= thirtyDaysAgo) {
-                        activities.push({
-                            ...entity,
-                            id: `${entity.id}-log-${log.id}`,
-                            created_at: log.timestamp,
-                            duration_minutes: log.duration_minutes || 0,
-                            metadata: {
-                                ...entity.metadata,
-                                productivity: log.productivity || entity.metadata.productivity
-                            }
-                        });
-                    }
-                });
-            }
-        });
+        // Get all activities (including nested logs) using utility
+        const allActivities = getActivityEntities(entities);
+        const activities = allActivities.filter(a => new Date(a.created_at) >= thirtyDaysAgo);
 
         activities.forEach(activity => {
             const hour = new Date(activity.created_at).getHours();

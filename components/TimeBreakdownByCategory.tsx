@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Entity, EntityKind, Relationship, RelationshipType } from '../types';
 import { Layers, FolderOpen } from 'lucide-react';
+import { getActivityEntities } from '../utils/streakCalculation';
 
 interface TimeBreakdownByCategoryProps {
     entities: Entity[];
@@ -47,29 +48,8 @@ const TimeBreakdownByCategory: React.FC<TimeBreakdownByCategoryProps> = ({
                 });
             });
 
-        // Get all activities
-        const activities = entities.filter(e => e.kind === EntityKind.ACTIVITY);
-
-        // Also extract nested activity logs
-        const allActivities: Entity[] = [...activities];
-        entities.forEach(entity => {
-            if (entity.metadata?.activity_log && Array.isArray(entity.metadata.activity_log)) {
-                entity.metadata.activity_log.forEach((log: any) => {
-                    if (log.timestamp) {
-                        allActivities.push({
-                            ...entity,
-                            id: `${entity.id}-log-${log.id}`,
-                            created_at: log.timestamp,
-                            duration_minutes: log.duration_minutes || 0,
-                            metadata: {
-                                ...entity.metadata,
-                                productivity: log.productivity || entity.metadata.productivity
-                            }
-                        });
-                    }
-                });
-            }
-        });
+        // Get all activity entities (including nested logs) using utility
+        const allActivities = getActivityEntities(entities);
 
         // Map activities to categories
         allActivities.forEach(activity => {

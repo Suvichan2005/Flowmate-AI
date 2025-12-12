@@ -84,6 +84,7 @@ export interface ActivityLogEntry {
   title: string;
   duration_minutes: number;
   notes?: string;
+  productivity?: ProductivityType; // Flowmate 3.2: Productivity tracking
 }
 
 // Flowmate 2.5 — Opportunity Metadata (Opportunity Engine)

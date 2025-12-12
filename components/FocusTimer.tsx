@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useStore } from '../store';
-import { Play, Pause, X, CheckCircle2, Timer } from 'lucide-react';
+import { ProductivityType } from '../types';
+import { Play, Pause, X, CheckCircle2, Timer, Zap, Coffee, Gamepad2 } from 'lucide-react';
 
 const FocusTimer: React.FC = () => {
   const { focusSession, endFocusSession, entities, applyOperations, addMessage } = useStore();
   const [timeLeft, setTimeLeft] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const [showProductivityPicker, setShowProductivityPicker] = useState(false);
+  const [selectedProductivity, setSelectedProductivity] = useState<ProductivityType>('PRODUCTIVE');
 
   // Initialize timer
   useEffect(() => {
@@ -40,25 +43,28 @@ const FocusTimer: React.FC = () => {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const handleComplete = () => {
+  const handleComplete = (productivity?: ProductivityType) => {
     const elapsedMinutes = Math.round((focusSession.durationMinutes * 60 - timeLeft) / 60);
+    const prodType = productivity || selectedProductivity;
     
-    // Log Activity
+    // Log Activity with productivity type
     applyOperations([{
         type: 'log_activity',
         payload: {
             title: `Focused on ${entity.title}`,
             duration_minutes: elapsedMinutes,
             linked_entity_id: entity.id,
-            notes: 'Completed via Focus Timer'
+            notes: 'Completed via Focus Timer',
+            metadata: { productivity: prodType }
         }
     }]);
 
     // Optional: Ask user if they want to mark task complete? 
     // For now, just logging activity is safer.
-    addMessage('assistant', `Great job focusing on "${entity.title}" for ${elapsedMinutes} minutes! I've logged this activity.`);
+    addMessage('assistant', `Great job focusing on "${entity.title}" for ${elapsedMinutes} minutes! I've logged this as ${prodType.toLowerCase()} time.`);
 
     endFocusSession();
+    setShowProductivityPicker(false);
   };
 
   const handleCancel = () => {
@@ -97,20 +103,55 @@ const FocusTimer: React.FC = () => {
                 {formatTime(timeLeft)}
             </div>
 
-            <div className="flex justify-center gap-3">
-                <button 
-                    onClick={() => setIsPaused(!isPaused)}
-                    className="p-2 rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
-                >
-                    {isPaused ? <Play size={20} /> : <Pause size={20} />}
-                </button>
-                <button 
-                    onClick={handleComplete}
-                    className="px-4 py-2 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm flex items-center gap-2 shadow-lg shadow-indigo-500/20"
-                >
-                    <CheckCircle2 size={16} /> Finish
-                </button>
-            </div>
+            {showProductivityPicker ? (
+                <div className="space-y-2">
+                    <p className="text-xs text-slate-400 text-center mb-2">How was this session?</p>
+                    <div className="grid grid-cols-3 gap-2">
+                        <button
+                            onClick={() => handleComplete('PRODUCTIVE')}
+                            className="p-2 rounded-lg bg-teal-600/20 border border-teal-500/50 hover:bg-teal-600/30 text-teal-300 transition-colors flex flex-col items-center gap-1"
+                        >
+                            <Zap size={16} />
+                            <span className="text-xs">Productive</span>
+                        </button>
+                        <button
+                            onClick={() => handleComplete('NEUTRAL')}
+                            className="p-2 rounded-lg bg-gray-600/20 border border-gray-500/50 hover:bg-gray-600/30 text-gray-300 transition-colors flex flex-col items-center gap-1"
+                        >
+                            <Coffee size={16} />
+                            <span className="text-xs">Neutral</span>
+                        </button>
+                        <button
+                            onClick={() => handleComplete('UNPRODUCTIVE')}
+                            className="p-2 rounded-lg bg-rose-600/20 border border-rose-500/50 hover:bg-rose-600/30 text-rose-300 transition-colors flex flex-col items-center gap-1"
+                        >
+                            <Gamepad2 size={16} />
+                            <span className="text-xs">Downtime</span>
+                        </button>
+                    </div>
+                    <button
+                        onClick={() => setShowProductivityPicker(false)}
+                        className="w-full text-xs text-slate-500 hover:text-slate-400 py-1"
+                    >
+                        Cancel
+                    </button>
+                </div>
+            ) : (
+                <div className="flex justify-center gap-3">
+                    <button 
+                        onClick={() => setIsPaused(!isPaused)}
+                        className="p-2 rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                    >
+                        {isPaused ? <Play size={20} /> : <Pause size={20} />}
+                    </button>
+                    <button 
+                        onClick={() => setShowProductivityPicker(true)}
+                        className="px-4 py-2 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-sm flex items-center gap-2 shadow-lg shadow-indigo-500/20"
+                    >
+                        <CheckCircle2 size={16} /> Finish
+                    </button>
+                </div>
+            )}
         </div>
     </div>
   );

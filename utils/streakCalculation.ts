@@ -105,7 +105,7 @@ export function getActivityEntities(entities: Entity[]): Entity[] {
     // 2. Extract metadata.activity_log entries from ALL entities and create pseudo-entities
     entities.forEach(e => {
         if (e.metadata?.activity_log && Array.isArray(e.metadata.activity_log)) {
-            e.metadata.activity_log.forEach((log: any, idx: number) => {
+            e.metadata.activity_log.forEach((log: { id?: string; timestamp?: string; title?: string; duration_minutes?: number; productivity?: string; note?: string; notes?: string }, idx: number) => {
                 if (log.timestamp) {
                     // Create a pseudo-entity that tracks this activity log entry
                     result.push({
@@ -123,7 +123,11 @@ export function getActivityEntities(entities: Entity[]): Entity[] {
                         recurrence: null,
                         canonical_tags: [],
                         duration_minutes: log.duration_minutes || 0,
-                        metadata: { parentId: e.id, isNestedLog: true }
+                        metadata: { 
+                            parentId: e.id, 
+                            isNestedLog: true,
+                            productivity: log.productivity || e.metadata.productivity
+                        }
                     });
                 }
             });

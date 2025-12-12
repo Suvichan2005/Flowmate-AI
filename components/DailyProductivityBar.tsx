@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Entity, EntityKind, ProductivityType } from '../types';
 import { Clock, TrendingUp, TrendingDown } from 'lucide-react';
+import { getActivityEntities } from '../utils/streakCalculation';
 
 interface DailyProductivityBarProps {
     entities: Entity[];
@@ -36,32 +37,9 @@ const DailyProductivityBar: React.FC<DailyProductivityBarProps> = ({
             totalMinutes: 0
         }));
 
-        // Get all activity entities (including nested logs)
-        const activities = entities.filter(e => 
-            e.kind === EntityKind.ACTIVITY && 
-            e.created_at.startsWith(targetDate)
-        );
-
-        // Also extract metadata.activity_log entries
-        entities.forEach(entity => {
-            if (entity.metadata?.activity_log && Array.isArray(entity.metadata.activity_log)) {
-                entity.metadata.activity_log.forEach((log: any) => {
-                    if (log.timestamp && log.timestamp.startsWith(targetDate)) {
-                        // Create pseudo-activity from log
-                        activities.push({
-                            ...entity,
-                            id: `${entity.id}-log-${log.id}`,
-                            created_at: log.timestamp,
-                            duration_minutes: log.duration_minutes || 0,
-                            metadata: {
-                                ...entity.metadata,
-                                productivity: log.productivity || entity.metadata.productivity
-                            }
-                        });
-                    }
-                });
-            }
-        });
+        // Get all activity entities (including nested logs) using utility
+        const allActivities = getActivityEntities(entities);
+        const activities = allActivities.filter(a => a.created_at.startsWith(targetDate));
 
         // Aggregate by hour
         activities.forEach(activity => {
