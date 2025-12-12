@@ -2,21 +2,26 @@ import React, { useMemo } from 'react';
 import { Entity } from '../types';
 import { getActivitySummary } from '../utils/streakCalculation';
 import { Zap, Coffee, Gamepad2, Info } from 'lucide-react';
+import { useStore } from '../store';
 
 interface ProductivityChartProps {
     entities: Entity[];
 }
 
+// Helper component for progress bars
 const ProductivityChart: React.FC<ProductivityChartProps> = ({ entities }) => {
-    const summary = useMemo(() => getActivitySummary(entities), [entities]);
+    const { settings } = useStore();
+    const summary = useMemo(() => getActivitySummary(entities, settings.productivity_calc_method), [entities, settings.productivity_calc_method]);
 
-    const { productiveMinutes, neutralMinutes, unproductiveMinutes, totalMinutes } = summary;
+    const { productiveMinutes, neutralMinutes, unproductiveMinutes, sleepMinutes, totalMinutes } = summary;
 
     if (totalMinutes === 0) return null;
 
+    // Calculate percentages relative to TOTAL (including sleep) for the bar
     const prodPercent = Math.round((productiveMinutes / totalMinutes) * 100);
     const neutralPercent = Math.round((neutralMinutes / totalMinutes) * 100);
     const unprodPercent = Math.round((unproductiveMinutes / totalMinutes) * 100);
+    const sleepPercent = Math.round((sleepMinutes / totalMinutes) * 100);
 
     const formatHours = (mins: number) => (mins / 60).toFixed(1) + 'h';
 
@@ -24,7 +29,7 @@ const ProductivityChart: React.FC<ProductivityChartProps> = ({ entities }) => {
         <div className="bg-gray-800/30 border border-gray-700 rounded-xl p-4">
             <h3 className="text-sm font-medium text-gray-300 mb-4 flex items-center gap-2">
                 <Zap size={16} className="text-teal-400" />
-                Productivity Breakdown
+                Time Distribution
             </h3>
 
             {/* Progress Bar */}
@@ -32,10 +37,11 @@ const ProductivityChart: React.FC<ProductivityChartProps> = ({ entities }) => {
                 <div style={{ width: `${prodPercent}%` }} className="bg-teal-500 transition-all duration-500" />
                 <div style={{ width: `${neutralPercent}%` }} className="bg-gray-500 transition-all duration-500" />
                 <div style={{ width: `${unprodPercent}%` }} className="bg-rose-500 transition-all duration-500" />
+                <div style={{ width: `${sleepPercent}%` }} className="bg-indigo-500 transition-all duration-500" />
             </div>
 
             {/* Legend / Stats */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 {/* Productive */}
                 <div className="bg-gray-900/50 rounded-lg p-2.5">
                     <div className="flex items-center gap-1.5 mb-1">
@@ -64,6 +70,16 @@ const ProductivityChart: React.FC<ProductivityChartProps> = ({ entities }) => {
                     </div>
                     <div className="text-lg font-bold text-white">{formatHours(unproductiveMinutes)}</div>
                     <div className="text-xs text-gray-500">{unprodPercent}%</div>
+                </div>
+
+                {/* Sleep */}
+                <div className="bg-gray-900/50 rounded-lg p-2.5">
+                    <div className="flex items-center gap-1.5 mb-1">
+                        <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                        <span className="text-xs text-indigo-300">Sleep</span>
+                    </div>
+                    <div className="text-lg font-bold text-white">{formatHours(sleepMinutes)}</div>
+                    <div className="text-xs text-gray-500">{sleepPercent}%</div>
                 </div>
             </div>
         </div>

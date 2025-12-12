@@ -1,6 +1,6 @@
 # Flowmate V3.1 Feature Roadmap — "Suvansh Brain OS"
 
-> Last Updated: December 2024
+> Last Updated: December 2025
 > See also: [FEATURE_IDEATION.md](./FEATURE_IDEATION.md) for comprehensive vision and implementation plan.
 
 ---

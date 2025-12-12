@@ -8,6 +8,7 @@ import MarkdownText from './MarkdownText';
 import { calculateProgress } from '../utils/progressCalculation';
 import { getStreakInfo, getActivitySummary } from '../utils/streakCalculation';
 import QuickStreaks from './QuickStreaks';
+import DailyProductivityBar from './DailyProductivityBar';
 
 interface StatCardProps {
     icon: React.ReactNode;
@@ -97,7 +98,7 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
-    const { entities, relationships, selectEntity, dailyBriefing, refreshDailyBriefing, setView, addMessage, addToast, setPendingOrchestration, applyOperations } = useStore();
+    const { entities, relationships, selectEntity, dailyBriefing, refreshDailyBriefing, setView, addMessage, addToast, setPendingOrchestration, applyOperations, settings } = useStore();
     const [briefingLoading, setBriefingLoading] = useState(false);
     const [showOrphansModal, setShowOrphansModal] = useState(false);
     const [showDueModal, setShowDueModal] = useState(false);
@@ -234,9 +235,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
             .slice(0, 5);
     }, [entities]);
 
-    // Calculate streak stats
+    // Memoized Calculations
     const streakInfo = useMemo(() => getStreakInfo(entities), [entities]);
-    const activitySummary = useMemo(() => getActivitySummary(entities), [entities]);
+    const activitySummary = useMemo(() => getActivitySummary(entities, settings.productivity_calc_method), [entities, settings.productivity_calc_method]);
 
     const handleGenerateBriefing = async () => {
         setBriefingLoading(true);
@@ -382,7 +383,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
 
             {/* Streak Stats Banner */}
             <div className="mb-6 bg-gradient-to-r from-orange-500/10 via-purple-500/10 to-blue-500/10 border border-slate-800 rounded-xl p-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex flex-wrap items-center gap-6 md:gap-12">
                     {/* Current Streak */}
                     <div className="flex items-center gap-3">
                         <div className={`p-3 rounded-xl ${streakInfo.current > 0 ? 'bg-orange-500/20' : 'bg-slate-800'}`}>
@@ -418,14 +419,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                         </div>
                     </div>
 
-                    {/* Total Focus Time */}
+                    {/* Productive Hours */}
                     <div className="flex items-center gap-3">
                         <div className="p-3 rounded-xl bg-green-500/20">
                             <Clock className="w-6 h-6 text-green-400" />
                         </div>
                         <div>
-                            <div className="text-2xl font-bold text-green-300">{formatDuration(activitySummary.totalMinutes)}</div>
-                            <div className="text-xs text-slate-500">Total Focus</div>
+                            <div className="text-2xl font-bold text-green-300">{formatDuration(activitySummary.productiveMinutes)}</div>
+                            <div className="text-xs text-slate-500">Productive Hours</div>
                         </div>
                     </div>
 
@@ -440,6 +441,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                         </div>
                     </div>
                 </div>
+            </div>
+
+            {/* 24-Hour Productivity Timeline */}
+            <div className="mb-6">
+                <DailyProductivityBar entities={entities} />
             </div>
 
             {/* Stats Row - 4 Cards */}
@@ -756,7 +762,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                         <Clock size={18} /> Recent Activity
                     </h2>
                     <button
-                        onClick={() => setView('analytics')}
+                        onClick={() => setView('calendar', undefined, 'history')}
                         className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
                     >
                         View All <ArrowRight size={12} />

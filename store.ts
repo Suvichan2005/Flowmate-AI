@@ -16,6 +16,7 @@ import {
     ToonOperationType,
     SyncQueueItem,
     ViewType,
+    CalendarViewMode,
     UserSettings,
     DebugLogEntry,
     FocusSession,
@@ -231,6 +232,7 @@ interface FlowmateState {
     showConfetti: boolean;
     pendingOrchestration: string | null;
     knowledgeInitialFilters: string[] | null;  // Filters to apply when navigating to Knowledge
+    calendarInitialView: CalendarViewMode | null;  // View mode to apply when navigating to Calendar
 
     // History
     history: HistorySnapshot[];
@@ -239,12 +241,21 @@ interface FlowmateState {
     // Actions
     setHydrated: (val: boolean) => void;
     addMessage: (role: 'user' | 'assistant', text: string, ops?: ToonOperation[], attachment?: string | null, channelId?: string) => string;
-    setPendingOps: (ops: ToonOperation[], messageId: string) => void;
+    setPendingOps: (ops: ToonOperation[], originalMessageId: string) => void;
     clearPendingOps: () => void;
     applyOperations: (ops: ToonOperation[]) => void;
     processSyncQueue: () => Promise<void>;
     getSnapshot: () => { entities: Entity[]; relationships: Relationship[] };
-    setView: (view: ViewType, knowledgeFilters?: string[]) => void;
+
+    // Entity/Relationship CRUD
+    addEntity: (entity: Entity) => void;
+    updateEntity: (id: string, updates: Partial<Entity>) => void;
+    deleteEntity: (id: string) => void;
+    addRelationship: (rel: Relationship) => void;
+    removeRelationship: (id: string) => void;
+
+    // View Navigation
+    setView: (view: ViewType, knowledgeFilters?: string[], calendarView?: CalendarViewMode) => void;
     selectEntity: (id: string | null) => void;
     updateSettings: (settings: Partial<UserSettings>) => void;
     addDebugLog: (type: DebugLogEntry['type'], summary: string, details?: any) => void;
@@ -314,7 +325,13 @@ export const useStore = create<FlowmateState>()(
                 preferred_model: 'gemini-2.5-flash',
                 sync_enabled: false,
                 debug_mode: false,
-                custom_instructions: ''
+                custom_instructions: '',
+                feature_toggles: {
+                    food_tracking: true,
+                    attendance_tracking: true,
+                    people_tracking: true
+                },
+                productivity_calc_method: 'LOGGED_TIME'
             },
             debugLogs: [],
             focusSession: null,
@@ -330,6 +347,7 @@ export const useStore = create<FlowmateState>()(
             showConfetti: false,
             pendingOrchestration: null,
             knowledgeInitialFilters: null,  // Filters for Knowledge view
+            calendarInitialView: null,  // View mode for Calendar
             history: [],
             historyPointer: -1,
 
@@ -414,12 +432,30 @@ export const useStore = create<FlowmateState>()(
 
             setHydrated: (val) => set({ isHydrated: val }),
 
-            setView: (view, knowledgeFilters) => set({
+            setView: (view, knowledgeFilters, calendarView) => set({
                 currentView: view,
-                knowledgeInitialFilters: knowledgeFilters || null
+                knowledgeInitialFilters: knowledgeFilters || null,
+                calendarInitialView: calendarView || null
             }),
 
             selectEntity: (id) => set({ selectedEntityId: id }),
+
+            // Entity/Relationship CRUD Methods (wrappers around applyOperations)
+            addEntity: (entity) => {
+                get().applyOperations([{ type: 'create_entity', payload: entity }]);
+            },
+            updateEntity: (id, updates) => {
+                get().applyOperations([{ type: 'update_entity', payload: { id, fields: updates } }]);
+            },
+            deleteEntity: (id) => {
+                get().applyOperations([{ type: 'delete_entity', payload: { id } }]);
+            },
+            addRelationship: (rel) => {
+                get().applyOperations([{ type: 'link_entities', payload: { from: rel.from, to: rel.to, type: rel.type } }]);
+            },
+            removeRelationship: (id) => {
+                get().applyOperations([{ type: 'unlink_entities', payload: { id } }]);
+            },
 
             toggleZenMode: () => set(state => ({ isZenMode: !state.isZenMode })),
 
@@ -1053,6 +1089,35 @@ export const useStore = create<FlowmateState>()(
                                     break;
                                 }
 
+                                case 'delete_entity': {
+                                    // SOFT DELETE: Mark as deleted instead of removing
+                                    // This allows sync to propagate the deletion properly
+                                    const entityId = payload.id || payload.entity_id;
+                                    const resolvedId = resolveEntityId(entityId, newEntities);
+                                    if (!resolvedId) {
+                                        addDebugLog('system', 'delete_entity: Entity not found', { id: entityId });
+                                        break;
+                                    }
+
+                                    newEntities = newEntities.map(e =>
+                                        e.id === resolvedId
+                                            ? {
+                                                ...e,
+                                                metadata: { ...e.metadata, deleted: true },
+                                                updated_at: now
+                                            }
+                                            : e
+                                    );
+
+                                    // Also remove relationships involving this entity
+                                    newRelationships = newRelationships.filter(
+                                        r => r.from !== resolvedId && r.to !== resolvedId
+                                    );
+
+                                    addDebugLog('system', 'Soft-deleted entity', { id: resolvedId });
+                                    break;
+                                }
+
                                 case 'log_activity': {
                                     const actId = uuidv4();
                                     // Smart Timestamp Logic
@@ -1334,10 +1399,12 @@ export const useStore = create<FlowmateState>()(
 
                                     const logEntry: ActivityLogEntry = {
                                         id: uuidv4(),
-                                        timestamp: now,
-                                        title: payload.title || 'Activity',
-                                        duration_minutes: payload.duration_minutes || 0,
-                                        notes: payload.notes
+                                        timestamp: payload.timestamp || now,
+                                        title: payload.title || payload.t || 'Activity',
+                                        duration_minutes: payload.duration_minutes || payload.m?.duration_minutes || 0,
+                                        notes: payload.notes || payload.n,
+                                        productivity: payload.productivity || payload.m?.productivity,
+                                        color_hex: payload.color_hex || payload.m?.color_hex
                                     };
 
                                     newEntities = newEntities.map(e => {

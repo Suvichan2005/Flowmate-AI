@@ -7,7 +7,7 @@ import { GoogleCalendarAdapter, GoogleAuthError } from '../services/googleSync';
 import { refreshGoogleCalendarToken } from '../services/firebase';
 import { v4 as uuidv4 } from 'uuid';
 
-type ViewMode = 'month' | 'week' | 'day' | 'agenda';
+type ViewMode = 'month' | 'week' | 'day' | 'agenda' | 'history';
 
 const PIXELS_PER_HOUR = 60; // 1px per minute usually works well
 const GRID_HEIGHT = 24 * PIXELS_PER_HOUR;
@@ -81,7 +81,7 @@ const matchesRecurrence = (originalDate: Date, targetDate: Date, recurrence: Rec
 };
 
 const CalendarView: React.FC = () => {
-    const { entities, selectEntity, applyOperations, addToast } = useStore();
+    const { entities, selectEntity, applyOperations, addToast, calendarInitialView } = useStore();
     const [currentDate, setCurrentDate] = useState(new Date());
     const [createModalDate, setCreateModalDate] = useState<string | null>(null);
     const [createModalStartTime, setCreateModalStartTime] = useState<string | null>(null);
@@ -99,6 +99,13 @@ const CalendarView: React.FC = () => {
             scrollRef.current.scrollTop = 8 * PIXELS_PER_HOUR;
         }
     }, [viewMode]);
+
+    // Handle external navigation to specific view (e.g., from Dashboard "View All")
+    useEffect(() => {
+        if (calendarInitialView && calendarInitialView !== viewMode) {
+            setViewMode(calendarInitialView as ViewMode);
+        }
+    }, [calendarInitialView]);
 
     // Filter events AND tasks with deadlines based on toggle state
     // Also exclude hidden entities
@@ -179,7 +186,12 @@ const CalendarView: React.FC = () => {
                             deadline: null,
                             duration_minutes: log.duration_minutes || null,
                             recurrence: null,
-                            metadata: { parent_title: e.title, is_nested_log: true },
+                            metadata: {
+                                parent_title: e.title,
+                                is_nested_log: true,
+                                productivity: log.productivity || e.metadata?.productivity,
+                                color_hex: log.color_hex || e.metadata?.color_hex
+                            },
                             created_at: log.timestamp,
                             updated_at: log.timestamp,
                             canonical_tags: [],
@@ -471,7 +483,7 @@ const CalendarView: React.FC = () => {
                 key={`${item.id}-${isRecurring ? 'r' : 'o'}`}
                 draggable={!isRecurring}
                 onDragStart={!isRecurring ? (e) => handleDragStart(e, item.id) : undefined}
-                onClick={(e) => { e.stopPropagation(); selectEntity(item.id); }}
+                onClick={(e) => { e.stopPropagation(); selectEntity(item.parent_id || item.id); }}
                 className={`text-[10px] px-1.5 py-0.5 rounded border-l-2 truncate cursor-pointer transition-colors flex items-center gap-1 ${!customColor ? (isEvent
                     ? 'bg-indigo-600/20 text-indigo-200 border-indigo-500 hover:bg-indigo-600/40'
                     : item.kind === EntityKind.ACTIVITY
@@ -553,7 +565,7 @@ const CalendarView: React.FC = () => {
                 key={`${item.id}-${isRecurring ? 'r' : 'o'}-${containerDate.toDateString()}`}
                 draggable={!isRecurring && !isSpanning}
                 onDragStart={!isRecurring && !isSpanning ? (e) => handleDragStart(e, item.id) : undefined}
-                onClick={(e) => { e.stopPropagation(); selectEntity(item.id); }}
+                onClick={(e) => { e.stopPropagation(); selectEntity(item.parent_id || item.id); }}
                 style={{
                     top: `${startY}px`,
                     height: `${height}px`,
@@ -578,6 +590,109 @@ const CalendarView: React.FC = () => {
                     <div className="text-[9px] opacity-80 truncate mt-0.5">
                         {displayStartTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         {` - ${displayEndTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    // ============ HISTORY VIEW ============
+    const renderHistoryView = () => {
+        // Collect past completed tasks, past events, and activity logs
+        const now = new Date();
+        const historyItems: { type: 'task' | 'event' | 'log'; date: string; entity: Entity; log?: any }[] = [];
+
+        // 1. Completed Tasks
+        entities.filter(e => e.kind === EntityKind.TASK && e.status === EntityStatus.COMPLETED).forEach(e => {
+            historyItems.push({ type: 'task', date: e.updated_at || e.created_at, entity: e });
+        });
+
+        // 1b. Active Tasks with past deadlines (overdue tasks are also "history")
+        entities.filter(e =>
+            e.kind === EntityKind.TASK &&
+            e.status === EntityStatus.ACTIVE &&
+            e.deadline &&
+            new Date(e.deadline) < now
+        ).forEach(e => {
+            historyItems.push({ type: 'task', date: e.deadline!, entity: e });
+        });
+
+        // 2. Past Events (ended before now, OR if no end_time, use start_time)
+        entities.filter(e => {
+            if (e.kind !== EntityKind.EVENT) return false;
+            const endTime = e.end_time ? new Date(e.end_time) : null;
+            const startTime = e.start_time ? new Date(e.start_time) : null;
+            // Use end_time if available, else start_time, to check if event is in past
+            const eventEndOrStart = endTime || startTime;
+            return eventEndOrStart && eventEndOrStart < now;
+        }).forEach(e => {
+            historyItems.push({ type: 'event', date: e.start_time || e.created_at, entity: e });
+        });
+
+        // 3. Activity Logs (from metadata.activity_log)
+        entities.forEach(e => {
+            const logs = e.metadata?.activity_log;
+            if (logs && Array.isArray(logs)) {
+                logs.forEach((log: any) => {
+                    if (log.timestamp) {
+                        historyItems.push({ type: 'log', date: log.timestamp, entity: e, log });
+                    }
+                });
+            }
+        });
+
+        // Sort descending by date
+        historyItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+        return (
+            <div className="flex-1 overflow-y-auto">
+                {historyItems.length === 0 ? (
+                    <div className="p-8 text-center text-slate-500">
+                        <CalendarIcon className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                        <p>No history found</p>
+                    </div>
+                ) : (
+                    <div className="divide-y divide-slate-800/50">
+                        {historyItems.map((item, idx) => {
+                            const dateObj = new Date(item.date);
+                            const dateStr = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+                            const timeStr = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                            const showHeader = idx === 0 || new Date(historyItems[idx - 1].date).toDateString() !== dateObj.toDateString();
+
+                            return (
+                                <div key={`${item.type}-${idx}-${item.date}`}>
+                                    {showHeader && (
+                                        <div className="px-4 py-2 bg-slate-900/50 sticky top-0 z-10 backdrop-blur-sm border-y border-slate-800/50">
+                                            <span className="text-slate-300 font-semibold">{dateStr}</span>
+                                        </div>
+                                    )}
+                                    <div
+                                        className="px-4 py-3 hover:bg-slate-900/50 cursor-pointer flex items-center gap-3"
+                                        onClick={() => selectEntity(item.entity.id)}
+                                    >
+                                        <div className="w-[60px] text-right text-xs text-slate-500 font-mono shrink-0">{timeStr}</div>
+                                        <div className={`p-2 rounded-lg ${item.type === 'task' ? 'bg-emerald-500/10 text-emerald-400' :
+                                            item.type === 'event' ? 'bg-indigo-500/10 text-indigo-400' :
+                                                'bg-purple-500/10 text-purple-400'
+                                            }`}>
+                                            {item.type === 'task' ? <CheckSquare size={16} /> :
+                                                item.type === 'event' ? <CalendarIcon size={16} /> :
+                                                    <Activity size={16} />}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="font-medium text-slate-200 truncate">
+                                                {item.type === 'log' ? (item.log?.title || item.entity.title) : item.entity.title}
+                                            </div>
+                                            <div className="text-xs text-slate-500 mt-0.5">
+                                                {item.type === 'log' && `${item.log?.duration_minutes || 0}m • ${item.entity.title}`}
+                                                {item.type === 'task' && (item.entity.status === EntityStatus.COMPLETED ? 'Task Completed' : 'Task Overdue')}
+                                                {item.type === 'event' && 'Event Past'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
             </div>
@@ -862,6 +977,7 @@ const CalendarView: React.FC = () => {
             return `${startOfWeek.toLocaleDateString('en', { month: 'short', day: 'numeric' })} - ${endOfWeek.toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}`;
         }
         if (viewMode === 'day') return currentDate.toLocaleDateString('en', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+        if (viewMode === 'history') return 'Activity History';
         return 'Upcoming Loop';
     };
 
@@ -870,6 +986,7 @@ const CalendarView: React.FC = () => {
         { id: 'week', label: 'Week', icon: <CalendarDays size={14} /> },
         { id: 'day', label: 'Day', icon: <LayoutGrid size={14} /> },
         { id: 'month', label: 'Month', icon: <Grid3X3 size={14} /> },
+        { id: 'history', label: 'History', icon: <Activity size={14} /> },
     ];
 
     return (
@@ -959,6 +1076,7 @@ const CalendarView: React.FC = () => {
             {viewMode === 'week' && renderWeekView()}
             {viewMode === 'day' && renderDayView()}
             {viewMode === 'agenda' && renderAgendaView()}
+            {viewMode === 'history' && renderHistoryView()}
 
             {createModalDate && (
                 <CreateEntityModal

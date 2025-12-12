@@ -10,12 +10,16 @@
 
 - 🤖 **AI Orchestrator** - Natural language chat powered by Gemini 2.5 Flash
 - 🕸️ **Knowledge Graph** - Interactive D3.js visualization of your productivity data
-- 📅 **Calendar** - Drag-and-drop event scheduling with IST timezone support
+- 📅 **Calendar** - Drag-and-drop event scheduling with multiple views
 - 📚 **Knowledge Base** - AI-powered Q&A over your notes with tag filtering
 - 🔥 **Focus Timer** - Pomodoro-style sessions with activity logging
+- 🍕 **Food Tracking** - Meal logging with vendor analytics and nutrition tracking
+- 📊 **Attendance** - Academic class attendance with skip calculator
+- ⚡ **Quick Streaks** - Lightweight daily habit tracking
 - 🎮 **Gamification** - XP system and productivity levels
-- ☁️ **Cloud Sync** - Firebase authentication and Firestore persistence
+- ☁️ **Cloud Sync** - Firebase authentication and real-time sync
 - 🎤 **Voice Mode** - Real-time voice AI interaction
+- 📱 **Mobile Ready** - Responsive design with PWA support
 
 ## Quick Start
 
@@ -59,24 +63,33 @@ For cloud sync and authentication:
 
 ```
 ├── App.tsx              # Main application shell
-├── store.ts             # Zustand global state
+├── store.ts             # Zustand global state (~81KB)
 ├── types.ts             # TypeScript definitions
-├── components/          # 22 React components
+├── components/          # 42 React components
 ├── services/
 │   ├── geminiService.ts # AI orchestration
 │   ├── firebase.ts      # Firebase config & auth
 │   ├── firestoreSync.ts # Cloud data sync
+│   ├── googleSync.ts    # Google Calendar sync
+│   ├── graphAnalyzer.ts # Graph health analysis
 │   └── liveSession.ts   # Voice AI
-└── docs/                # Documentation
+├── utils/               # Helper functions
+└── docs/                # Documentation (11 files)
 ```
 
 ## Documentation
 
 See the [/docs](./docs) folder for detailed documentation:
 - [Overview](./docs/00-overview.md)
+- [Structural Analysis](./docs/01-structural-analysis.md)
+- [Semantic Analysis](./docs/02-semantic-analysis.md)
+- [Functional Analysis](./docs/03-functional-analysis.md)
 - [Architecture](./docs/04-architecture-analysis.md)
+- [Components Reference](./docs/05-components-reference.md)
+- [Services Reference](./docs/06-services-reference.md)
 - [Feature Roadmap](./docs/07-feature-roadmap.md)
 
 ## License
 
 MIT
+

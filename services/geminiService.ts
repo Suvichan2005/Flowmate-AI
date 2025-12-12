@@ -39,6 +39,62 @@ const searchEntitiesTool: FunctionDeclaration = {
   }
 };
 
+// NEW: Context-fetching tools for on-demand lookup
+const lookupFoodHistoryTool: FunctionDeclaration = {
+  name: "lookup_food_history",
+  description: "Get food logs with health tags, vendors, and quality notes. Use for food recommendations, spending analysis, or checking past meals.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      days: { type: Type.NUMBER, description: "Number of days to look back (default 30)" },
+      source: { type: Type.STRING, description: "Filter by source: mess | ordered | homemade | outside" },
+      vendor: { type: Type.STRING, description: "Filter by vendor name" },
+      limit: { type: Type.NUMBER, description: "Max results (default 20)" }
+    },
+    required: []
+  }
+};
+
+const getProductivityStatsTool: FunctionDeclaration = {
+  name: "get_productivity_stats",
+  description: "Get productivity metrics: focus score, productive hours, streaks. Can query specific date ranges.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      start_date: { type: Type.STRING, description: "Start date (ISO 8601 YYYY-MM-DD). Defaults to 30 days ago." },
+      end_date: { type: Type.STRING, description: "End date (ISO 8601 YYYY-MM-DD). Defaults to today." }
+    },
+    required: []
+  }
+};
+
+const lookupGoalsTool: FunctionDeclaration = {
+  name: "lookup_goals",
+  description: "Get goals with their progress, subtasks, and status. Use for progress queries or motivation.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      status: { type: Type.STRING, description: "Filter by status: ACTIVE | COMPLETED | ALL" },
+      include_subtasks: { type: Type.BOOLEAN, description: "Include subtask details (default false)" },
+      limit: { type: Type.NUMBER, description: "Max results (default 10)" }
+    },
+    required: []
+  }
+};
+
+const lookupHabitsTool: FunctionDeclaration = {
+  name: "lookup_habits",
+  description: "Get habits with streak info and recent activity. Use for habit tracking queries.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      include_streaks: { type: Type.BOOLEAN, description: "Calculate and include streak info (default true)" },
+      limit: { type: Type.NUMBER, description: "Max results (default 10)" }
+    },
+    required: []
+  }
+};
+
 const applyChangesTool: FunctionDeclaration = {
   name: "apply_changes",
   description: "Commit changes to the graph. Use this to create, update, delete, or link entities.",
@@ -153,6 +209,7 @@ Categorize EVERY activity/task/habit in \`metadata.productivity\`:
 - **PRODUCTIVE**: Work, coding, study, exercise, learning, creation. (Value: 1)
 - **NEUTRAL**: Chores, commute, eating, hygiene, maintenance, errands. (Value: 0)
 - **UNPRODUCTIVE**: Gaming, social media, TV, idle browsing, procrastination. (Value: -1)
+- **SLEEP**: Sleep, naps. (Value: 0)
 
 \`\`\`
 { type: "log", payload: { entity_id: "...", t: "Studied React", dur: 60, m: { productivity: "PRODUCTIVE" } } }
@@ -166,17 +223,52 @@ Categorize EVERY activity/task/habit in \`metadata.productivity\`:
 
 // Separate food instructions - conditionally included based on feature_toggles
 const FOOD_INSTRUCTIONS = `
-**LOG FOOD (with source tracking):**
-\`\`\`
-{ type: "f", payload: { food_name: "Chhola Bhatura", cost: 130, vendor: "Sardarji", source: "ordered" }}
-{ type: "f", payload: { food_name: "Rice Dal", meal_type: "lunch", source: "mess", skipped: false }}
-\`\`\`
-Fields: food_name, cost, vendor, source (mess/ordered/homemade/outside), meal_type, rating (1-5), skipped (bool)
+**LOG FOOD (MULTI-ITEM PARSING):**
+When user describes a meal with multiple items, create SEPARATE log entries for EACH food item.
+Extract health observations from descriptors: "oily", "heavy", "spicy", "fried", "sweet", "salty", "light", "healthy"
 
-**FOOD CONTEXT:** You have FOOD stats in context (meals, spending, vendors, top foods). Answer food questions using this data:
-- "What's my favorite food?" → Check top_foods in FOOD context
-- "How much did I spend?" → Use total_spent from FOOD context
-- "Where do I order from?" → List vendors with counts
+**IMPORTANT:** Parse each item individually. "I had aalu bhaja and paneer" → 2 operations, not 1.
+
+**Example 1:** "I had very oily aalu bhaja, a heavy masala paneer, and two rotis from mess"
+\`\`\`
+{ type: "f", payload: { food_name: "Aalu Bhaja", source: "mess", meal_type: "lunch", health_tags: ["oily", "fried"], quality_notes: "very oily", meal_id: "meal_abc123" }}
+{ type: "f", payload: { food_name: "Paneer Sabji", source: "mess", meal_type: "lunch", health_tags: ["heavy", "spicy"], quality_notes: "heavy masala", meal_id: "meal_abc123" }}
+{ type: "f", payload: { food_name: "Roti", source: "mess", meal_type: "lunch", health_tags: ["healthy"], notes: "x2", meal_id: "meal_abc123" }}
+\`\`\`
+
+**Example 2:** "Ordered chhola bhatura from Sardarji for 130 rs"
+\`\`\`
+{ type: "f", payload: { food_name: "Chhola Bhatura", cost: 130, vendor: "Sardarji", source: "ordered", meal_type: "lunch" }}
+\`\`\`
+
+**Fields:**
+- food_name (required): Individual item name (not full description)
+- quantity: Number of servings (default 1, e.g., "two rotis" → quantity: 2)
+- serving_unit: piece | bowl | plate | cup | serving (optional)
+- cost: Price in rupees (only if mentioned)
+- vendor: Restaurant/shop name
+- source: mess | ordered | homemade | outside
+- meal_type: breakfast | lunch | dinner | snack
+- health_tags[]: Use multiple from:
+  * Prep: oily, fried, grilled, steamed, raw, baked, boiled
+  * Taste: spicy, mild, sweet, salty, sour, bland, tangy
+  * Feeling: heavy, light, filling, small-portion, large-portion
+  * Health: healthy, unhealthy, junk, balanced, protein-rich, carb-heavy
+  * Quality: fresh, stale, cold, hot, reheated, tasty, bad-taste
+  * Texture: crispy, soggy, dry, greasy, watery
+- quality_notes: User's observations ("too oily", "really good today")
+- meal_id: Same ID for items logged together
+- rating: 1-5 if user rates it
+
+**FOLLOW-UP FOR MISSING CONTEXT:**
+After logging food, if user didn't mention:
+- How it tasted/quality → Ask: "How was the [food]? Any notes for next time?"
+- Rating → Ask: "Would you rate it? (1-5)"
+Log first, then ask. Update the food log with their response.
+
+**FOOD CONTEXT:** Use past food notes for suggestions:
+- Check health_tags history: "Mess paneer is usually 'oily' and 'heavy'"
+- Compare sources: "Chai Break is usually 'light', mess is 'heavy'"
 `;
 
 function calculateRelevance(entity: Entity, userMessage: string): number {
@@ -288,6 +380,123 @@ function executeSearchEntities(args: any, allEntities: Entity[]): any[] {
   }));
 }
 
+// Execute lookup_food_history tool
+function executeLookupFoodHistory(args: any): any[] {
+  const { foodLogs } = useStore.getState();
+  const days = args.days || 30;
+  const source = args.source?.toLowerCase();
+  const vendor = args.vendor?.toLowerCase();
+  const limit = args.limit || 20;
+
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+
+  let results = foodLogs.filter((l: any) => {
+    if (new Date(l.timestamp) < cutoff) return false;
+    if (source && l.source?.toLowerCase() !== source) return false;
+    if (vendor && !l.vendor?.toLowerCase().includes(vendor)) return false;
+    return true;
+  });
+
+  return results.slice(-limit).reverse().map((l: any) => ({
+    food: l.food_name,
+    date: l.timestamp.split('T')[0],
+    source: l.source,
+    vendor: l.vendor,
+    cost: l.cost,
+    tags: l.health_tags,
+    notes: l.quality_notes,
+    rating: l.rating
+  }));
+}
+
+// Execute get_productivity_stats tool
+function executeGetProductivityStats(args: any, allEntities: Entity[]): any {
+  const startDate = args.start_date ? new Date(args.start_date) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const endDate = args.end_date ? new Date(args.end_date) : new Date();
+  endDate.setHours(23, 59, 59, 999); // Include full end day
+
+  // Calculate stats for the date range
+  let productiveMinutes = 0;
+  let totalMinutes = 0;
+
+  allEntities.forEach(e => {
+    if (e.metadata?.activity_log) {
+      (e.metadata.activity_log as any[]).forEach(log => {
+        const logDate = new Date(log.timestamp);
+        if (logDate >= startDate && logDate <= endDate) {
+          const dur = log.duration_minutes || 0;
+          totalMinutes += dur;
+          if (log.productivity === 'PRODUCTIVE') productiveMinutes += dur;
+        }
+      });
+    }
+  });
+
+  const focusScore = totalMinutes > 0 ? Math.round((productiveMinutes / totalMinutes) * 100) : 0;
+  const completedTasks = allEntities.filter(e => {
+    const updated = new Date(e.updated_at);
+    return e.kind === EntityKind.TASK && e.status === EntityStatus.COMPLETED && updated >= startDate && updated <= endDate;
+  }).length;
+
+  return {
+    date_range: `${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`,
+    focus_score: focusScore + '%',
+    productive_hours: Math.round(productiveMinutes / 60 * 10) / 10,
+    total_hours: Math.round(totalMinutes / 60 * 10) / 10,
+    tasks_completed: completedTasks
+  };
+}
+
+// Execute lookup_goals tool
+function executeLookupGoals(args: any, allEntities: Entity[]): any[] {
+  const status = args.status?.toUpperCase() || 'ACTIVE';
+  const includeSubtasks = args.include_subtasks || false;
+  const limit = args.limit || 10;
+
+  let goals = allEntities.filter(e => e.kind === EntityKind.GOAL);
+  if (status !== 'ALL') {
+    goals = goals.filter(e => e.status === status);
+  }
+
+  return goals.slice(0, limit).map(g => {
+    const result: any = {
+      id: g.id,
+      title: g.title,
+      status: g.status,
+      progress: g.metadata?.progress || 0
+    };
+    if (includeSubtasks && g.metadata?.subtasks) {
+      result.subtasks = (g.metadata.subtasks as any[]).map((s: any) => ({
+        title: s.title,
+        done: s.is_done
+      }));
+    }
+    return result;
+  });
+}
+
+// Execute lookup_habits tool
+function executeLookupHabits(args: any, allEntities: Entity[]): any[] {
+  const includeStreaks = args.include_streaks !== false;
+  const limit = args.limit || 10;
+
+  const habits = allEntities.filter(e => e.kind === EntityKind.HABIT).slice(0, limit);
+
+  return habits.map(h => {
+    const result: any = {
+      id: h.id,
+      title: h.title,
+      status: h.status
+    };
+    if (includeStreaks) {
+      result.streak = h.metadata?.streak || 0;
+      result.last_done = h.metadata?.last_interaction;
+    }
+    return result;
+  });
+}
+
 export const orchestrateMessage = async (
   history: Message[],
   userMessage: string,
@@ -311,26 +520,39 @@ export const orchestrateMessage = async (
     ? `${systemInstruction} \n\nUSER CUSTOM INSTRUCTIONS: \n${customInstructions} `
     : systemInstruction;
 
-  // --- Context Building ---
-  const recentLimit = 15;
-  const relevantLimit = 10;
+  // --- Context Building (Optimized: Date Window + Relevance) ---
+  const now = new Date();
+  const DAYS_BACK = 7;
+  const DAYS_FORWARD = 7;
 
-  // Filter out hidden entities from LLM context (they still appear in calendar)
+  const windowStart = new Date(now);
+  windowStart.setDate(windowStart.getDate() - DAYS_BACK);
+  const windowEnd = new Date(now);
+  windowEnd.setDate(windowEnd.getDate() + DAYS_FORWARD);
+
+  // Filter out hidden entities
   const visibleEntities = snapshot.entities.filter(e => !e.metadata?.hidden);
 
-  const recentEntities = [...visibleEntities]
-    .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-    .slice(0, recentLimit);
+  // Get entities within date window (created, updated, deadline, or start_time within range)
+  const dateWindowEntities = visibleEntities.filter(e => {
+    const dates = [e.created_at, e.updated_at, e.deadline, e.start_time, e.end_time].filter(Boolean);
+    return dates.some(d => {
+      const date = new Date(d!);
+      return date >= windowStart && date <= windowEnd;
+    });
+  });
 
+  // Also get relevant entities based on message keywords (up to 10)
   const relevantEntities = [...visibleEntities]
     .map(e => ({ entity: e, score: calculateRelevance(e, userMessage) }))
     .filter(item => item.score > 0)
     .sort((a, b) => b.score - a.score)
-    .slice(0, relevantLimit)
+    .slice(0, 10)
     .map(item => item.entity);
 
+  // Combine: date window + relevant (deduped)
   const contextMap = new Map<string, Entity>();
-  recentEntities.forEach(e => contextMap.set(e.id, e));
+  dateWindowEntities.forEach(e => contextMap.set(e.id, e));
   relevantEntities.forEach(e => contextMap.set(e.id, e));
 
   const truncatedEntities = Array.from(contextMap.values());
@@ -357,7 +579,7 @@ export const orchestrateMessage = async (
 
   // --- FOOD CONTEXT ---
   const { foodLogs } = useStore.getState();
-  const now = new Date();
+  // Reuse 'now' from context building above
   const last30DaysLogs = foodLogs.filter(l => {
     const d = new Date(l.timestamp);
     return (now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24) <= 30;
@@ -461,7 +683,12 @@ CONTEXT: ${JSON.stringify(contextSnapshot)} `;
           systemInstruction: finalSystemInstruction,
           temperature: 0.1,
           // We provide all tools. The model chooses apply_changes to act.
-          tools: [{ functionDeclarations: [readCalendarTool, searchEntitiesTool, applyChangesTool] }],
+          tools: [{
+            functionDeclarations: [
+              readCalendarTool, searchEntitiesTool, applyChangesTool,
+              lookupFoodHistoryTool, getProductivityStatsTool, lookupGoalsTool, lookupHabitsTool
+            ]
+          }],
           // AUTO mode lets model choose between function calls and plain text responses
           toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
         },
@@ -520,6 +747,34 @@ CONTEXT: ${JSON.stringify(contextSnapshot)} `;
           }
           if (call.name === 'search_entities') {
             const result = executeSearchEntities(call.args, snapshot.entities);
+            return {
+              name: call.name,
+              response: { result }
+            };
+          }
+          if (call.name === 'lookup_food_history') {
+            const result = executeLookupFoodHistory(call.args);
+            return {
+              name: call.name,
+              response: { result }
+            };
+          }
+          if (call.name === 'get_productivity_stats') {
+            const result = executeGetProductivityStats(call.args, snapshot.entities);
+            return {
+              name: call.name,
+              response: { result }
+            };
+          }
+          if (call.name === 'lookup_goals') {
+            const result = executeLookupGoals(call.args, snapshot.entities);
+            return {
+              name: call.name,
+              response: { result }
+            };
+          }
+          if (call.name === 'lookup_habits') {
+            const result = executeLookupHabits(call.args, snapshot.entities);
             return {
               name: call.name,
               response: { result }
