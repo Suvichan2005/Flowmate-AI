@@ -8,6 +8,9 @@ import BadHabitAlert from './BadHabitAlert';
 import StreakLeaderboard from './StreakLeaderboard';
 import GoalProgressChart from './GoalProgressChart';
 import ProductivityChart from './ProductivityChart';
+import DailyProductivityBar from './DailyProductivityBar';
+import WeeklyProductivityInsights from './WeeklyProductivityInsights';
+import TimeBreakdownByCategory from './TimeBreakdownByCategory';
 import { Brain, TrendingUp } from 'lucide-react';
 
 const AnalyticsView: React.FC = () => {
@@ -45,7 +48,16 @@ const AnalyticsView: React.FC = () => {
                 <ProductivityChart entities={entities} />
             </div>
 
-            {/* Goal Progress */}
+            {/* 24-Hour Daily Productivity Bar */}
+            <div className="mt-4">
+                <DailyProductivityBar entities={entities} />
+            </div>
+
+            {/* Weekly Insights & Time Breakdown */}
+            <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <WeeklyProductivityInsights entities={entities} />
+                <TimeBreakdownByCategory entities={entities} relationships={relationships} />
+            </div>
 
             {/* Goal Progress */}
             <div className="mt-4">
