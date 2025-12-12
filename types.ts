@@ -21,12 +21,16 @@ export enum EntityKind {
 }
 
 // Flowmate 3.2: Productive Hours Tracking
-export type ProductivityType = 'PRODUCTIVE' | 'NEUTRAL' | 'UNPRODUCTIVE';
+export type ProductivityType = 'PRODUCTIVE' | 'NEUTRAL' | 'UNPRODUCTIVE' | 'SLEEP';
 export const ProductivityValue: Record<ProductivityType, number> = {
   PRODUCTIVE: 1,
   NEUTRAL: 0,
-  UNPRODUCTIVE: -1
+  UNPRODUCTIVE: -1,
+  SLEEP: 0
 };
+
+// Flowmate 3.2: Calendar View Mode
+export type CalendarViewMode = 'month' | 'week' | 'day' | 'agenda' | 'history';
 
 export type HabitType = 'GOOD' | 'BAD';
 export type HabitFrequency = 'DAILY' | 'WEEKLY' | 'MONTHLY';
@@ -84,6 +88,8 @@ export interface ActivityLogEntry {
   title: string;
   duration_minutes: number;
   notes?: string;
+  productivity?: ProductivityType;
+  color_hex?: string;
 }
 
 // Flowmate 2.5 — Opportunity Metadata (Opportunity Engine)
@@ -218,6 +224,12 @@ export interface FeatureToggles {
 }
 
 export interface UserSettings {
+  // User Profile
+  username?: string;       // Display name for AI interactions
+  fullname?: string;       // Full legal name
+  nickname?: string;       // Preferred casual name (AI will use this)
+
+  // App Settings
   timezone: string;
   preferred_model: string;
   sync_enabled: boolean;
@@ -226,7 +238,8 @@ export interface UserSettings {
   // Flowmate 3.0: Food Tracking
   food_preferences?: FoodPreferences;
   // Flowmate 3.1: Feature Toggles
-  feature_toggles?: FeatureToggles;
+  feature_toggles: FeatureToggles;
+  productivity_calc_method?: 'LOGGED_TIME' | 'AWAKE_TIME'; // Flowmate 3.2
 }
 
 // Flowmate 3.0: Food Tracking
@@ -258,6 +271,25 @@ export interface FoodLogEntry {
   vendor?: string;     // "Sardarji", "Zomato", "Swiggy", etc.
   rating?: number;     // 1-5 stars
   skipped?: boolean;   // Mark skipped meal (didn't eat)
+  // Flowmate 3.2: Health and meal tracking
+  health_tags?: (
+    // Preparation style
+    'oily' | 'fried' | 'grilled' | 'steamed' | 'raw' | 'baked' | 'boiled' |
+    // Taste/Spice
+    'spicy' | 'mild' | 'sweet' | 'salty' | 'sour' | 'bland' | 'tangy' |
+    // Weight/Feeling
+    'heavy' | 'light' | 'filling' | 'small-portion' | 'large-portion' |
+    // Health
+    'healthy' | 'unhealthy' | 'junk' | 'balanced' | 'protein-rich' | 'carb-heavy' |
+    // Quality
+    'fresh' | 'stale' | 'cold' | 'hot' | 'reheated' | 'tasty' | 'bad-taste' |
+    // Texture
+    'crispy' | 'soggy' | 'dry' | 'greasy' | 'watery'
+  )[];
+  quality_notes?: string;  // "too much oil", "very fresh"
+  meal_id?: string;        // Groups items from same meal together
+  quantity?: number;       // Number of servings/pieces (default 1)
+  serving_unit?: string;   // "piece", "bowl", "plate", "cup"
 }
 
 // Mess Menu Entry (for calendar integration)

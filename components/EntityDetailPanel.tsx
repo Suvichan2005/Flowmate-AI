@@ -36,6 +36,11 @@ const EntityDetailPanel: React.FC = () => {
 
     const [aiGenerating, setAiGenerating] = useState(false);
 
+    // Activity Log Editor State
+    const [showAddLog, setShowAddLog] = useState(false);
+    const [logForm, setLogForm] = useState({ title: '', duration: 30, productivity: 'PRODUCTIVE', notes: '' });
+    const [editingLogId, setEditingLogId] = useState<string | null>(null);
+
     const entity = entities.find(e => e.id === selectedEntityId);
 
     // Reset editing state when selection changes
@@ -417,8 +422,8 @@ const EntityDetailPanel: React.FC = () => {
                                             }
                                         }}
                                         className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors ${entity.status === EntityStatus.ACTIVE
-                                                ? 'bg-blue-500/20 text-blue-300 border border-blue-500/50'
-                                                : 'bg-slate-900 text-slate-500 hover:bg-slate-800 border border-slate-700'
+                                            ? 'bg-blue-500/20 text-blue-300 border border-blue-500/50'
+                                            : 'bg-slate-900 text-slate-500 hover:bg-slate-800 border border-slate-700'
                                             }`}
                                     >
                                         ⏳ Active
@@ -430,8 +435,8 @@ const EntityDetailPanel: React.FC = () => {
                                             }
                                         }}
                                         className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors ${entity.status === EntityStatus.COMPLETED
-                                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
-                                                : 'bg-slate-900 text-slate-500 hover:bg-slate-800 border border-slate-700'
+                                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
+                                            : 'bg-slate-900 text-slate-500 hover:bg-slate-800 border border-slate-700'
                                             }`}
                                     >
                                         ✅ Done
@@ -443,8 +448,8 @@ const EntityDetailPanel: React.FC = () => {
                                             }
                                         }}
                                         className={`flex-1 px-2 py-1.5 rounded text-xs font-medium transition-colors ${entity.status === EntityStatus.ARCHIVED
-                                                ? 'bg-slate-600/20 text-slate-400 border border-slate-500/50'
-                                                : 'bg-slate-900 text-slate-500 hover:bg-slate-800 border border-slate-700'
+                                            ? 'bg-slate-600/20 text-slate-400 border border-slate-500/50'
+                                            : 'bg-slate-900 text-slate-500 hover:bg-slate-800 border border-slate-700'
                                             }`}
                                     >
                                         📦 Archived
@@ -474,12 +479,12 @@ const EntityDetailPanel: React.FC = () => {
                                                 }
                                             }}
                                             className={`w-6 h-6 rounded text-xs font-bold transition-colors ${entity.priority === p
-                                                    ? p === 1 ? 'bg-red-500/30 text-red-300 border border-red-500/50'
-                                                        : p === 2 ? 'bg-orange-500/30 text-orange-300 border border-orange-500/50'
-                                                            : p === 3 ? 'bg-yellow-500/30 text-yellow-300 border border-yellow-500/50'
-                                                                : p === 4 ? 'bg-green-500/30 text-green-300 border border-green-500/50'
-                                                                    : 'bg-slate-500/30 text-slate-300 border border-slate-500/50'
-                                                    : 'bg-slate-900 text-slate-600 hover:bg-slate-800 border border-slate-700'
+                                                ? p === 1 ? 'bg-red-500/30 text-red-300 border border-red-500/50'
+                                                    : p === 2 ? 'bg-orange-500/30 text-orange-300 border border-orange-500/50'
+                                                        : p === 3 ? 'bg-yellow-500/30 text-yellow-300 border border-yellow-500/50'
+                                                            : p === 4 ? 'bg-green-500/30 text-green-300 border border-green-500/50'
+                                                                : 'bg-slate-500/30 text-slate-300 border border-slate-500/50'
+                                                : 'bg-slate-900 text-slate-600 hover:bg-slate-800 border border-slate-700'
                                                 }`}
                                         >
                                             {p}
@@ -882,21 +887,139 @@ const EntityDetailPanel: React.FC = () => {
                     })()}
 
                     {/* Activity Log (NEW: from metadata.activity_log) */}
-                    {(entity.metadata?.activity_log?.length > 0 || entity.kind === EntityKind.HABIT) && (
+                    {/* Activity Log Section with Editor */}
+                    {(entity.metadata?.activity_log?.length > 0 || entity.kind === EntityKind.HABIT || entity.kind === EntityKind.GOAL || entity.kind === EntityKind.PROJECT) && (
                         <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-800">
-                            <span className="text-xs text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-2">
-                                <Clock size={12} /> Activity Log ({entity.metadata?.activity_log?.length || 0})
-                            </span>
-                            <div className="space-y-1 max-h-40 overflow-y-auto">
-                                {(entity.metadata?.activity_log as ActivityLogEntry[] || []).slice(-5).reverse().map((log: ActivityLogEntry) => (
-                                    <div key={log.id} className="flex items-center justify-between text-sm p-1 rounded hover:bg-slate-700/30">
-                                        <div className="flex-1">
-                                            <span className="text-slate-300">{log.title}</span>
-                                            {log.notes && <p className="text-[10px] text-slate-500 truncate">{log.notes}</p>}
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                                    <Clock size={12} /> Activity Log ({entity.metadata?.activity_log?.length || 0})
+                                </span>
+                                <button
+                                    onClick={() => setShowAddLog(!showAddLog)}
+                                    className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                                >
+                                    <Plus size={12} /> Add Log
+                                </button>
+                            </div>
+
+                            {/* Add Log Form */}
+                            {showAddLog && (
+                                <div className="bg-slate-900/50 p-3 rounded-lg mb-3 space-y-2">
+                                    <input
+                                        type="text"
+                                        placeholder="Activity title..."
+                                        value={logForm.title}
+                                        onChange={e => setLogForm({ ...logForm, title: e.target.value })}
+                                        className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-slate-200"
+                                    />
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="number"
+                                            placeholder="Minutes"
+                                            value={logForm.duration}
+                                            onChange={e => setLogForm({ ...logForm, duration: parseInt(e.target.value) || 0 })}
+                                            className="w-24 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-sm text-slate-200"
+                                        />
+                                        <select
+                                            value={logForm.productivity}
+                                            onChange={e => setLogForm({ ...logForm, productivity: e.target.value })}
+                                            className="flex-1 px-2 py-1 bg-slate-800 border border-slate-700 rounded text-sm text-slate-200"
+                                        >
+                                            <option value="PRODUCTIVE">🟢 Productive</option>
+                                            <option value="NEUTRAL">⚪ Neutral</option>
+                                            <option value="UNPRODUCTIVE">🔴 Unproductive</option>
+                                            <option value="SLEEP">🔵 Sleep</option>
+                                        </select>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => {
+                                                if (!logForm.title) return;
+
+                                                if (editingLogId) {
+                                                    // EDIT: Update existing log
+                                                    const updated = (entity.metadata?.activity_log || []).map((l: any) =>
+                                                        l.id === editingLogId
+                                                            ? { ...l, title: logForm.title, duration_minutes: logForm.duration, productivity: logForm.productivity, notes: logForm.notes }
+                                                            : l
+                                                    );
+                                                    applyOperations([{
+                                                        type: 'update_entity',
+                                                        payload: { id: entity.id, fields: { metadata: { ...entity.metadata, activity_log: updated } } }
+                                                    }]);
+                                                } else {
+                                                    // ADD: Create new log
+                                                    applyOperations([{
+                                                        type: 'log_to_entity',
+                                                        payload: {
+                                                            entity_id: entity.id,
+                                                            title: logForm.title,
+                                                            duration_minutes: logForm.duration,
+                                                            productivity: logForm.productivity,
+                                                            notes: logForm.notes
+                                                        }
+                                                    }]);
+                                                }
+
+                                                setLogForm({ title: '', duration: 30, productivity: 'PRODUCTIVE', notes: '' });
+                                                setEditingLogId(null);
+                                                setShowAddLog(false);
+                                            }}
+                                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs rounded"
+                                        >
+                                            {editingLogId ? 'Save' : 'Add'}
+                                        </button>
+                                        <button
+                                            onClick={() => { setShowAddLog(false); setEditingLogId(null); setLogForm({ title: '', duration: 30, productivity: 'PRODUCTIVE', notes: '' }); }}
+                                            className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs rounded"
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Log List */}
+                            <div className="space-y-1 max-h-60 overflow-y-auto">
+                                {(entity.metadata?.activity_log as ActivityLogEntry[] || []).slice().reverse().map((log: ActivityLogEntry) => (
+                                    <div key={log.id} className="flex items-center justify-between text-sm p-2 rounded hover:bg-slate-700/30 group">
+                                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                                            <span className={`w-2 h-2 rounded-full shrink-0 ${log.productivity === 'PRODUCTIVE' ? 'bg-teal-500' :
+                                                log.productivity === 'UNPRODUCTIVE' ? 'bg-rose-500' :
+                                                    log.productivity === 'SLEEP' ? 'bg-indigo-500' : 'bg-slate-500'
+                                                }`} />
+                                            <span className="text-slate-300 truncate">{log.title}</span>
                                         </div>
-                                        <div className="text-right">
+                                        <div className="flex items-center gap-2">
                                             <span className="text-slate-400 text-xs font-mono">{log.duration_minutes}m</span>
-                                            <p className="text-[9px] text-slate-600">{new Date(log.timestamp).toLocaleDateString()}</p>
+                                            <span className="text-[9px] text-slate-600">{new Date(log.timestamp).toLocaleDateString()}</span>
+                                            <button
+                                                onClick={() => {
+                                                    setEditingLogId(log.id);
+                                                    setLogForm({
+                                                        title: log.title,
+                                                        duration: log.duration_minutes,
+                                                        productivity: log.productivity || 'NEUTRAL',
+                                                        notes: log.notes || ''
+                                                    });
+                                                    setShowAddLog(true);
+                                                }}
+                                                className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:bg-slate-600 rounded transition-opacity"
+                                            >
+                                                <Edit3 size={12} />
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    const updated = (entity.metadata?.activity_log || []).filter((l: any) => l.id !== log.id);
+                                                    applyOperations([{
+                                                        type: 'update_entity',
+                                                        payload: { id: entity.id, fields: { metadata: { ...entity.metadata, activity_log: updated } } }
+                                                    }]);
+                                                }}
+                                                className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:bg-red-500/20 rounded transition-opacity"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
                                         </div>
                                     </div>
                                 ))}

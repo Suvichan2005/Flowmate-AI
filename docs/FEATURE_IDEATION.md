@@ -1,7 +1,7 @@
 # Flowmate: Complete Feature Ideation & Implementation Plan
 
-> **Last Updated:** December 2024
-> **Version:** 3.1
+> **Last Updated:** December 2025
+> **Version:** 3.2
 > **Vision:** Flowmate is a Cognitive Offloading Engine — your external brain that stores commitments, tracks progress, and prioritizes actions so your RAM is freed for actual thinking.
 
 ---

@@ -213,9 +213,20 @@ export const mergeData = (
 
     console.log(`[Merge] Result: ${mergedEntities.size} entities, ${mergedRelationships.size} relationships`);
 
+    // Filter out soft-deleted entities (prevents zombie restoration)
+    const activeEntities = Array.from(mergedEntities.values()).filter(e => !e.metadata?.deleted);
+    const activeRelationships = Array.from(mergedRelationships.values()).filter(r => {
+        // Remove relationships involving deleted entities
+        const fromExists = activeEntities.some(e => e.id === r.from);
+        const toExists = activeEntities.some(e => e.id === r.to);
+        return fromExists && toExists;
+    });
+
+    console.log(`[Merge] After filtering deleted: ${activeEntities.length} entities, ${activeRelationships.length} relationships`);
+
     return {
-        entities: Array.from(mergedEntities.values()),
-        relationships: Array.from(mergedRelationships.values())
+        entities: activeEntities,
+        relationships: activeRelationships
     };
 };
 

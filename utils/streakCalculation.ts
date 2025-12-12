@@ -117,13 +117,18 @@ export function getActivityEntities(entities: Entity[]): Entity[] {
                         created_at: log.timestamp,
                         updated_at: log.timestamp,
                         priority: 0,
-                        start_time: null,
+                        start_time: log.timestamp,
                         end_time: null,
                         deadline: null,
                         recurrence: null,
                         canonical_tags: [],
                         duration_minutes: log.duration_minutes || 0,
-                        metadata: { parentId: e.id, isNestedLog: true }
+                        metadata: {
+                            parentId: e.id,
+                            isNestedLog: true,
+                            productivity: log.productivity || e.metadata?.productivity,
+                            color_hex: log.color_hex || e.metadata?.color_hex
+                        }
                     });
                 }
             });
@@ -382,7 +387,7 @@ export function generateContributionData(entities: Entity[]): ContributionData[]
 /**
  * Get summary statistics
  */
-export function getActivitySummary(entities: Entity[]) {
+export function getActivitySummary(entities: Entity[], productivityMethod: 'LOGGED_TIME' | 'AWAKE_TIME' = 'LOGGED_TIME') {
     const activities = getActivityEntities(entities);
     const completedTasks = getCompletedTasks(entities);
     const streak = getStreakInfo(entities);
@@ -393,6 +398,7 @@ export function getActivitySummary(entities: Entity[]) {
     let productiveMinutes = 0;
     let neutralMinutes = 0;
     let unproductiveMinutes = 0;
+    let sleepMinutes = 0;
 
     activities.forEach(a => {
         const minutes = a.duration_minutes || 0;
@@ -404,13 +410,54 @@ export function getActivitySummary(entities: Entity[]) {
             unproductiveMinutes += minutes;
         } else if (prodType === 'NEUTRAL') {
             neutralMinutes += minutes;
+        } else if (prodType === 'SLEEP') {
+            sleepMinutes += minutes;
         } else {
-            // Default behavior if not tagged: treat as Neutral
+            // Default: untagged is untracked (or Neutral? User said don't worry about backwards compat)
+            // But we should probably count minutes somewhere so totals match.
+            // Let's treat untagged as Neutral to avoid missing time in the total sum logic if we used sum of categories.
+            // But wait, totalMinutes is calculated separately.
+            // So we can just leave these buckets empty for untagged.
+            // Or default to Neutral for 'uncategorized'. 
+            // I'll default to Neutral to stay safe, but NO keywords.
             neutralMinutes += minutes;
         }
     });
 
     const totalMinutes = activities.reduce((sum, e) => sum + (e.duration_minutes || 0), 0);
+
+    // Focus Score Calculation
+    let focusScore = 0;
+    if (productivityMethod === 'AWAKE_TIME') {
+        // Calculate Awake Time:
+        // We need to know "How many days" are represented to know "Total Potential Hours".
+        // But getActivitySummary takes ALL entities.
+        // Assuming this summary is used for Dashboard "All Time"?
+        // Actually Dashboard uses it for "All Time".
+        // But for "Awake Time" calculation, measuring against "Total Logged" is ambiguous if we have gaps.
+        // If we strictly follow user instruction: "Productive / (Total - Sleep)".
+        // Wait, "Total - Sleep" implies Total LOGGED Time - Sleep.
+        // User said: "productive hours / wake up hours which is 24 hours - sleep time".
+        // This usually implies a Daily metric.
+        // For All Time aggregation, we can try: 
+        // Focus Score = Productive / (Total Logged Minutes - Sleep Minutes)
+        // If I log 24 hours: 8 Sleep, 8 Work, 8 Play.
+        // Total = 24. Sleep = 8. Denom = 16.
+        // Productive = 8. Score = 8/16 = 50%.
+        // If I log ONLY 12 hours: 8 Sleep, 4 Work.
+        // Total = 12. Sleep = 8. Denom = 4.
+        // Productive = 4. Score = 4/4 = 100%.
+        // This seems to align with "Wake Up Hours" = "Time I was awake AND logged something".
+
+        const awakeMinutes = Math.max(0, totalMinutes - sleepMinutes);
+        focusScore = awakeMinutes > 0 ? Math.round((productiveMinutes / awakeMinutes) * 100) : 0;
+    } else {
+        // Standard (Productive / Total Logged)
+        // Or should it be Productive / (Productive + Neutral + Unproductive)?
+        // If we use Total Logged, it includes Sleep which dilutes it.
+        // User wants "Logged Time" method usually to be "Productive % of Total Time".
+        focusScore = totalMinutes > 0 ? Math.round((productiveMinutes / totalMinutes) * 100) : 0;
+    }
 
     return {
         totalActivities: activities.length,
@@ -419,7 +466,8 @@ export function getActivitySummary(entities: Entity[]) {
         productiveMinutes,
         neutralMinutes,
         unproductiveMinutes,
-        focusScore: totalMinutes > 0 ? Math.round((productiveMinutes / totalMinutes) * 100) : 0,
+        sleepMinutes,
+        focusScore,
         currentStreak: streak.current,
         longestStreak: streak.longest,
         activeToday: streak.isActiveToday,

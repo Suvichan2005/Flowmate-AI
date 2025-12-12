@@ -145,6 +145,26 @@ const SettingsView: React.FC = () => {
               </button>
             </div>
 
+            <div className="flex items-center justify-between py-2 border-b border-slate-800">
+              <div>
+                <label className="block text-sm font-medium text-slate-200">🧠 Productivity Score Method</label>
+                <p className="text-xs text-slate-500">
+                  {settings.productivity_calc_method === 'AWAKE_TIME'
+                    ? 'Relative to Awake Time (24h - Sleep)'
+                    : 'Relative to Logged Time'}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  const method = settings.productivity_calc_method === 'AWAKE_TIME' ? 'LOGGED_TIME' : 'AWAKE_TIME';
+                  handleChange('productivity_calc_method', method);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${settings.productivity_calc_method === 'AWAKE_TIME' ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300'}`}
+              >
+                {settings.productivity_calc_method === 'AWAKE_TIME' ? 'Awake Time' : 'Logged Time'}
+              </button>
+            </div>
+
             <div className="flex items-center justify-between py-2">
               <div>
                 <label className="block text-sm font-medium text-slate-200">👥 People Tracking</label>
