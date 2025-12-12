@@ -12,7 +12,8 @@
 - 🕸️ **Knowledge Graph** - Interactive D3.js visualization of your productivity data
 - 📅 **Calendar** - Drag-and-drop event scheduling with IST timezone support
 - 📚 **Knowledge Base** - AI-powered Q&A over your notes with tag filtering
-- 🔥 **Focus Timer** - Pomodoro-style sessions with activity logging
+- 🔥 **Focus Timer** - Pomodoro-style sessions with productivity categorization
+- 📊 **Productive Hours Tracking** - 24-hour breakdown, weekly insights, and time by category
 - 🎮 **Gamification** - XP system and productivity levels
 - ☁️ **Cloud Sync** - Firebase authentication and Firestore persistence
 - 🎤 **Voice Mode** - Real-time voice AI interaction

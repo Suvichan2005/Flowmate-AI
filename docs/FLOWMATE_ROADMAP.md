@@ -46,14 +46,18 @@
 
 ## 🎯 PRIORITY 1: Behavioural Core (Next Sprint)
 
-### Productive vs Unproductive Hours (CORE FEATURE)
+### Productive vs Unproductive Hours (CORE FEATURE) ✅ COMPLETED
 > *"Log my life, see what I did, analytics to improve" — Suvansh*
 
-- [ ] Categorize activities: productive / neutral / unproductive
-- [ ] 24-hour daily productivity bar (green/yellow/red/grey)
-- [ ] Weekly insights: "Most productive on Mon/Tue"
-- [ ] "Late evening productivity drops 60%"
-- [ ] Time breakdown by category/project
+- [x] Categorize activities: productive / neutral / unproductive
+- [x] 24-hour daily productivity bar (green/yellow/red/grey)
+- [x] Weekly insights: "Most productive on Mon/Tue"
+- [x] "Late evening productivity drops 60%"
+- [x] Time breakdown by category/project
+- [x] Focus Timer with productivity picker UI
+- [x] Hourly breakdown with hover tooltips
+- [x] Peak/low hour identification
+- [x] Best time of day insights
 
 ### Commitment Load Index
 - [ ] Rate each project/area by intensity
