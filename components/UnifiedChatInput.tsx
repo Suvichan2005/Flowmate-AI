@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Paperclip, Mic, MicOff, Send, X, Image, Loader2 } from 'lucide-react';
+import { sanitizeUserInput } from '../utils/validation';
 
 interface UnifiedChatInputProps {
     onSend: (message: string, attachment?: string | null) => void;
@@ -90,9 +91,13 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
 
     const handleSubmit = (e?: React.FormEvent) => {
         e?.preventDefault();
-        if (!input.trim() && !attachment) return;
+        const trimmedInput = input.trim();
+        if (!trimmedInput && !attachment) return;
 
-        onSend(input, attachment);
+        // Sanitize user input before sending to AI
+        const sanitizedInput = sanitizeUserInput(trimmedInput);
+        
+        onSend(sanitizedInput, attachment);
         setInput('');
 
         if (textareaRef.current) {

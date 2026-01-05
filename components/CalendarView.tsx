@@ -6,6 +6,8 @@ import CreateEntityModal from './CreateEntityModal';
 import { GoogleCalendarAdapter, GoogleAuthError } from '../services/googleSync';
 import { refreshGoogleCalendarToken } from '../services/firebase';
 import { v4 as uuidv4 } from 'uuid';
+import { SkeletonCalendar } from './Skeleton';
+import EmptyState from './EmptyState';
 
 type ViewMode = 'month' | 'week' | 'day' | 'agenda' | 'history';
 

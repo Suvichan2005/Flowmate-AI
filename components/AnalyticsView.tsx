@@ -10,9 +10,16 @@ import GoalProgressChart from './GoalProgressChart';
 import ProductivityChart from './ProductivityChart';
 import WeeklyInsights from './WeeklyInsights';
 import { Brain, TrendingUp } from 'lucide-react';
+import { SkeletonDashboard } from './Skeleton';
+import EmptyState from './EmptyState';
 
 const AnalyticsView: React.FC = () => {
-    const { entities, relationships } = useStore();
+    const { entities, relationships, isHydrated } = useStore();
+
+    // Show skeleton while loading
+    if (!isHydrated) {
+        return <SkeletonDashboard />;
+    }
 
     const habits = useMemo(() => {
         return entities.filter(e => e.kind === EntityKind.HABIT && e.status !== 'ARCHIVED');

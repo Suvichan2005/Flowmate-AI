@@ -7,6 +7,7 @@ import SmartEditor from './SmartEditor';
 import MarkdownText from './MarkdownText';
 import { improveText } from '../services/geminiService';
 import { calculateProgress } from '../utils/progressCalculation';
+import { SkeletonEntityDetail } from './Skeleton';
 
 const EntityDetailPanel: React.FC = () => {
     const { selectedEntityId, selectEntity, entities, relationships, universalTags, setPendingOps, applyOperations, addMessage, startFocusSession } = useStore();

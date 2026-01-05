@@ -9,6 +9,7 @@ import { calculateProgress } from '../utils/progressCalculation';
 import { getStreakInfo, getActivitySummary } from '../utils/streakCalculation';
 import QuickStreaks from './QuickStreaks';
 import DailyProductivityBar from './DailyProductivityBar';
+import { SkeletonDashboard } from './Skeleton';
 
 interface StatCardProps {
     icon: React.ReactNode;
@@ -98,13 +99,18 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
-    const { entities, relationships, selectEntity, dailyBriefing, refreshDailyBriefing, setView, addMessage, addToast, setPendingOrchestration, applyOperations, settings } = useStore();
+    const { entities, relationships, selectEntity, dailyBriefing, refreshDailyBriefing, setView, addMessage, addToast, setPendingOrchestration, applyOperations, settings, isHydrated } = useStore();
     const [briefingLoading, setBriefingLoading] = useState(false);
     const [showOrphansModal, setShowOrphansModal] = useState(false);
     const [showDueModal, setShowDueModal] = useState(false);
     const [showProjectsModal, setShowProjectsModal] = useState(false);
     const [tapCounts, setTapCounts] = useState<Record<string, number>>({});
     const [showConfirmPopup, setShowConfirmPopup] = useState<string | null>(null);
+
+    // Show skeleton while data is loading
+    if (!isHydrated) {
+        return <SkeletonDashboard />;
+    }
 
     // Events from past 24h that need confirmation (no confirmation_status set)
     const unconfirmedPastEvents = useMemo(() => {
