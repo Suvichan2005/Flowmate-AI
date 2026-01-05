@@ -87,7 +87,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
+      <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto" aria-label="Main navigation">
         {navItems
           .filter(item => !item.mobileOnly || forceExpanded) // Hide mobileOnly items on desktop
           .map(({ icon: Icon, label, view }) => {
@@ -96,6 +96,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
               <button
                 key={view}
                 onClick={() => handleNav(view)}
+                aria-current={isActive ? 'page' : undefined}
+                aria-label={`Navigate to ${label}`}
                 className={`w-full flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg transition-all duration-200 text-sm relative group ${isActive
                   ? 'bg-indigo-500/15 text-indigo-300 font-medium'
                   : 'text-slate-400 hover:bg-slate-800/70 hover:text-slate-100'

@@ -1,10 +1,12 @@
 import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
+import { persist } from 'zustand/middleware';
+import { asyncStorage } from './services/storage';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleCalendarAdapter } from './services/googleSync';
 import { generateBriefing } from './services/geminiService';
 import { saveUserData, loadUserData } from './services/firestoreSync';
 import { onAuthChange, User } from './services/firebase';
+import { validatePersistedState, validateOperations } from './utils/validation';
 import {
     Entity,
     Relationship,
@@ -743,6 +745,21 @@ export const useStore = create<FlowmateState>()(
             applyOperations: (ops) => {
                 const { addDebugLog, addToast, triggerConfetti } = get();
 
+                // Validate and filter operations before applying
+                const { validOps, invalidOps } = validateOperations(ops);
+                if (validOps.length === 0 && ops.length > 0) {
+                    addDebugLog('error', 'All operations were invalid', { originalCount: ops.length, errors: invalidOps });
+                    addToast('Invalid operations received - no changes applied', 'warning');
+                    return;
+                }
+                if (validOps.length < ops.length) {
+                    addDebugLog('warning', `Filtered ${invalidOps.length} invalid operations`, {
+                        original: ops.length,
+                        valid: validOps.length,
+                        errors: invalidOps
+                    });
+                }
+
                 set((state) => {
                     // SAVE HISTORY SNAPSHOT
                     const newHistory = state.history.slice(0, state.historyPointer + 1);
@@ -760,7 +777,7 @@ export const useStore = create<FlowmateState>()(
 
                     const sideEffectOps: ToonOperation[] = [];
 
-                    ops.forEach(op => {
+                    validOps.forEach(op => {
                         try {
                             // Expand short operation types (c→create_entity, u→update_entity, etc.)
                             const type = expandOperationType(op.type);
@@ -1544,13 +1561,20 @@ export const useStore = create<FlowmateState>()(
         }),
         {
             name: 'flowmate-storage',
+            storage: asyncStorage, // Cross-platform: SQLite on Android, localStorage on web
             version: 14, // Bumped to 14 for Tag System
             migrate: (persistedState: any, version) => {
                 const state = persistedState as Partial<FlowmateState>;
 
-                // Strict safe initialization of arrays to prevent "map of undefined"
-                const safeEntities = Array.isArray(state.entities) ? state.entities : [];
-                const safeRelationships = Array.isArray(state.relationships) ? state.relationships : [];
+                // Validate and sanitize persisted state first
+                const validationResult = validatePersistedState(state);
+                if (validationResult.errors.length > 0) {
+                    console.warn('[Migration] Data validation errors:', validationResult.errors);
+                }
+
+                // Use validated data (fallbacks to safe defaults)
+                const safeEntities = validationResult.sanitizedEntities;
+                const safeRelationships = validationResult.sanitizedRelationships;
                 const safeMessages = Array.isArray(state.messages) ? state.messages : [];
                 const safeSyncQueue = Array.isArray(state.syncQueue) ? state.syncQueue : [];
                 const safeDebugLogs = Array.isArray(state.debugLogs) ? state.debugLogs : [];
@@ -1604,12 +1628,8 @@ export const useStore = create<FlowmateState>()(
                     showConfetti: false,
                     history: [],
                     historyPointer: -1,
-                    // Deep sanitize entities
-                    entities: safeEntities.map(e => ({
-                        ...e,
-                        recurrence: e.recurrence || null,
-                        canonical_tags: Array.isArray(e.canonical_tags) ? e.canonical_tags : []
-                    })),
+                    // Entities and relationships are already sanitized by validatePersistedState
+                    entities: safeEntities,
                     relationships: safeRelationships,
                     universalTags: safeTags,
                     messages: safeMessages,

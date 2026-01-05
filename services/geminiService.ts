@@ -2,6 +2,18 @@ import { GoogleGenAI, FunctionDeclaration, Type, Tool, Content, FunctionCallingC
 import { ToonResponse, Entity, Relationship, EntityKind, EntityStatus, Message, ToonOperation } from "../types";
 import { useStore } from "../store";
 import { stripBase64Prefix, getMimeType } from "../utils/imageProcessing";
+import { withRetry, RetryConfig } from "../utils/apiRetry";
+
+// Retry configuration for Gemini API calls
+const GEMINI_RETRY_CONFIG: Partial<RetryConfig> = {
+  maxRetries: 3,
+  initialDelayMs: 1000,
+  maxDelayMs: 15000,
+  backoffMultiplier: 2,
+  jitter: true,
+  retryableStatusCodes: [429, 500, 502, 503, 504],
+  retryableErrors: ['RESOURCE_EXHAUSTED', 'UNAVAILABLE', 'DEADLINE_EXCEEDED', 'NetworkError'],
+};
 
 // Helper to get fresh AI client
 const getAiClient = () => {
@@ -676,23 +688,34 @@ CONTEXT: ${JSON.stringify(contextSnapshot)} `;
     while (turnCount < MAX_TURNS) {
       turnCount++;
 
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: contents,
-        config: {
-          systemInstruction: finalSystemInstruction,
-          temperature: 0.1,
-          // We provide all tools. The model chooses apply_changes to act.
-          tools: [{
-            functionDeclarations: [
-              readCalendarTool, searchEntitiesTool, applyChangesTool,
-              lookupFoodHistoryTool, getProductivityStatsTool, lookupGoalsTool, lookupHabitsTool
-            ]
-          }],
-          // AUTO mode lets model choose between function calls and plain text responses
-          toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
-        },
-      });
+      const response = await withRetry(
+        () => ai.models.generateContent({
+          model: modelName,
+          contents: contents,
+          config: {
+            systemInstruction: finalSystemInstruction,
+            temperature: 0.1,
+            // We provide all tools. The model chooses apply_changes to act.
+            tools: [{
+              functionDeclarations: [
+                readCalendarTool, searchEntitiesTool, applyChangesTool,
+                lookupFoodHistoryTool, getProductivityStatsTool, lookupGoalsTool, lookupHabitsTool
+              ]
+            }],
+            // AUTO mode lets model choose between function calls and plain text responses
+            toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
+          },
+        }),
+        GEMINI_RETRY_CONFIG,
+        (attempt, error, delay) => {
+          console.warn(`[Gemini] Retry attempt ${attempt} after ${delay}ms due to:`, error?.message || error);
+          addDebugLog('orchestrator', `API Retry ${attempt}`, {
+            error: error?.message || String(error),
+            delayMs: delay,
+            turnCount,
+          });
+        }
+      );
 
       const functionCalls = response.functionCalls;
       const responseText = response.text;
@@ -914,13 +937,19 @@ export const generateBriefing = async (snapshot: { entities: Entity[]; relations
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: prompt,
-      config: {
-        temperature: 0.7
+    const response = await withRetry(
+      () => ai.models.generateContent({
+        model: modelName,
+        contents: prompt,
+        config: {
+          temperature: 0.7
+        }
+      }),
+      GEMINI_RETRY_CONFIG,
+      (attempt, error, delay) => {
+        console.warn(`[Gemini Briefing] Retry ${attempt} after ${delay}ms:`, error?.message);
       }
-    });
+    );
     return response.text || "Could not generate briefing.";
   } catch (err) {
     console.error(err);
@@ -954,10 +983,16 @@ export const improveText = async (text: string, type: ImprovementType): Promise<
     `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: prompt
-    });
+    const response = await withRetry(
+      () => ai.models.generateContent({
+        model: modelName,
+        contents: prompt
+      }),
+      GEMINI_RETRY_CONFIG,
+      (attempt, error, delay) => {
+        console.warn(`[Gemini Text] Retry ${attempt} after ${delay}ms:`, error?.message);
+      }
+    );
     return response.text?.trim() || text;
   } catch (err) {
     console.error("Improve text failed", err);
@@ -1019,10 +1054,16 @@ export const queryKnowledgeBase = async (query: string, entities: Entity[]): Pro
     `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: prompt
-    });
+    const response = await withRetry(
+      () => ai.models.generateContent({
+        model: modelName,
+        contents: prompt
+      }),
+      GEMINI_RETRY_CONFIG,
+      (attempt, error, delay) => {
+        console.warn(`[Gemini Knowledge] Retry ${attempt} after ${delay}ms:`, error?.message);
+      }
+    );
     return response.text?.trim() || "No answer generated.";
   } catch (err) {
     console.error("Knowledge query failed", err);

@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from './store';
 import { orchestrateMessage } from './services/geminiService';
 import { processFileAttachment } from './utils/imageProcessing';
 import { onAuthChange, signOut } from './services/firebase';
+import { preventDoubleClick } from './utils/debounce';
 import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import GraphView from './components/GraphView';
@@ -67,6 +68,10 @@ const App: React.FC = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [activeChannel, setActiveChannel] = useState('general'); // 'general', 'schedules', 'food', 'finance'
+
+  // Rate limiting: track last API call time to prevent abuse
+  const lastApiCallRef = useRef<number>(0);
+  const API_COOLDOWN_MS = 1000; // Minimum 1 second between API calls
 
   const { currentUser, setCurrentUser, loadFromCloud, syncToCloud } = useStore();
 
@@ -273,8 +278,17 @@ const App: React.FC = () => {
   };
 
   // Direct send function for UnifiedChatInput - bypasses state sync issues
+  // Includes rate limiting to prevent API abuse
   const sendDirectMessage = async (text: string, attachment?: string | null) => {
     if ((!text.trim() && !attachment) || loading) return;
+
+    // Rate limiting: prevent rapid-fire API calls
+    const now = Date.now();
+    if (now - lastApiCallRef.current < API_COOLDOWN_MS) {
+      console.warn('[RateLimit] Chat message blocked - too fast');
+      return;
+    }
+    lastApiCallRef.current = now;
 
     const userText = text.trim();
     const history = messages;
@@ -606,7 +620,7 @@ const App: React.FC = () => {
 
       {/* Desktop Layout: Sidebar + Chat + Content */}
       {!isMobile && (
-        <main className="flex-1 flex flex-row h-full overflow-hidden">
+        <div className="flex-1 flex flex-row h-full overflow-hidden">
           {/* Desktop Chat Panel - Full width when Chat view, otherwise side panel */}
           {(isChatOpen || currentView === 'chat') && !isZenMode && (
             <div
@@ -726,7 +740,7 @@ const App: React.FC = () => {
 
           {/* Desktop Main Content - Hidden when in full-screen Chat view */}
           {currentView !== 'chat' && (
-            <div className="flex-1 overflow-auto relative">
+            <main id="main-content" className="flex-1 overflow-auto relative" role="main" aria-label="Main content">
               {renderMainContent()}
 
               {/* Floating Chat Toggle Button - positioned inside content area */}
@@ -735,13 +749,14 @@ const App: React.FC = () => {
                   onClick={() => setIsChatOpen(true)}
                   className="absolute left-4 top-4 z-20 p-2.5 rounded-xl bg-slate-800/90 backdrop-blur-sm text-slate-400 hover:text-indigo-400 hover:bg-slate-700 transition-all shadow-lg border border-slate-700"
                   title="Open Chat (Cmd+B)"
+                  aria-label="Open chat panel"
                 >
                   <PanelLeftOpen size={18} />
                 </button>
               )}
-            </div>
+            </main>
           )}
-        </main>
+        </div>
       )}
 
       {/* Mobile Layout: Full Content + Bottom Chat Bar */}

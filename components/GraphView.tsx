@@ -1,9 +1,12 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
 import { useStore } from '../store';
 import { Entity, Relationship, EntityKind, EntityStatus, RelationshipType } from '../types';
-import { Filter, Eye, EyeOff, Maximize, Play, Edit3, Trash2, CheckSquare, Square, Sliders, Info, Magnet, RefreshCw, Archive, Calendar, Unlink } from 'lucide-react';
+import { Filter, Eye, EyeOff, Maximize, Play, Edit3, Trash2, CheckSquare, Square, Sliders, Info, Magnet, RefreshCw, Archive, Calendar, Unlink, AlertTriangle } from 'lucide-react';
 import { shouldShowInGraph, getGraphStats } from '../utils/graphVisibility';
+import { SkeletonGraph } from './Skeleton';
+import EmptyState from './EmptyState';
+import { getOptimizedConfig, createThrottledTick, prioritizeLinks, GraphPerformanceMonitor } from '../utils/graphPerformance';
 
 interface GraphViewProps {
     entities: Entity[];
@@ -52,6 +55,10 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
     // Simulation Ref to access nodes for auto-center
     const simulationRef = useRef<d3.Simulation<any, undefined> | null>(null);
     const zoomBehaviorRef = useRef<d3.ZoomBehavior<Element, unknown> | null>(null);
+    const performanceMonitorRef = useRef<GraphPerformanceMonitor>(new GraphPerformanceMonitor());
+
+    // Performance warnings
+    const [showPerformanceWarning, setShowPerformanceWarning] = useState(false);
 
     const safeEntities = Array.isArray(entities) ? entities : [];
     const safeRelationships = Array.isArray(relationships) ? relationships : [];
@@ -104,6 +111,24 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
 
         return { nodes: activeNodes, links: activeLinks, stats };
     }, [safeEntities, safeRelationships, visibleKinds, showArchived, showOldCompleted, showPastEvents, showOrphans]);
+
+    // Get optimized performance config based on node count
+    const perfConfig = useMemo(() => {
+        const config = getOptimizedConfig(nodes.length);
+        // Show warning for large graphs
+        if (nodes.length > 300 && !showPerformanceWarning) {
+            setShowPerformanceWarning(true);
+        } else if (nodes.length <= 300 && showPerformanceWarning) {
+            setShowPerformanceWarning(false);
+        }
+        return config;
+    }, [nodes.length]);
+
+    // Prioritize links for large graphs
+    const optimizedLinks = useMemo(() => {
+        if (links.length <= perfConfig.maxLinks) return links;
+        return prioritizeLinks(links, perfConfig.maxLinks, selectedEntityId);
+    }, [links, perfConfig.maxLinks, selectedEntityId]);
 
     // Update Simulation Forces when props change
     useEffect(() => {
@@ -243,10 +268,12 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
             ]);
 
         const simulation = d3.forceSimulation(nodes as any)
-            .force("link", d3.forceLink(links).id((d: any) => d.id).distance(forceProps.linkDistance))
+            .force("link", d3.forceLink(optimizedLinks).id((d: any) => d.id).distance(forceProps.linkDistance))
             .force("charge", d3.forceManyBody().strength(forceProps.charge))
             .force("center", d3.forceCenter(width / 2, height / 2))
-            .force("collide", d3.forceCollide().radius(forceProps.collideRadius));
+            .force("collide", d3.forceCollide().radius(forceProps.collideRadius))
+            .alphaDecay(perfConfig.alphaDecay)
+            .velocityDecay(perfConfig.velocityDecay);
 
         simulationRef.current = simulation;
 
@@ -283,7 +310,7 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
 
         const link = g.append("g")
             .selectAll("line")
-            .data(links)
+            .data(optimizedLinks)
             .join("line")
             .attr("stroke-width", (d: any) => d.type === RelationshipType.TAGGED_WITH ? 1 : 2) // Thinner for TAGGED_WITH
             .attr("stroke", (d: any) => getLinkColor(d.type))
@@ -352,7 +379,17 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
             .style("pointer-events", "none")
             .style("text-shadow", "0 1px 2px rgba(0,0,0,0.8)");
 
-        simulation.on("tick", () => {
+        // Hide labels for very large graphs based on performance config
+        if (perfConfig.labelMode === 'none') {
+            node.selectAll("text").style("display", "none");
+        } else if (perfConfig.labelMode === 'focused') {
+            node.selectAll("text").style("display", (d: any) => d.id === selectedEntityId ? "block" : "none");
+        }
+
+        // Create throttled tick handler for better performance
+        const tickHandler = () => {
+            const start = performance.now();
+            
             link
                 .attr("x1", (d: any) => d.source.x)
                 .attr("y1", (d: any) => d.source.y)
@@ -361,7 +398,15 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
 
             node
                 .attr("transform", (d: any) => `translate(${d.x},${d.y})`);
-        });
+            
+            performanceMonitorRef.current.recordTick(performance.now() - start);
+        };
+
+        const throttledTick = nodes.length > 200 
+            ? createThrottledTick(tickHandler, perfConfig.tickThrottleMs)
+            : tickHandler;
+
+        simulation.on("tick", throttledTick);
 
         function drag(simulation: d3.Simulation<d3.SimulationNodeDatum, undefined>) {
             function dragstarted(event: any) {
@@ -411,7 +456,7 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
             simulation.stop();
             resizeObserver.disconnect();
         };
-    }, [nodes, links, selectedEntityId]);
+    }, [nodes, optimizedLinks, selectedEntityId, perfConfig]);
 
     const handleGlobalMouseUp = (e: React.MouseEvent) => {
         if (dragLink) {
@@ -513,6 +558,20 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
         setContextMenu(null);
     };
 
+    // Show empty state if no entities
+    if (safeEntities.length === 0) {
+        return (
+            <div className="w-full h-full bg-slate-900 rounded-lg border border-slate-800 flex items-center justify-center">
+                <EmptyState
+                    type="graph"
+                    onAction={() => {
+                        // Could trigger create modal or navigate to chat
+                    }}
+                />
+            </div>
+        );
+    }
+
     return (
         <div
             ref={containerRef}
@@ -526,6 +585,20 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
                 }
             }}
         >
+            {/* Performance Warning Banner */}
+            {showPerformanceWarning && (
+                <div className="absolute top-2 left-1/2 transform -translate-x-1/2 z-50 bg-amber-900/90 border border-amber-700 rounded-lg px-4 py-2 flex items-center gap-2 text-amber-200 text-sm">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>Large graph ({nodes.length} nodes) - Performance mode enabled</span>
+                    <button 
+                        onClick={() => setShowPerformanceWarning(false)}
+                        className="ml-2 text-amber-400 hover:text-amber-300"
+                    >
+                        ×
+                    </button>
+                </div>
+            )}
+            
             <svg ref={svgRef} className="w-full h-full cursor-move"></svg>
 
             {/* Visual Link Line */}

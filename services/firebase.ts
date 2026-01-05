@@ -2,6 +2,16 @@
 
 // Firebase Configuration and Initialization
 // Flowmate Project - REDACTED_PROJECT_ID
+// 
+// SECURITY: All credentials MUST come from environment variables.
+// Create a .env.local file with the following variables:
+// VITE_FIREBASE_API_KEY=your_api_key
+// VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+// VITE_FIREBASE_PROJECT_ID=your_project_id
+// VITE_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
+// VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+// VITE_FIREBASE_APP_ID=your_app_id
+// VITE_FIREBASE_MEASUREMENT_ID=your_measurement_id
 
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import {
@@ -16,15 +26,24 @@ import {
 } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 
-// Firebase configuration - Flowmate Project
+// Validate required environment variables
+const validateEnvVar = (name: string, value: string | undefined): string => {
+    if (!value || value.trim() === '') {
+        console.warn(`[Firebase] Missing environment variable: ${name}. Firebase features will be disabled.`);
+        return '';
+    }
+    return value;
+};
+
+// Firebase configuration from environment variables
 const firebaseConfig = {
-    apiKey: "REDACTED_FIREBASE_API_KEY",
-    authDomain: "REDACTED_PROJECT_ID.firebaseapp.com",
-    projectId: "REDACTED_PROJECT_ID",
-    storageBucket: "REDACTED_PROJECT_ID.firebasestorage.app",
-    messagingSenderId: "1018297319449",
-    appId: "1:1018297319449:web:d813a1b440ef94cc6faa88",
-    measurementId: "G-851207Z1JN"
+    apiKey: validateEnvVar('VITE_FIREBASE_API_KEY', import.meta.env.VITE_FIREBASE_API_KEY),
+    authDomain: validateEnvVar('VITE_FIREBASE_AUTH_DOMAIN', import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
+    projectId: validateEnvVar('VITE_FIREBASE_PROJECT_ID', import.meta.env.VITE_FIREBASE_PROJECT_ID),
+    storageBucket: validateEnvVar('VITE_FIREBASE_STORAGE_BUCKET', import.meta.env.VITE_FIREBASE_STORAGE_BUCKET),
+    messagingSenderId: validateEnvVar('VITE_FIREBASE_MESSAGING_SENDER_ID', import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID),
+    appId: validateEnvVar('VITE_FIREBASE_APP_ID', import.meta.env.VITE_FIREBASE_APP_ID),
+    measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '' // Optional
 };
 
 // Initialize Firebase (prevent multiple initializations)
@@ -130,7 +149,13 @@ export const onAuthChange = (callback: (user: User | null) => void) => {
 
 // Check if Firebase is properly configured
 export const isFirebaseConfigured = (): boolean => {
-    return true; // Config is now hardcoded
+    // Check if essential config values are present
+    return !!(
+        firebaseConfig.apiKey &&
+        firebaseConfig.authDomain &&
+        firebaseConfig.projectId &&
+        firebaseConfig.appId
+    );
 };
 
 export type { User };
