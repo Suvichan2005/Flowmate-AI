@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react';
 import { useStore } from './store';
 import { orchestrateMessage } from './services/geminiService';
 import { processFileAttachment } from './utils/imageProcessing';
@@ -6,31 +6,40 @@ import { onAuthChange, signOut } from './services/firebase';
 import { preventDoubleClick } from './utils/debounce';
 import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers } from 'lucide-react';
 import Sidebar from './components/Sidebar';
-import GraphView from './components/GraphView';
 import OpsPreviewForm from './components/OpsPreviewForm';
 import Dashboard from './components/Dashboard';
-import EntityList from './components/EntityList';
-import CalendarView from './components/CalendarView';
-import SettingsView from './components/SettingsView';
 import EntityDetailPanel from './components/EntityDetailPanel';
 import DebugConsole from './components/DebugConsole';
-import LiveVoiceModal from './components/LiveVoiceModal';
-import CreateEntityModal from './components/CreateEntityModal';
-import SchedulesView from './components/SchedulesView';
 import CommandPalette from './components/CommandPalette';
 import FocusTimer from './components/FocusTimer';
-import KnowledgeView from './components/KnowledgeView';
 import MarkdownText from './components/MarkdownText';
-import FoodTracker from './components/FoodTracker';
-import AttendanceTracker from './components/AttendanceTracker';
 import ToastNotification from './components/ToastNotification';
 import Confetti from './components/Confetti';
 import AuthModal from './components/AuthModal';
-import AnalyticsView from './components/AnalyticsView';
 import UnifiedChatInput from './components/UnifiedChatInput';
-import GraphFixingModal from './components/GraphFixingModal';
 import ConnectionStatus from './components/ConnectionStatus';
 import { EntityKind, ToonOperation } from './types';
+
+// Lazy load heavier components for better initial load performance
+const GraphView = lazy(() => import('./components/GraphView'));
+const CalendarView = lazy(() => import('./components/CalendarView'));
+const SettingsView = lazy(() => import('./components/SettingsView'));
+const EntityList = lazy(() => import('./components/EntityList'));
+const LiveVoiceModal = lazy(() => import('./components/LiveVoiceModal'));
+const CreateEntityModal = lazy(() => import('./components/CreateEntityModal'));
+const SchedulesView = lazy(() => import('./components/SchedulesView'));
+const KnowledgeView = lazy(() => import('./components/KnowledgeView'));
+const FoodTracker = lazy(() => import('./components/FoodTracker'));
+const AttendanceTracker = lazy(() => import('./components/AttendanceTracker'));
+const AnalyticsView = lazy(() => import('./components/AnalyticsView'));
+const GraphFixingModal = lazy(() => import('./components/GraphFixingModal'));
+
+// Loading fallback for lazy components
+const LazyLoadFallback = () => (
+  <div className="flex items-center justify-center h-full">
+    <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+  </div>
+);
 
 const App: React.FC = () => {
   const {
@@ -741,7 +750,9 @@ const App: React.FC = () => {
           {/* Desktop Main Content - Hidden when in full-screen Chat view */}
           {currentView !== 'chat' && (
             <main id="main-content" className="flex-1 overflow-auto relative" role="main" aria-label="Main content">
-              {renderMainContent()}
+              <Suspense fallback={<LazyLoadFallback />}>
+                {renderMainContent()}
+              </Suspense>
 
               {/* Floating Chat Toggle Button - positioned inside content area */}
               {!isChatOpen && !isZenMode && (
@@ -812,7 +823,9 @@ const App: React.FC = () => {
             /* Mobile Main Content - Show regular views */
             <main className="flex-1 flex flex-col h-full overflow-hidden">
               <div className="flex-1 overflow-auto">
-                {renderMainContent()}
+                <Suspense fallback={<LazyLoadFallback />}>
+                  {renderMainContent()}
+                </Suspense>
               </div>
             </main>
           )}
@@ -830,17 +843,19 @@ const App: React.FC = () => {
         />
       )}
 
-      {showCreateModal && (
-        <CreateEntityModal onClose={() => setShowCreateModal(false)} />
-      )}
+      <Suspense fallback={null}>
+        {showCreateModal && (
+          <CreateEntityModal onClose={() => setShowCreateModal(false)} />
+        )}
 
-      {showGraphFixingModal && (
-        <GraphFixingModal onClose={() => setShowGraphFixingModal(false)} />
-      )}
+        {showGraphFixingModal && (
+          <GraphFixingModal onClose={() => setShowGraphFixingModal(false)} />
+        )}
 
-      {isLiveMode && (
-        <LiveVoiceModal onClose={() => setIsLiveMode(false)} />
-      )}
+        {isLiveMode && (
+          <LiveVoiceModal onClose={() => setIsLiveMode(false)} />
+        )}
+      </Suspense>
 
       {showAuthModal && (
         <AuthModal

@@ -3,6 +3,7 @@
  * 
  * Provides helpers for WCAG compliance and keyboard navigation.
  */
+import React, { useEffect, useRef } from 'react';
 
 /**
  * Handles keyboard interaction for clickable elements
@@ -157,6 +158,3 @@ export const getEntityAriaLabel = (entity: { title: string; kind: string; status
     const statusLabel = entityStatusLabels[entity.status] || entity.status;
     return `${kindLabel}: ${entity.title}. Status: ${statusLabel}`;
 };
-
-// Import React for the effect
-import React from 'react';
