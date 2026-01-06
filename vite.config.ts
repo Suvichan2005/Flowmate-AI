@@ -19,6 +19,26 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': path.resolve(__dirname, '.'),
       }
-    }
+    },
+    build: {
+      // Increase chunk size warning limit (default is 500kb)
+      chunkSizeWarningLimit: 600,
+      rollupOptions: {
+        output: {
+          // Manual chunk splitting for better caching
+          manualChunks: {
+            // Vendor chunks - rarely change, cache well
+            'vendor-react': ['react', 'react-dom'],
+            'vendor-d3': ['d3'],
+            'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/firestore'],
+            'vendor-ui': ['lucide-react', 'zustand'],
+            // AI/API chunks
+            'vendor-ai': ['@google/genai'],
+          },
+        },
+      },
+      // Enable source maps for production debugging (optional)
+      sourcemap: mode === 'development',
+    },
   };
 });
