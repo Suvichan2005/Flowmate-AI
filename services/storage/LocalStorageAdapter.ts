@@ -1,9 +1,7 @@
 // LocalStorage Adapter
 // Web fallback using browser localStorage wrapped in async interface
 
-import { IStorageAdapter } from './IStorageAdapter';
-
-export class LocalStorageAdapter implements IStorageAdapter {
+export class LocalStorageAdapter {
     async getItem(key: string): Promise<string | null> {
         return localStorage.getItem(key);
     }

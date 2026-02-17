@@ -4,7 +4,7 @@
  */
 
 import { Entity, Relationship, EntityKind, EntityStatus, RelationshipType, ToonOperation } from '../types';
-import { GoogleGenAI } from "@google/genai";
+import { getAiClient } from './ai/client';
 import { useStore } from '../store';
 
 // === Type Definitions ===
@@ -231,7 +231,7 @@ export async function fixGraphChunk(
     const { settings, addDebugLog } = useStore.getState();
     const modelName = settings?.preferred_model || 'gemini-2.5-flash';
 
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+    const ai = getAiClient();
 
     // Format contexts for prompt
     const contextList = allContexts

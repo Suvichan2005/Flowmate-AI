@@ -8,6 +8,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from "../store";
 import { EntityKind } from "../types";
+import { getAiClient } from './ai/client';
 
 const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-09-2025';
 
@@ -109,7 +110,7 @@ export class LiveManager {
   public onTranscription: (text: string, source: 'user' | 'model') => void = () => {};
 
   constructor() {
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+    this.ai = getAiClient();
   }
 
   async connect() {

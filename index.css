@@ -1,3 +1,10 @@
+@import "tailwindcss";
+
+/* Theme customization */
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
 /* Flowmate - Global Styles & Animations */
 
 /* Smooth scrolling everywhere */

@@ -1,78 +1,32 @@
 // Haptics Service
-// Native haptic feedback using Capacitor Haptics plugin
+// Web-only haptic feedback using the Vibration API
 
-import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
-import { Capacitor } from '@capacitor/core';
+type ImpactStyle = 'light' | 'medium' | 'heavy';
 
 /**
- * Cross-platform haptic feedback service.
- * On native platforms (Android/iOS), triggers device haptics.
- * On web, silently fails (no-op).
+ * Web-based haptic feedback service.
+ * Uses the Vibration API on supported mobile browsers.
+ * Silently no-ops on unsupported browsers.
  */
 export const haptics = {
-    /**
-     * Light/medium/heavy impact feedback
-     */
-    async impact(style: ImpactStyle = ImpactStyle.Medium): Promise<void> {
-        if (Capacitor.isNativePlatform()) {
-            try {
-                await Haptics.impact({ style });
-            } catch (err) {
-                console.warn('[Haptics] Impact failed:', err);
-            }
-        }
+    async impact(style: ImpactStyle = 'medium'): Promise<void> {
+        const durations: Record<ImpactStyle, number> = { light: 10, medium: 20, heavy: 40 };
+        navigator.vibrate?.(durations[style]);
     },
 
-    /**
-     * Success notification haptic (task complete, streak milestone)
-     */
     async success(): Promise<void> {
-        if (Capacitor.isNativePlatform()) {
-            try {
-                await Haptics.notification({ type: NotificationType.Success });
-            } catch (err) {
-                console.warn('[Haptics] Success notification failed:', err);
-            }
-        }
+        navigator.vibrate?.([10, 30, 10]);
     },
 
-    /**
-     * Warning notification haptic (deadline approaching)
-     */
     async warning(): Promise<void> {
-        if (Capacitor.isNativePlatform()) {
-            try {
-                await Haptics.notification({ type: NotificationType.Warning });
-            } catch (err) {
-                console.warn('[Haptics] Warning notification failed:', err);
-            }
-        }
+        navigator.vibrate?.([30, 20, 30]);
     },
 
-    /**
-     * Error notification haptic (sync failed, validation error)
-     */
     async error(): Promise<void> {
-        if (Capacitor.isNativePlatform()) {
-            try {
-                await Haptics.notification({ type: NotificationType.Error });
-            } catch (err) {
-                console.warn('[Haptics] Error notification failed:', err);
-            }
-        }
+        navigator.vibrate?.([50, 30, 50]);
     },
 
-    /**
-     * Light tap for button presses
-     */
     async selectionClick(): Promise<void> {
-        if (Capacitor.isNativePlatform()) {
-            try {
-                await Haptics.selectionStart();
-                await Haptics.selectionEnd();
-            } catch (err) {
-                console.warn('[Haptics] Selection click failed:', err);
-            }
-        }
-    }
+        navigator.vibrate?.(5);
+    },
 };

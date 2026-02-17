@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../store';
 import { EntityKind, ViewType } from '../types';
 import { Search, Command, ArrowRight, Target, LayoutDashboard, Calendar, BookOpen, Network, CheckSquare, Sparkles } from 'lucide-react';
-import { orchestrateMessage } from '../services/geminiService';
+import { orchestrateMessage } from '../services/ai';
 
 const CommandPalette: React.FC = () => {
   const { entities, selectEntity, setView, addMessage, setPendingOps, getSnapshot, messages } = useStore();

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useStore } from '../store';
 import { EntityKind, EntityStatus } from '../types';
-import { queryKnowledgeBase } from '../services/geminiService';
+import { queryKnowledgeBase } from '../services/ai';
 import { Library, Search, Plus, Sparkles, X, ArrowRight, Loader2, Filter, FileText, BookOpen, Folder, Target, Calendar, CheckSquare, Square, Eye, EyeOff, User, Briefcase, GraduationCap } from 'lucide-react';
 import MarkdownText from './MarkdownText';
 

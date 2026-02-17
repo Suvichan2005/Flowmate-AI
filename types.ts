@@ -216,11 +216,13 @@ export interface SyncQueueItem {
   created_at: string;
 }
 
-// Flowmate 3.1: Feature Toggles
+// Flowmate 3.1: Feature Toggles (expanded)
 export interface FeatureToggles {
-  food_tracking: boolean;
-  attendance_tracking: boolean;
+  food_tracking: boolean;       // Mess menu display
+  attendance_tracking: boolean; // Class attendance (disabled by default)
   people_tracking: boolean;
+  gamification: boolean;        // XP/Levels (disabled by default)
+  quick_streaks: boolean;       // Mini streaks widget
 }
 
 export interface UserSettings {
@@ -235,71 +237,12 @@ export interface UserSettings {
   sync_enabled: boolean;
   debug_mode: boolean;
   custom_instructions?: string;
-  // Flowmate 3.0: Food Tracking
-  food_preferences?: FoodPreferences;
   // Flowmate 3.1: Feature Toggles
   feature_toggles: FeatureToggles;
   productivity_calc_method?: 'LOGGED_TIME' | 'AWAKE_TIME'; // Flowmate 3.2
 }
 
-// Flowmate 3.0: Food Tracking
-export type DietaryType = 'veg' | 'non-veg' | 'vegan' | 'eggetarian';
 
-export interface FoodPreferences {
-  dietary_type: DietaryType;
-  allergies?: string[];
-  favorite_foods?: string[];
-  disliked_foods?: string[];
-}
-
-export type FoodSource = 'mess' | 'ordered' | 'homemade' | 'outside';
-
-export interface FoodLogEntry {
-  id: string;
-  timestamp: string;
-  food_name: string;
-  meal_type?: 'breakfast' | 'lunch' | 'dinner' | 'snack';
-  calories?: number;
-  protein_g?: number;
-  carbs_g?: number;
-  fat_g?: number;
-  cost?: number; // In user's currency
-  notes?: string;
-  is_favorite?: boolean;
-  // Flowmate 3.1: Enhanced tracking
-  source?: FoodSource; // mess, ordered, homemade, outside
-  vendor?: string;     // "Sardarji", "Zomato", "Swiggy", etc.
-  rating?: number;     // 1-5 stars
-  skipped?: boolean;   // Mark skipped meal (didn't eat)
-  // Flowmate 3.2: Health and meal tracking
-  health_tags?: (
-    // Preparation style
-    'oily' | 'fried' | 'grilled' | 'steamed' | 'raw' | 'baked' | 'boiled' |
-    // Taste/Spice
-    'spicy' | 'mild' | 'sweet' | 'salty' | 'sour' | 'bland' | 'tangy' |
-    // Weight/Feeling
-    'heavy' | 'light' | 'filling' | 'small-portion' | 'large-portion' |
-    // Health
-    'healthy' | 'unhealthy' | 'junk' | 'balanced' | 'protein-rich' | 'carb-heavy' |
-    // Quality
-    'fresh' | 'stale' | 'cold' | 'hot' | 'reheated' | 'tasty' | 'bad-taste' |
-    // Texture
-    'crispy' | 'soggy' | 'dry' | 'greasy' | 'watery'
-  )[];
-  quality_notes?: string;  // "too much oil", "very fresh"
-  meal_id?: string;        // Groups items from same meal together
-  quantity?: number;       // Number of servings/pieces (default 1)
-  serving_unit?: string;   // "piece", "bowl", "plate", "cup"
-}
-
-// Mess Menu Entry (for calendar integration)
-export interface MessMenuEntry {
-  id: string;
-  day_of_week: 0 | 1 | 2 | 3 | 4 | 5 | 6; // Sunday-Saturday
-  meal_type: 'breakfast' | 'lunch' | 'dinner';
-  items: string[];
-  is_special?: boolean;
-}
 
 export interface DebugLogEntry {
   id: string;
@@ -328,36 +271,81 @@ export interface Toast {
   type: 'success' | 'error' | 'info';
 }
 
+// Flowmate 3.0: Food Tracking
+export type DietaryType = 'veg' | 'non-veg' | 'vegan' | 'eggetarian';
+
+export interface FoodPreferences {
+  dietary_type: DietaryType;
+  allergies?: string[];
+  favorite_foods?: string[];
+  disliked_foods?: string[];
+}
+
+export type FoodSource = 'mess' | 'ordered' | 'homemade' | 'outside';
+
+export interface FoodLogEntry {
+  id: string;
+  timestamp: string;
+  food_name: string;
+  meal_type?: 'breakfast' | 'lunch' | 'dinner' | 'snack';
+  calories?: number;
+  protein_g?: number;
+  carbs_g?: number;
+  fat_g?: number;
+  cost?: number;
+  notes?: string;
+  is_favorite?: boolean;
+  source?: FoodSource;
+  vendor?: string;
+  rating?: number;
+  skipped?: boolean;
+  health_tags?: string[];
+  quality_notes?: string;
+  meal_id?: string;
+  quantity?: number;
+  serving_unit?: string;
+}
+
+// Mess Menu Entry (for calendar integration)
+export interface MessMenuEntry {
+  id: string;
+  day_of_week: 0 | 1 | 2 | 3 | 4 | 5 | 6; // Sunday-Saturday
+  meal_type: 'breakfast' | 'lunch' | 'dinner';
+  items: string[];
+  is_special?: boolean;
+}
+
 // Flowmate 3.1: Attendance Tracking
 export interface Subject {
   id: string;
   name: string;
-  code?: string;  // "CS101"
-  teacher_name?: string;  // "Prof. Ronaly Padhy"
-  min_attendance: number;  // Required % (75, 85, etc.)
-  color?: string;  // For display
+  code?: string;
+  teacher_name?: string;
+  min_attendance: number;
+  color?: string;
 }
 
 export interface ClassSchedule {
   id: string;
   subject_id: string;
-  day_of_week: 0 | 1 | 2 | 3 | 4 | 5 | 6;  // Sunday-Saturday
-  start_time: string;  // "09:00"
-  end_time: string;    // "10:00"
+  day_of_week: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  start_time: string;
+  end_time: string;
   room?: string;
 }
 
 export interface Holiday {
   id: string;
-  date: string;  // ISO date "2025-01-26"
+  date: string;
   name: string;
 }
 
 export interface AttendanceLog {
   id: string;
   subject_id: string;
-  date: string;  // ISO date
+  date: string;
   status: 'present' | 'absent' | 'cancelled';
 }
 
-export type ViewType = 'dashboard' | 'chat' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'analytics' | 'settings' | 'schedules' | 'habits' | 'food' | 'attendance';
+// Full ViewType (all views, controlled by feature toggles)
+export type ViewType = 'dashboard' | 'chat' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'analytics' | 'timeline' | 'settings' | 'schedules' | 'food' | 'attendance';

@@ -5,7 +5,7 @@ import { X, Calendar, Clock, Tag, Link2, AlertCircle, Trash2, Edit3, Save, Rotat
 import { EntityKind, EntityStatus, RelationshipType, RecurrenceType, ToonOperation, Subtask, ActivityLogEntry } from '../types';
 import SmartEditor from './SmartEditor';
 import MarkdownText from './MarkdownText';
-import { improveText } from '../services/geminiService';
+import { improveText } from '../services/ai';
 import { calculateProgress } from '../utils/progressCalculation';
 import { SkeletonEntityDetail } from './Skeleton';
 

@@ -7,8 +7,8 @@ import MomentumHeatmap from './MomentumHeatmap';
 import MarkdownText from './MarkdownText';
 import { calculateProgress } from '../utils/progressCalculation';
 import { getStreakInfo, getActivitySummary } from '../utils/streakCalculation';
-import QuickStreaks from './QuickStreaks';
 import DailyProductivityBar from './DailyProductivityBar';
+import QuickStreaks from './QuickStreaks';
 import { SkeletonDashboard } from './Skeleton';
 
 interface StatCardProps {
@@ -273,7 +273,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
             e.kind !== EntityKind.TAG &&
             e.kind !== EntityKind.NOTE &&
             e.kind !== EntityKind.ACTIVITY &&
-            e.kind !== EntityKind.MINI_STREAK &&
             !e.metadata?.hidden  // Exclude hidden from AI
         );
 
@@ -808,10 +807,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                 </div>
             </div>
 
-            {/* Quick Streaks Widget - at bottom */}
-            <div className="mt-8 mb-8">
-                <QuickStreaks />
-            </div>
+            {/* Quick Streaks Widget (feature toggle controlled) */}
+            {settings.feature_toggles?.quick_streaks && (
+                <div className="mt-8 mb-8">
+                    <QuickStreaks />
+                </div>
+            )}
 
             {/* Insight Modals */}
             {showOrphansModal && (

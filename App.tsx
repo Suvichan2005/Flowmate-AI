@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react';
 import { useStore } from './store';
-import { orchestrateMessage } from './services/geminiService';
+import { orchestrateMessage } from './services/ai';
 import { processFileAttachment } from './utils/imageProcessing';
 import { onAuthChange, signOut } from './services/firebase';
+import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync } from './services/syncManager';
+import { mergeData } from './services/firestoreSync';
 import { preventDoubleClick } from './utils/debounce';
 import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -27,11 +29,12 @@ const SettingsView = lazy(() => import('./components/SettingsView'));
 const EntityList = lazy(() => import('./components/EntityList'));
 const LiveVoiceModal = lazy(() => import('./components/LiveVoiceModal'));
 const CreateEntityModal = lazy(() => import('./components/CreateEntityModal'));
-const SchedulesView = lazy(() => import('./components/SchedulesView'));
 const KnowledgeView = lazy(() => import('./components/KnowledgeView'));
+const AnalyticsView = lazy(() => import('./components/AnalyticsView'));
+const TimelineView = lazy(() => import('./components/TimelineView'));
+const SchedulesView = lazy(() => import('./components/SchedulesView'));
 const FoodTracker = lazy(() => import('./components/FoodTracker'));
 const AttendanceTracker = lazy(() => import('./components/AttendanceTracker'));
-const AnalyticsView = lazy(() => import('./components/AnalyticsView'));
 const GraphFixingModal = lazy(() => import('./components/GraphFixingModal'));
 
 // Loading fallback for lazy components
@@ -144,17 +147,98 @@ const App: React.FC = () => {
     else setIsChatOpen(true);
   }, [isZenMode]);
 
-  // Auth State Listener
+  // Auth State Listener + Sync Integration
   useEffect(() => {
     const unsubscribe = onAuthChange((user) => {
       setCurrentUser(user);
       if (user) {
-        // Load data from cloud when user signs in
-        loadFromCloud();
+        // Initialize sync manager
+        initializeSync(
+          user.uid,
+          (status, error) => {
+            useStore.setState({
+              syncStatus: status,
+              syncError: error || null,
+              lastSyncedAt: status === 'idle' ? new Date().toISOString() : useStore.getState().lastSyncedAt
+            });
+          },
+          (remoteData) => {
+            // Merge remote changes with local
+            const state = useStore.getState();
+            const merged = mergeData(
+              { entities: state.entities, relationships: state.relationships },
+              { entities: remoteData.entities, relationships: remoteData.relationships }
+            );
+            useStore.setState({
+              entities: merged.entities,
+              relationships: merged.relationships,
+              universalTags: remoteData.universalTags || state.universalTags
+            });
+          }
+        );
+
+        // Load initial cloud data then start real-time sync
+        loadInitialData().then(data => {
+          if (data) {
+            loadFromCloud();
+          }
+          // Start real-time listener after initial load
+          startRealtimeSync();
+        });
+      } else {
+        cleanupSync();
       }
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      cleanupSync();
+    };
   }, [setCurrentUser, loadFromCloud]);
+
+  // Sync on page unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const state = useStore.getState();
+      if (state.currentUser) {
+        forceSync(() => ({
+          entities: state.entities,
+          relationships: state.relationships,
+          universalTags: state.universalTags
+        }));
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
+
+  // Online/Offline status tracking
+  useEffect(() => {
+    const { setOnline } = useStore.getState();
+
+    const handleOnline = () => {
+      setOnline(true);
+      // Trigger sync when coming back online
+      const state = useStore.getState();
+      if (state.currentUser) {
+        scheduleSync(() => ({
+          entities: state.entities,
+          relationships: state.relationships,
+          universalTags: state.universalTags
+        }));
+      }
+    };
+
+    const handleOffline = () => setOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -358,6 +442,8 @@ const App: React.FC = () => {
         return <KnowledgeView />;
       case 'calendar':
         return <CalendarView />;
+      case 'timeline':
+        return <TimelineView entities={safeEntities} />;
       case 'schedules':
         return <SchedulesView />;
       case 'food':
@@ -668,32 +754,9 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Channel Tabs */}
-                <div className="flex items-center px-2 gap-1 pb-2 overflow-x-auto scrollbar-hide">
-                  <button
-                    onClick={() => setActiveChannel('general')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${activeChannel === 'general' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
-                  >
-                    <Layers size={14} /> General
-                  </button>
-                  <button
-                    onClick={() => setActiveChannel('schedules')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${activeChannel === 'schedules' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
-                  >
-                    <Table2 size={14} /> Schedules
-                  </button>
-                  <button
-                    onClick={() => setActiveChannel('food')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${activeChannel === 'food' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
-                  >
-                    <Utensils size={14} /> Food
-                  </button>
-                  <button
-                    onClick={() => setActiveChannel('finance')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${activeChannel === 'finance' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
-                  >
-                    <IndianRupee size={14} /> Finance
-                  </button>
+                {/* Channel Header - Simplified to just General */}
+                <div className="flex items-center px-4 py-2 border-b border-slate-800/50">
+                  <span className="text-sm font-medium text-slate-300">Chat</span>
                 </div>
               </div>
 

@@ -1,5 +1,5 @@
-// Firestore Sync Service
-// Handles syncing entities and relationships to/from Firestore
+// Firestore Sync Service — Granular subcollection-based sync
+// Schema: users/{uid}/entities/{id}, users/{uid}/relationships/{id}, users/{uid}/config
 
 import {
     doc,
@@ -7,102 +7,243 @@ import {
     setDoc,
     getDoc,
     getDocs,
+    deleteDoc,
     writeBatch,
     serverTimestamp,
     Timestamp,
     onSnapshot,
-    Unsubscribe
+    Unsubscribe,
+    query,
+    DocumentChange,
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from './firebase';
-import { Entity, Relationship, ToonOperation, TagDefinition } from '../types';
+import { Entity, Relationship, TagDefinition } from '../types';
 
-// Collection paths
-const USERS_COLLECTION = 'users';
+// --- Collection Paths ---
 
-interface UserData {
+const usersCol = 'users';
+const entitiesSubCol = 'entities';
+const relationshipsSubCol = 'relationships';
+
+function userDoc(uid: string) {
+    return doc(db!, usersCol, uid);
+}
+
+function entitiesCol(uid: string) {
+    return collection(db!, usersCol, uid, entitiesSubCol);
+}
+
+function entityDoc(uid: string, entityId: string) {
+    return doc(db!, usersCol, uid, entitiesSubCol, entityId);
+}
+
+function relationshipsCol(uid: string) {
+    return collection(db!, usersCol, uid, relationshipsSubCol);
+}
+
+function relationshipDoc(uid: string, relId: string) {
+    return doc(db!, usersCol, uid, relationshipsSubCol, relId);
+}
+
+// --- Types ---
+
+export interface UserConfig {
+    universalTags: TagDefinition[];
+    lastSyncedAt: Timestamp | null;
+    schemaVersion: number;
+}
+
+export interface UserData {
     entities: Entity[];
     relationships: Relationship[];
     universalTags: TagDefinition[];
     lastSyncedAt: Timestamp | null;
 }
 
-// --- Real-time Listener ---
+// --- Real-time Listeners ---
 
-let unsubscribe: Unsubscribe | null = null;
+interface ActiveListeners {
+    entities: Unsubscribe | null;
+    relationships: Unsubscribe | null;
+    config: Unsubscribe | null;
+}
 
-export const subscribeToUserData = (
+const listeners: ActiveListeners = {
+    entities: null,
+    relationships: null,
+    config: null,
+};
+
+/**
+ * Subscribe to real-time entity changes.
+ * Calls onUpdate with the full entity list whenever any entity changes.
+ */
+export function subscribeToEntities(
     userId: string,
-    onDataChange: (data: UserData) => void
-): Unsubscribe => {
-    if (!isFirebaseConfigured()) {
-        console.warn('[FirestoreSync] Firebase not configured, skipping subscription');
-        return () => { };
-    }
+    onUpdate: (entities: Entity[]) => void,
+): Unsubscribe {
+    if (!isFirebaseConfigured() || !db) return () => {};
 
-    // Unsubscribe from previous listener if exists
-    if (unsubscribe) {
-        unsubscribe();
-    }
+    listeners.entities?.();
 
-    const userDocRef = doc(db, USERS_COLLECTION, userId);
+    const q = query(entitiesCol(userId));
 
-    unsubscribe = onSnapshot(userDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-            const data = docSnap.data();
-            console.log('[FirestoreSync] Real-time update received');
-            onDataChange({
-                entities: data.entities || [],
-                relationships: data.relationships || [],
+    const unsub = onSnapshot(q, (snapshot) => {
+        const entities: Entity[] = [];
+        snapshot.forEach((doc) => {
+            entities.push({ id: doc.id, ...doc.data() } as Entity);
+        });
+        console.log(`[FirestoreSync] Entities snapshot: ${entities.length} docs`);
+        onUpdate(entities);
+    }, (error) => {
+        console.error('[FirestoreSync] Entities listener error:', error);
+    });
+
+    listeners.entities = unsub;
+    return unsub;
+}
+
+/**
+ * Subscribe to real-time relationship changes.
+ */
+export function subscribeToRelationships(
+    userId: string,
+    onUpdate: (relationships: Relationship[]) => void,
+): Unsubscribe {
+    if (!isFirebaseConfigured() || !db) return () => {};
+
+    listeners.relationships?.();
+
+    const q = query(relationshipsCol(userId));
+
+    const unsub = onSnapshot(q, (snapshot) => {
+        const relationships: Relationship[] = [];
+        snapshot.forEach((doc) => {
+            relationships.push({ id: doc.id, ...doc.data() } as Relationship);
+        });
+        console.log(`[FirestoreSync] Relationships snapshot: ${relationships.length} docs`);
+        onUpdate(relationships);
+    }, (error) => {
+        console.error('[FirestoreSync] Relationships listener error:', error);
+    });
+
+    listeners.relationships = unsub;
+    return unsub;
+}
+
+/**
+ * Subscribe to user config (tags, settings).
+ */
+export function subscribeToConfig(
+    userId: string,
+    onUpdate: (config: UserConfig) => void,
+): Unsubscribe {
+    if (!isFirebaseConfigured() || !db) return () => {};
+
+    listeners.config?.();
+
+    const unsub = onSnapshot(userDoc(userId), (snap) => {
+        if (snap.exists()) {
+            const data = snap.data();
+            onUpdate({
                 universalTags: data.universalTags || [],
-                lastSyncedAt: data.lastSyncedAt || null
+                lastSyncedAt: data.lastSyncedAt || null,
+                schemaVersion: data.schemaVersion || 1,
             });
         }
     }, (error) => {
-        console.error('[FirestoreSync] Real-time listener error:', error);
+        console.error('[FirestoreSync] Config listener error:', error);
     });
 
-    return unsubscribe;
+    listeners.config = unsub;
+    return unsub;
+}
+
+/**
+ * Combined subscription for backward compatibility.
+ */
+export const subscribeToUserData = (
+    userId: string,
+    onDataChange: (data: UserData) => void,
+): Unsubscribe => {
+    if (!isFirebaseConfigured() || !db) return () => {};
+
+    let currentEntities: Entity[] = [];
+    let currentRelationships: Relationship[] = [];
+    let currentTags: TagDefinition[] = [];
+
+    const notify = () => {
+        onDataChange({
+            entities: currentEntities,
+            relationships: currentRelationships,
+            universalTags: currentTags,
+            lastSyncedAt: null,
+        });
+    };
+
+    const unsub1 = subscribeToEntities(userId, (entities) => {
+        currentEntities = entities;
+        notify();
+    });
+
+    const unsub2 = subscribeToRelationships(userId, (relationships) => {
+        currentRelationships = relationships;
+        notify();
+    });
+
+    const unsub3 = subscribeToConfig(userId, (config) => {
+        currentTags = config.universalTags;
+        notify();
+    });
+
+    return () => {
+        unsub1();
+        unsub2();
+        unsub3();
+    };
 };
 
 export const unsubscribeFromUserData = () => {
-    if (unsubscribe) {
-        unsubscribe();
-        unsubscribe = null;
-    }
+    listeners.entities?.();
+    listeners.relationships?.();
+    listeners.config?.();
+    listeners.entities = null;
+    listeners.relationships = null;
+    listeners.config = null;
 };
 
 // --- Read Operations ---
 
 export const loadUserData = async (userId: string): Promise<UserData | null> => {
-    console.log('[FirestoreSync] loadUserData called with userId:', userId);
-
-    if (!isFirebaseConfigured()) {
-        console.warn('[FirestoreSync] Firebase not configured, skipping load');
-        return null;
-    }
+    if (!isFirebaseConfigured() || !db) return null;
 
     try {
-        const userDocRef = doc(db, USERS_COLLECTION, userId);
-        console.log('[FirestoreSync] Reading document path:', `${USERS_COLLECTION}/${userId}`);
+        // Load entities
+        const entitiesSnap = await getDocs(entitiesCol(userId));
+        const entities: Entity[] = [];
+        entitiesSnap.forEach((doc) => {
+            entities.push({ id: doc.id, ...doc.data() } as Entity);
+        });
 
-        const userDoc = await getDoc(userDocRef);
-        console.log('[FirestoreSync] Document exists?', userDoc.exists());
+        // Load relationships
+        const relsSnap = await getDocs(relationshipsCol(userId));
+        const relationships: Relationship[] = [];
+        relsSnap.forEach((doc) => {
+            relationships.push({ id: doc.id, ...doc.data() } as Relationship);
+        });
 
-        if (userDoc.exists()) {
-            const data = userDoc.data();
-            console.log('[FirestoreSync] Document data keys:', Object.keys(data));
-            console.log('[FirestoreSync] Entities count:', data.entities?.length || 0);
+        // Load config
+        const configSnap = await getDoc(userDoc(userId));
+        const configData = configSnap.exists() ? configSnap.data() : {};
 
-            return {
-                entities: data.entities || [],
-                relationships: data.relationships || [],
-                universalTags: data.universalTags || [],
-                lastSyncedAt: data.lastSyncedAt || null
-            };
-        }
+        console.log(`[FirestoreSync] Loaded: ${entities.length} entities, ${relationships.length} relationships`);
 
-        console.log('[FirestoreSync] Document does not exist at path:', `${USERS_COLLECTION}/${userId}`);
-        return null;
+        return {
+            entities,
+            relationships,
+            universalTags: configData?.universalTags || [],
+            lastSyncedAt: configData?.lastSyncedAt || null,
+        };
     } catch (error) {
         console.error('[FirestoreSync] Load failed:', error);
         return null;
@@ -111,33 +252,159 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
 
 // --- Write Operations ---
 
+/**
+ * Sync specific changed entities to Firestore (granular write).
+ * Uses a batch write for efficiency.
+ */
+export async function syncEntities(userId: string, entities: Entity[]): Promise<boolean> {
+    if (!isFirebaseConfigured() || !db || entities.length === 0) return false;
+
+    try {
+        const batch = writeBatch(db);
+        for (const entity of entities) {
+            const { id, ...data } = entity;
+            batch.set(entityDoc(userId, id), data);
+        }
+        await batch.commit();
+        console.log(`[FirestoreSync] Synced ${entities.length} entities`);
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Entity sync failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Sync specific changed relationships to Firestore.
+ */
+export async function syncRelationships(userId: string, relationships: Relationship[]): Promise<boolean> {
+    if (!isFirebaseConfigured() || !db || relationships.length === 0) return false;
+
+    try {
+        const batch = writeBatch(db);
+        for (const rel of relationships) {
+            const { id, ...data } = rel;
+            batch.set(relationshipDoc(userId, id), data);
+        }
+        await batch.commit();
+        console.log(`[FirestoreSync] Synced ${relationships.length} relationships`);
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Relationship sync failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Delete specific entities from Firestore.
+ */
+export async function deleteEntitiesFromCloud(userId: string, entityIds: string[]): Promise<boolean> {
+    if (!isFirebaseConfigured() || !db || entityIds.length === 0) return false;
+
+    try {
+        const batch = writeBatch(db);
+        for (const id of entityIds) {
+            batch.delete(entityDoc(userId, id));
+        }
+        await batch.commit();
+        console.log(`[FirestoreSync] Deleted ${entityIds.length} entities from cloud`);
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Entity delete failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Delete specific relationships from Firestore.
+ */
+export async function deleteRelationshipsFromCloud(userId: string, relIds: string[]): Promise<boolean> {
+    if (!isFirebaseConfigured() || !db || relIds.length === 0) return false;
+
+    try {
+        const batch = writeBatch(db);
+        for (const id of relIds) {
+            batch.delete(relationshipDoc(userId, id));
+        }
+        await batch.commit();
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Relationship delete failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Save user config (tags, metadata) to the user document.
+ */
+export async function saveUserConfig(
+    userId: string,
+    config: Partial<UserConfig>,
+): Promise<boolean> {
+    if (!isFirebaseConfigured() || !db) return false;
+
+    try {
+        await setDoc(userDoc(userId), {
+            ...config,
+            lastSyncedAt: serverTimestamp(),
+            schemaVersion: 2,
+        }, { merge: true });
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Config save failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Full save — writes all entities and relationships to subcollections.
+ * Used for initial migration or full sync.
+ */
 export const saveUserData = async (
     userId: string,
     data: {
         entities: Entity[];
         relationships: Relationship[];
         universalTags?: TagDefinition[];
-    }
+    },
 ): Promise<boolean> => {
-    if (!isFirebaseConfigured()) {
-        console.warn('[FirestoreSync] Firebase not configured, skipping save');
-        return false;
-    }
+    if (!isFirebaseConfigured() || !db) return false;
 
     try {
-        const userDocRef = doc(db, USERS_COLLECTION, userId);
+        // Batch writes (Firestore limit: 500 per batch)
+        const BATCH_SIZE = 450;
 
-        await setDoc(userDocRef, {
-            entities: data.entities,
-            relationships: data.relationships,
+        // Write entities in batches
+        for (let i = 0; i < data.entities.length; i += BATCH_SIZE) {
+            const batch = writeBatch(db);
+            const chunk = data.entities.slice(i, i + BATCH_SIZE);
+            for (const entity of chunk) {
+                const { id, ...entityData } = entity;
+                batch.set(entityDoc(userId, id), entityData);
+            }
+            await batch.commit();
+        }
+
+        // Write relationships in batches
+        for (let i = 0; i < data.relationships.length; i += BATCH_SIZE) {
+            const batch = writeBatch(db);
+            const chunk = data.relationships.slice(i, i + BATCH_SIZE);
+            for (const rel of chunk) {
+                const { id, ...relData } = rel;
+                batch.set(relationshipDoc(userId, id), relData);
+            }
+            await batch.commit();
+        }
+
+        // Write config
+        await saveUserConfig(userId, {
             universalTags: data.universalTags || [],
-            lastSyncedAt: serverTimestamp()
-        }, { merge: true });
+        });
 
-        console.log('[FirestoreSync] Data saved successfully');
+        console.log(`[FirestoreSync] Full save: ${data.entities.length} entities, ${data.relationships.length} relationships`);
         return true;
     } catch (error) {
-        console.error('[FirestoreSync] Save failed:', error);
+        console.error('[FirestoreSync] Full save failed:', error);
         return false;
     }
 };
@@ -146,57 +413,43 @@ export const saveUserData = async (
 
 export const syncOperation = async (
     userId: string,
-    operation: ToonOperation,
-    currentData: { entities: Entity[]; relationships: Relationship[] }
+    operation: any,
+    currentData: { entities: Entity[]; relationships: Relationship[] },
 ): Promise<boolean> => {
-    if (!isFirebaseConfigured()) {
-        return false;
-    }
-
-    // For simplicity, we do a full sync after each operation
-    // A more advanced implementation would use subcollections and batch writes
+    // With granular sync, we just sync the affected entities/relationships
+    // The caller should provide only the changed data
     return saveUserData(userId, currentData);
 };
 
 // --- Merge Strategy ---
 
-// FIXED: Local-first with timestamp-based conflict resolution
-// When loading from Firestore, merge with local data using updated_at timestamps
-// Whichever version is newer wins for duplicate IDs
 export const mergeData = (
     local: { entities: Entity[]; relationships: Relationship[] },
-    remote: { entities: Entity[]; relationships: Relationship[] }
+    remote: { entities: Entity[]; relationships: Relationship[] },
 ): { entities: Entity[]; relationships: Relationship[] } => {
     const mergedEntities = new Map<string, Entity>();
     const mergedRelationships = new Map<string, Relationship>();
 
-    // Add all remote entities first
+    // Remote first
     remote.entities.forEach(e => mergedEntities.set(e.id, e));
 
-    // For local entities: keep if not in remote OR if local is newer
+    // Local wins if newer or not in remote
     local.entities.forEach(localEntity => {
         const remoteEntity = mergedEntities.get(localEntity.id);
 
         if (!remoteEntity) {
-            // New local entity, keep it
             mergedEntities.set(localEntity.id, localEntity);
         } else {
-            // Conflict: compare updated_at timestamps (local wins if equal or local is newer)
             const localTime = new Date(localEntity.updated_at || localEntity.created_at).getTime();
             const remoteTime = new Date(remoteEntity.updated_at || remoteEntity.created_at).getTime();
 
             if (localTime >= remoteTime) {
-                // Local is same age or newer - LOCAL WINS
                 mergedEntities.set(localEntity.id, localEntity);
-                console.log(`[Merge] Local wins for "${localEntity.title}" (local: ${localTime}, remote: ${remoteTime})`);
-            } else {
-                // Remote is newer - keep remote (already in map)
-                console.log(`[Merge] Remote wins for "${localEntity.title}" (local: ${localTime}, remote: ${remoteTime})`);
             }
         }
     });
 
-    // Same logic for relationships
+    // Same for relationships
     remote.relationships.forEach(r => mergedRelationships.set(r.id, r));
     local.relationships.forEach(localRel => {
         const remoteRel = mergedRelationships.get(localRel.id);
@@ -211,39 +464,38 @@ export const mergeData = (
         }
     });
 
-    console.log(`[Merge] Result: ${mergedEntities.size} entities, ${mergedRelationships.size} relationships`);
-
-    // Filter out soft-deleted entities (prevents zombie restoration)
+    // Filter deleted entities and orphan relationships
     const activeEntities = Array.from(mergedEntities.values()).filter(e => !e.metadata?.deleted);
-    const activeRelationships = Array.from(mergedRelationships.values()).filter(r => {
-        // Remove relationships involving deleted entities
-        const fromExists = activeEntities.some(e => e.id === r.from);
-        const toExists = activeEntities.some(e => e.id === r.to);
-        return fromExists && toExists;
-    });
+    const entityIds = new Set(activeEntities.map(e => e.id));
+    const activeRelationships = Array.from(mergedRelationships.values()).filter(r =>
+        entityIds.has(r.from) && entityIds.has(r.to),
+    );
 
-    console.log(`[Merge] After filtering deleted: ${activeEntities.length} entities, ${activeRelationships.length} relationships`);
-
-    return {
-        entities: activeEntities,
-        relationships: activeRelationships
-    };
+    return { entities: activeEntities, relationships: activeRelationships };
 };
 
 // --- Delete User Data ---
 
 export const deleteUserData = async (userId: string): Promise<boolean> => {
-    if (!isFirebaseConfigured()) {
-        return false;
-    }
+    if (!isFirebaseConfigured() || !db) return false;
 
     try {
-        const userDocRef = doc(db, USERS_COLLECTION, userId);
-        await setDoc(userDocRef, {
-            entities: [],
-            relationships: [],
+        // Delete all entities
+        const entitiesSnap = await getDocs(entitiesCol(userId));
+        const batch1 = writeBatch(db);
+        entitiesSnap.forEach((doc) => batch1.delete(doc.ref));
+        await batch1.commit();
+
+        // Delete all relationships
+        const relsSnap = await getDocs(relationshipsCol(userId));
+        const batch2 = writeBatch(db);
+        relsSnap.forEach((doc) => batch2.delete(doc.ref));
+        await batch2.commit();
+
+        // Reset config
+        await setDoc(userDoc(userId), {
             universalTags: [],
-            deletedAt: serverTimestamp()
+            deletedAt: serverTimestamp(),
         });
 
         return true;

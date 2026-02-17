@@ -15,8 +15,14 @@ import {
   Minimize2,
   TrendingUp,
   MessageCircle,
+  Clock,
   UtensilsCrossed,
-  GraduationCap
+  GraduationCap,
+  Table2,
+  Cloud,
+  Loader2,
+  AlertTriangle,
+  Check
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -26,14 +32,17 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpanded = false }) => {
-  const { currentView, setView, getXP, undo, redo, canUndo, canRedo, toggleZenMode, isZenMode, settings } = useStore();
+  const { currentView, setView, getXP, undo, redo, canUndo, canRedo, toggleZenMode, isZenMode, settings, syncStatus, currentUser } = useStore();
 
   const handleNav = (view: ViewType) => {
     setView(view);
     onNavigate?.();
   };
 
-  // Gamification
+  // Feature toggles for conditional nav
+  const toggles = settings.feature_toggles || { food_tracking: true, attendance_tracking: false, gamification: false, quick_streaks: true, people_tracking: true };
+
+  // Gamification (if enabled)
   const xp = getXP();
   const level = Math.floor(Math.sqrt(xp / 100)) + 1;
   const nextLevelXp = Math.pow(level, 2) * 100;
@@ -43,17 +52,16 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
   const showLabels = forceExpanded || !isZenMode;
   const isCompact = !forceExpanded && isZenMode;
 
-  // Streamlined nav: Chat (mobile-only), Dashboard, Analytics, Graph, Library, Calendar, Food, Attendance
-  // Feature toggles control visibility of Food and Attendance
-  const toggles = settings.feature_toggles || { food_tracking: true, attendance_tracking: true, people_tracking: true };
-
+  // Navigation items with feature toggle control
   const navItems = [
     { icon: MessageCircle, label: 'Chat', view: 'chat' as ViewType, mobileOnly: true },
     { icon: LayoutDashboard, label: 'Dashboard', view: 'dashboard' as ViewType },
+    { icon: Clock, label: 'Timeline', view: 'timeline' as ViewType },
     { icon: TrendingUp, label: 'Analytics', view: 'analytics' as ViewType },
     { icon: MessageSquare, label: 'Graph', view: 'chat_graph' as ViewType },
     { icon: Library, label: 'Library', view: 'knowledge' as ViewType },
     { icon: Calendar, label: 'Calendar', view: 'calendar' as ViewType },
+    ...(toggles.food_tracking ? [{ icon: Table2, label: 'Schedules', view: 'schedules' as ViewType }] : []),
     ...(toggles.food_tracking ? [{ icon: UtensilsCrossed, label: 'Food', view: 'food' as ViewType }] : []),
     ...(toggles.attendance_tracking ? [{ icon: GraduationCap, label: 'Attendance', view: 'attendance' as ViewType }] : []),
   ];
@@ -135,8 +143,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
         </button>
       </div>
 
-      {/* XP Section */}
-      {showLabels && (
+      {/* XP Section (gamification toggle controlled) */}
+      {toggles.gamification && showLabels && (
         <div className={`px-3 py-2.5 border-t border-slate-800/50 ${forceExpanded ? '' : 'hidden md:block'}`}>
           <div className="flex items-center gap-2 mb-1.5">
             <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 flex items-center justify-center text-indigo-300 text-xs font-bold border border-indigo-500/30">
@@ -179,6 +187,30 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
             {isZenMode ? <Maximize2 size={18} /> : <Minimize2 size={18} />}
             {showLabels && <span className={forceExpanded ? '' : 'hidden md:block'}>Zen</span>}
           </button>
+        )}
+
+        {/* Sync Status Indicator */}
+        {currentUser && showLabels && (
+          <div className={`px-2.5 py-2 border-t border-slate-800/50 ${forceExpanded ? '' : 'hidden md:flex'} items-center gap-2`}>
+            {syncStatus === 'syncing' && (
+              <>
+                <Loader2 size={14} className="text-blue-400 animate-spin" />
+                <span className="text-xs text-blue-400">Syncing...</span>
+              </>
+            )}
+            {syncStatus === 'idle' && (
+              <>
+                <Check size={14} className="text-emerald-400" />
+                <span className="text-xs text-emerald-400">Synced</span>
+              </>
+            )}
+            {syncStatus === 'error' && (
+              <>
+                <AlertTriangle size={14} className="text-red-400" />
+                <span className="text-xs text-red-400">Sync error</span>
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>

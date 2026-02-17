@@ -37,3 +37,7 @@ ui-debug.log
 
 # OS files
 Thumbs.db
+
+# Backups & temp
+flowmate_backup*.json
+metadata.json

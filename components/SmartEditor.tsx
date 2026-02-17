@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { improveText, ImprovementType } from '../services/geminiService';
+import { improveText, ImprovementType } from '../services/ai';
 import { Sparkles, Type, AlignLeft, Check, Loader2, Wand2, List } from 'lucide-react';
 
 interface SmartEditorProps {

@@ -1,7 +1,0 @@
-{
-  "name": "Copy of Copy of Copy of Flowmate",
-  "description": "AI-first personal productivity graph using offline-first local storage and a single-pass LLM orchestrator for managing goals, projects, and tasks.",
-  "requestFramePermissions": [
-    "microphone"
-  ]
-}

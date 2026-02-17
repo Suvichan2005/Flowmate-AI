@@ -1,0 +1,26 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // User document (config, tags)
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // Entity subcollection — per-entity granular sync
+      match /entities/{entityId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Relationship subcollection
+      match /relationships/{relId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // Deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

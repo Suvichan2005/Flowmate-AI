@@ -3,10 +3,18 @@ import { persist } from 'zustand/middleware';
 import { asyncStorage } from './services/storage';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleCalendarAdapter } from './services/googleSync';
-import { generateBriefing } from './services/geminiService';
+import { generateBriefing } from './services/ai';
 import { saveUserData, loadUserData } from './services/firestoreSync';
+import { scheduleSync } from './services/syncManager';
 import { onAuthChange, User } from './services/firebase';
 import { validatePersistedState, validateOperations } from './utils/validation';
+import {
+    normalizePayload,
+    expandOperationType,
+    calculateNextDate,
+    resolveEntityId,
+    HistorySnapshot,
+} from './store/helpers';
 import {
     Entity,
     Relationship,
@@ -36,165 +44,7 @@ import {
     AttendanceLog
 } from './types';
 
-// --- Normalization & Validation Helper ---
-
-const normalizePayload = (type: ToonOperationType, payload: any): any => {
-    if (!payload) return {};
-    const p = { ...payload };
-
-    // 0. Short Field Aliases (Flowmate 3.1 — Token Optimization)
-    if (p.k && !p.kind) p.kind = p.k;
-    if (p.t && !p.title) p.title = p.t;
-    if (p.d && !p.description) p.description = p.d;
-    if (p.p && !p.parent && !p.parent_id) p.parent = p.p;
-    if (p.s && !p.status) p.status = p.s;
-    if (p.m && !p.metadata) p.metadata = p.m;
-    if (p.dur && !p.duration_minutes) p.duration_minutes = p.dur;
-    if (p.start && !p.start_time) p.start_time = p.start;
-    if (p.end && !p.end_time) p.end_time = p.end;
-    if (p.due && !p.deadline) p.deadline = p.due;
-
-    // 1. Common Field Aliases (LLM Hallucination Fixes)
-    if (p.name && !p.title) p.title = p.name;
-    if (p.desc && !p.description) p.description = p.desc;
-    if (p.details && !p.description) p.description = p.details;
-    if (p.notes && !p.description) p.description = p.notes; // Common for tasks
-
-    // Date aliases
-    if (p.due_date && !p.deadline) p.deadline = p.due_date;
-    if (p.target_date && !p.deadline) p.deadline = p.target_date;
-    // Removed: end -> deadline alias (was incorrectly setting deadline on events)
-    if (p.date && !p.start_time) p.start_time = p.date;
-    if (p.start && !p.start_time) p.start_time = p.start;
-
-    // log_activity specific aliases
-    if (type === 'log_activity') {
-        if (p.end && !p.end_time) p.end_time = p.end;
-        if (p.duration && !p.duration_minutes) p.duration_minutes = p.duration;
-    }
-
-    // 2. Relationship Aliases
-    if (type === 'link_entities' || type === 'unlink_entities') {
-        // Source
-        if (!p.from && p.source) p.from = p.source;
-        if (!p.from && p.source_id) p.from = p.source_id;
-        if (!p.from && p.from_entity_id) p.from = p.from_entity_id;
-        if (!p.from && p.origin) p.from = p.origin;
-
-        // Target
-        if (!p.to && p.target) p.to = p.target;
-        if (!p.to && p.target_id) p.to = p.target_id;
-        if (!p.to && p.to_entity_id) p.to = p.to_entity_id;
-        if (!p.to && p.destination) p.to = p.destination;
-
-        // Type
-        if (!p.type && p.relationship) p.type = p.relationship;
-        if (!p.type && p.rel) p.type = p.rel;
-
-        // Default type if missing
-        if (!p.type) p.type = RelationshipType.DEPENDS_ON;
-    }
-
-    // 3. Kind Validation/Normalization
-    if (p.kind) {
-        const k = p.kind.toUpperCase();
-
-        // Short kind aliases (Flowmate 3.1)
-        const shortKindMap: Record<string, EntityKind> = {
-            'CTX': EntityKind.CONTEXT,
-            'GOL': EntityKind.GOAL,
-            'PRJ': EntityKind.PROJECT,
-            'TSK': EntityKind.TASK,
-            'EVT': EntityKind.EVENT,
-            'HAB': EntityKind.HABIT,
-            'NOT': EntityKind.NOTE,
-            'PER': EntityKind.PERSON,
-            // Legacy aliases
-            'MEETING': EntityKind.EVENT,
-            'REMINDER': EntityKind.TASK,
-            'SUBTASK': EntityKind.TASK,
-            'IDEA': EntityKind.NOTE,
-            'AREA': EntityKind.CONTEXT,
-            'DOMAIN': EntityKind.CONTEXT,
-            'SPACE': EntityKind.CONTEXT,
-        };
-
-        if (Object.values(EntityKind).includes(k as EntityKind)) {
-            p.kind = k;
-        } else if (shortKindMap[k]) {
-            p.kind = shortKindMap[k];
-        } else {
-            p.kind = EntityKind.TASK; // Default fallback
-        }
-    }
-
-    return p;
-};
-
-// --- Short Operation Type Expansion (Flowmate 3.1) ---
-const SHORT_OP_MAP: Record<string, ToonOperationType> = {
-    'c': 'create_entity',
-    'u': 'update_entity',
-    'd': 'delete_entity',
-    'l': 'link_entities',
-    's': 'add_subtask',
-    'f': 'log_food',
-    'log': 'log_to_entity',
-    'arc': 'archive_entity',
-};
-
-const expandOperationType = (shortType: string): ToonOperationType => {
-    return (SHORT_OP_MAP[shortType] || shortType) as ToonOperationType;
-};
-
-// --- Helper: Calculate Next Recurrence ---
-const calculateNextDate = (currentDate: string, recurrence: RecurrenceType): string | null => {
-    if (!currentDate || !recurrence) return null;
-    const date = new Date(currentDate);
-
-    switch (recurrence) {
-        case 'DAILY': date.setDate(date.getDate() + 1); break;
-        case 'WEEKLY': date.setDate(date.getDate() + 7); break;
-        case 'MONTHLY': date.setMonth(date.getMonth() + 1); break;
-        case 'YEARLY': date.setFullYear(date.getFullYear() + 1); break;
-        default: return null;
-    }
-    return date.toISOString();
-};
-
-// --- Helper: Resolve ID from ID or Title ---
-const resolveEntityId = (identifier: string, entities: Entity[]): string | null => {
-    if (!identifier) return null;
-    // 1. Direct ID match
-    const byId = entities.find(e => e.id === identifier);
-    if (byId) return byId.id;
-
-    // 2. Title match (Case insensitive, search backwards to find most recently created)
-    // We search backwards because if the user says "Create Task A" and then "Link Task A",
-    // they likely mean the one just created.
-    for (let i = entities.length - 1; i >= 0; i--) {
-        if (entities[i].title.toLowerCase() === identifier.toLowerCase()) {
-            return entities[i].id;
-        }
-    }
-
-    // 3. Prefix ID match (Recovery for truncated UUIDs from LLM)
-    // LLMs sometimes drop the last char of a UUID or truncate long strings.
-    if (identifier.length > 20) {
-        const byPrefix = entities.find(e => e.id.startsWith(identifier));
-        if (byPrefix) return byPrefix.id;
-    }
-
-    return null;
-};
-
 // --- Store Definition ---
-
-interface HistorySnapshot {
-    entities: Entity[];
-    relationships: Relationship[];
-    timestamp: number;
-}
 
 interface FlowmateState {
     isHydrated: boolean;
@@ -223,6 +73,11 @@ interface FlowmateState {
     // Auth State
     currentUser: User | null;
     isCloudSyncEnabled: boolean;
+
+    // Sync State (new)
+    syncStatus: 'idle' | 'syncing' | 'error';
+    lastSyncedAt: string | null;
+    syncError: string | null;
 
     // Offline Support
     isOnline: boolean;
@@ -329,9 +184,11 @@ export const useStore = create<FlowmateState>()(
                 debug_mode: false,
                 custom_instructions: '',
                 feature_toggles: {
-                    food_tracking: true,
-                    attendance_tracking: true,
-                    people_tracking: true
+                    food_tracking: true,        // Mess menu display
+                    attendance_tracking: false, // Disabled by default
+                    people_tracking: true,
+                    gamification: false,        // Disabled by default
+                    quick_streaks: true,        // Enabled
                 },
                 productivity_calc_method: 'LOGGED_TIME'
             },
@@ -356,6 +213,11 @@ export const useStore = create<FlowmateState>()(
             // Auth State
             currentUser: null,
             isCloudSyncEnabled: false,
+
+            // Sync State (new)
+            syncStatus: 'idle' as const,
+            lastSyncedAt: null,
+            syncError: null,
 
             // Offline Support
             isOnline: navigator.onLine,
@@ -1557,12 +1419,38 @@ export const useStore = create<FlowmateState>()(
                 });
 
                 get().processSyncQueue();
+
+                // Auto-sync to cloud after state changes
+                scheduleSync(() => {
+                    const state = get();
+                    return {
+                        entities: state.entities,
+                        relationships: state.relationships,
+                        universalTags: state.universalTags
+                    };
+                });
             }
         }),
         {
             name: 'flowmate-storage',
-            storage: asyncStorage, // Cross-platform: SQLite on Android, localStorage on web
-            version: 14, // Bumped to 14 for Tag System
+            storage: asyncStorage,
+            version: 15,
+            // Only persist data that should survive page reloads
+            partialize: (state: FlowmateState) => ({
+                entities: state.entities,
+                relationships: state.relationships,
+                universalTags: state.universalTags,
+                messages: state.messages,
+                settings: state.settings,
+                foodLogs: state.foodLogs,
+                subjects: state.subjects,
+                classSchedule: state.classSchedule,
+                holidays: state.holidays,
+                attendanceLogs: state.attendanceLogs,
+                syncQueue: state.syncQueue,
+                debugLogs: state.debugLogs,
+                dailyBriefing: state.dailyBriefing,
+            }),
             migrate: (persistedState: any, version) => {
                 const state = persistedState as Partial<FlowmateState>;
 

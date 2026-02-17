@@ -45,24 +45,41 @@ const firebaseConfig = {
     appId: validateEnvVar('VITE_FIREBASE_APP_ID', import.meta.env.VITE_FIREBASE_APP_ID),
     measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || '' // Optional
 };
+// Check if Firebase is properly configured before initializing
+const hasValidConfig = !!(
+    firebaseConfig.apiKey &&
+    firebaseConfig.authDomain &&
+    firebaseConfig.projectId &&
+    firebaseConfig.appId
+);
 
-// Initialize Firebase (prevent multiple initializations)
-let app: FirebaseApp;
-if (getApps().length === 0) {
-    app = initializeApp(firebaseConfig);
+// Initialize Firebase only if config is valid
+let app: FirebaseApp | null = null;
+let auth: any = null;
+let db: Firestore | null = null;
+let googleProvider: GoogleAuthProvider | null = null;
+
+if (hasValidConfig) {
+    if (getApps().length === 0) {
+        app = initializeApp(firebaseConfig);
+    } else {
+        app = getApps()[0];
+    }
+
+    // Export services
+    auth = getAuth(app);
+    db = getFirestore(app);
+
+    // Auth providers
+    googleProvider = new GoogleAuthProvider();
+    // Request Google Calendar access scope
+    googleProvider.addScope('https://www.googleapis.com/auth/calendar');
+    googleProvider.addScope('https://www.googleapis.com/auth/calendar.events');
 } else {
-    app = getApps()[0];
+    console.warn('[Firebase] Configuration incomplete - Firebase features disabled');
 }
 
-// Export services
-export const auth = getAuth(app);
-export const db: Firestore = getFirestore(app);
-
-// Auth providers
-const googleProvider = new GoogleAuthProvider();
-// Request Google Calendar access scope
-googleProvider.addScope('https://www.googleapis.com/auth/calendar');
-googleProvider.addScope('https://www.googleapis.com/auth/calendar.events');
+export { auth, db };
 
 // Store the access token for Calendar API (with localStorage persistence)
 const GOOGLE_TOKEN_KEY = 'flowmate_google_calendar_token';
@@ -99,6 +116,7 @@ export const refreshGoogleCalendarToken = async (): Promise<string | null> => {
 // --- Auth Functions ---
 
 export const signInWithEmail = async (email: string, password: string) => {
+    if (!auth) return { user: null, error: 'Firebase not configured' };
     try {
         const result = await signInWithEmailAndPassword(auth, email, password);
         return { user: result.user, error: null };
@@ -108,6 +126,7 @@ export const signInWithEmail = async (email: string, password: string) => {
 };
 
 export const signUpWithEmail = async (email: string, password: string) => {
+    if (!auth) return { user: null, error: 'Firebase not configured' };
     try {
         const result = await createUserWithEmailAndPassword(auth, email, password);
         return { user: result.user, error: null };
@@ -117,6 +136,7 @@ export const signUpWithEmail = async (email: string, password: string) => {
 };
 
 export const signInWithGoogle = async () => {
+    if (!auth || !googleProvider) return { user: null, error: 'Firebase not configured', accessToken: null };
     try {
         const result = await signInWithPopup(auth, googleProvider);
 
@@ -134,6 +154,7 @@ export const signInWithGoogle = async () => {
 };
 
 export const signOut = async () => {
+    if (!auth) return { error: 'Firebase not configured' };
     try {
         await firebaseSignOut(auth);
         return { error: null };
@@ -144,6 +165,11 @@ export const signOut = async () => {
 
 // Auth state observer helper
 export const onAuthChange = (callback: (user: User | null) => void) => {
+    if (!auth) {
+        // Call with null immediately if Firebase not configured
+        callback(null);
+        return () => { }; // Return empty unsubscribe
+    }
     return onAuthStateChanged(auth, callback);
 };
 
