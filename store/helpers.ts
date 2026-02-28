@@ -3,6 +3,7 @@
 import {
     Entity,
     EntityKind,
+    Relationship,
     RelationshipType,
     ToonOperationType,
     RecurrenceType,

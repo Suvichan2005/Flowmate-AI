@@ -25,6 +25,7 @@ import {
     User
 } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
+import type { Auth } from 'firebase/auth';
 
 // Validate required environment variables
 const validateEnvVar = (name: string, value: string | undefined): string => {
@@ -55,7 +56,7 @@ const hasValidConfig = !!(
 
 // Initialize Firebase only if config is valid
 let app: FirebaseApp | null = null;
-let auth: any = null;
+let auth: Auth | null = null;
 let db: Firestore | null = null;
 let googleProvider: GoogleAuthProvider | null = null;
 
@@ -81,18 +82,32 @@ if (hasValidConfig) {
 
 export { auth, db };
 
-// Store the access token for Calendar API (with localStorage persistence)
+// Store the access token for Calendar API (with localStorage persistence + expiry)
 const GOOGLE_TOKEN_KEY = 'flowmate_google_calendar_token';
+const GOOGLE_TOKEN_EXPIRY_KEY = 'flowmate_google_calendar_token_expiry';
 let googleAccessToken: string | null = localStorage.getItem(GOOGLE_TOKEN_KEY);
+let googleTokenExpiresAt: number = Number(localStorage.getItem(GOOGLE_TOKEN_EXPIRY_KEY)) || 0;
 
-export const getGoogleAccessToken = () => googleAccessToken;
+/** Returns the stored token only if NOT expired (with 5-min buffer). */
+export const getGoogleAccessToken = (): string | null => {
+    if (googleAccessToken && Date.now() < googleTokenExpiresAt - 5 * 60 * 1000) {
+        return googleAccessToken;
+    }
+    // Token expired or missing — caller should refreshGoogleCalendarToken()
+    return null;
+};
 
 export const setGoogleAccessToken = (token: string | null) => {
     googleAccessToken = token;
     if (token) {
+        // Google OAuth tokens expire after ~1 hour
+        googleTokenExpiresAt = Date.now() + 3600 * 1000;
         localStorage.setItem(GOOGLE_TOKEN_KEY, token);
+        localStorage.setItem(GOOGLE_TOKEN_EXPIRY_KEY, String(googleTokenExpiresAt));
     } else {
+        googleTokenExpiresAt = 0;
         localStorage.removeItem(GOOGLE_TOKEN_KEY);
+        localStorage.removeItem(GOOGLE_TOKEN_EXPIRY_KEY);
     }
 };
 

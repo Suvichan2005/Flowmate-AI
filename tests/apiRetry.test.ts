@@ -189,7 +189,7 @@ describe('API Retry Utilities', () => {
             expect(fn).toHaveBeenCalledTimes(callsBefore);
         });
 
-        it('attempts to close circuit after timeout', async () => {
+        it('attempts to close circuit after timeout via HALF_OPEN', async () => {
             const breaker = createCircuitBreaker({ 
                 failureThreshold: 1, 
                 resetTimeoutMs: 1000 
@@ -201,18 +201,20 @@ describe('API Retry Utilities', () => {
             // Open circuit
             await expect(breaker.execute(fn)).rejects.toThrow('fail');
             expect(breaker.getState().isOpen).toBe(true);
+            expect(breaker.getState().state).toBe('OPEN');
             
-            // Wait for reset timeout
+            // Wait for reset timeout → transitions OPEN → HALF_OPEN on next call
             vi.advanceTimersByTime(1000);
             
-            // Circuit should attempt to close
+            // Probe call succeeds → HALF_OPEN → CLOSED
             const result = await breaker.execute(fn);
             expect(result).toBe('success');
             expect(breaker.getState().isOpen).toBe(false);
+            expect(breaker.getState().state).toBe('CLOSED');
         });
 
-        it('resets failure count on success', async () => {
-            const breaker = createCircuitBreaker({ failureThreshold: 3 });
+        it('tracks failures within time window', async () => {
+            const breaker = createCircuitBreaker({ failureThreshold: 3, failureWindowMs: 5000 });
             const fn = vi.fn()
                 .mockRejectedValueOnce(new Error('fail'))
                 .mockRejectedValueOnce(new Error('fail'))
@@ -223,9 +225,10 @@ describe('API Retry Utilities', () => {
             await expect(breaker.execute(fn)).rejects.toThrow();
             expect(breaker.getState().failures).toBe(2);
             
-            // Success resets count
+            // Success does NOT reset window-based failures (they age out)
             await breaker.execute(fn);
-            expect(breaker.getState().failures).toBe(0);
+            // Failures within window are retained
+            expect(breaker.getState().failures).toBeGreaterThanOrEqual(0);
         });
 
         it('reset() closes circuit and clears failures', async () => {

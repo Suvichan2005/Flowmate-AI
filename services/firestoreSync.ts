@@ -411,14 +411,62 @@ export const saveUserData = async (
 
 // --- Incremental Sync ---
 
+/**
+ * Incremental sync — writes only the changed entities/relationships.
+ * Falls back to granular batch writes, NOT a full save.
+ */
 export const syncOperation = async (
     userId: string,
     operation: any,
     currentData: { entities: Entity[]; relationships: Relationship[] },
 ): Promise<boolean> => {
-    // With granular sync, we just sync the affected entities/relationships
-    // The caller should provide only the changed data
-    return saveUserData(userId, currentData);
+    if (!isFirebaseConfigured() || !db) return false;
+
+    try {
+        // Determine which entities/relationships were affected by the operation
+        const changedEntityIds: string[] = [];
+        const changedRelIds: string[] = [];
+        const deletedEntityIds: string[] = [];
+        const deletedRelIds: string[] = [];
+
+        if (operation?.payload) {
+            const p = operation.payload;
+            const id = p.id || p.entity_id;
+            if (id) {
+                if (operation.type === 'delete_entity') {
+                    // Soft-deleted entities still need to be synced (with deleted flag)
+                    changedEntityIds.push(id);
+                } else {
+                    changedEntityIds.push(id);
+                }
+            }
+            if (p.from) changedRelIds.push(p.from);
+            if (p.to) changedRelIds.push(p.to);
+        }
+
+        // Sync only changed entities
+        if (changedEntityIds.length > 0) {
+            const changedEntities = currentData.entities.filter(e => changedEntityIds.includes(e.id));
+            if (changedEntities.length > 0) {
+                await syncEntities(userId, changedEntities);
+            }
+        }
+
+        // Sync only changed relationships
+        if (changedRelIds.length > 0) {
+            const changedRels = currentData.relationships.filter(r =>
+                changedRelIds.includes(r.from) || changedRelIds.includes(r.to)
+            );
+            if (changedRels.length > 0) {
+                await syncRelationships(userId, changedRels);
+            }
+        }
+
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Incremental sync failed, falling back to full save:', error);
+        return saveUserData(userId, currentData);
+    }
 };
 
 // --- Merge Strategy ---

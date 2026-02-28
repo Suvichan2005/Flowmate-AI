@@ -256,15 +256,17 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
             .range([
                 '#ef4444', // GOAL (red)
                 '#f97316', // PROJECT (orange)
-                '#eab308', // COURSE (yellow)
-                '#22c55e', // TOPIC (green)
                 '#3b82f6', // TASK (blue)
                 '#a855f7', // EVENT (purple)
                 '#ec4899', // ACTIVITY (pink)
-                '#64748b', // ROLE (slate)
-                '#94a3b8', // TAG
-                '#cbd5e1', // NOTE
-                '#8b5cf6'  // CONTEXT (violet)
+                '#f43f5e', // HABIT (rose)
+                '#94a3b8', // TAG (slate)
+                '#cbd5e1', // NOTE (light slate)
+                '#8b5cf6', // CONTEXT (violet)
+                '#fb923c', // PERSON (orange-light)
+                '#fbbf24', // PROMISE (amber)
+                '#22c55e', // OPPORTUNITY (green)
+                '#06b6d4', // MINI_STREAK (cyan)
             ]);
 
         const simulation = d3.forceSimulation(nodes as any)

@@ -1,8 +1,38 @@
 @import "tailwindcss";
 
-/* Theme customization */
+/* Theme customization — Design Token System */
 @theme {
+  /* Typography */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* Entity Kind Colors (consistent across graph, list, detail, calendar) */
+  --color-kind-goal: var(--color-amber-500);
+  --color-kind-project: var(--color-blue-500);
+  --color-kind-task: var(--color-emerald-500);
+  --color-kind-event: var(--color-violet-500);
+  --color-kind-activity: var(--color-pink-500);
+  --color-kind-habit: var(--color-rose-500);
+  --color-kind-tag: var(--color-slate-400);
+  --color-kind-note: var(--color-cyan-500);
+  --color-kind-context: var(--color-purple-500);
+  --color-kind-person: var(--color-orange-500);
+  --color-kind-promise: var(--color-yellow-500);
+  --color-kind-opportunity: var(--color-green-500);
+  --color-kind-ministreak: var(--color-teal-500);
+
+  /* Motion */
+  --duration-fast: 100ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Radii */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
 }
 
 /* Flowmate - Global Styles & Animations */

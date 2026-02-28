@@ -5,6 +5,8 @@
  * and shared constants for all AI operations.
  */
 
+/// <reference types="vite/client" />
+
 import { GoogleGenAI } from "@google/genai";
 import type { RetryConfig } from "../../utils/apiRetry";
 
@@ -14,7 +16,7 @@ import type { RetryConfig } from "../../utils/apiRetry";
 
 /** Returns a fresh GoogleGenAI instance using the current API key. */
 export const getAiClient = (): GoogleGenAI => {
-  return new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+  return new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
 };
 
 // ---------------------------------------------------------------------------

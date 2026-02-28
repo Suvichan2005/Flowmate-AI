@@ -2,10 +2,10 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useStore } from '../store';
 import { EntityKind, EntityStatus } from '../types';
 import { queryKnowledgeBase } from '../services/ai';
-import { Library, Search, Plus, Sparkles, X, ArrowRight, Loader2, Filter, FileText, BookOpen, Folder, Target, Calendar, CheckSquare, Square, Eye, EyeOff, User, Briefcase, GraduationCap } from 'lucide-react';
+import { Library, Search, Plus, Sparkles, X, ArrowRight, Loader2, Filter, FileText, BookOpen, Folder, Target, Calendar, CheckSquare, Square, Eye, EyeOff, User } from 'lucide-react';
 import MarkdownText from './MarkdownText';
 
-type FilterKind = 'all' | EntityKind.PERSON | EntityKind.ROLE | EntityKind.COURSE | EntityKind.TASK | EntityKind.PROJECT | EntityKind.GOAL | EntityKind.EVENT;
+type FilterKind = 'all' | EntityKind.PERSON | EntityKind.TASK | EntityKind.PROJECT | EntityKind.GOAL | EntityKind.EVENT;
 
 const KnowledgeView: React.FC = () => {
     const { entities = [], relationships = [], universalTags = [], selectEntity, applyOperations, selectedEntityId, knowledgeInitialFilters } = useStore();
@@ -235,21 +235,17 @@ const KnowledgeView: React.FC = () => {
     const kindTabs: { id: FilterKind; label: string; icon?: React.ReactNode }[] = [
         { id: 'all', label: 'All' },
         { id: EntityKind.PERSON, label: 'People', icon: <User size={14} /> },
-        { id: EntityKind.ROLE, label: 'Roles', icon: <Briefcase size={14} /> },
         { id: EntityKind.PROJECT, label: 'Projects', icon: <Folder size={14} /> },
         { id: EntityKind.GOAL, label: 'Goals', icon: <Target size={14} /> },
-        { id: EntityKind.COURSE, label: 'Courses', icon: <GraduationCap size={14} /> },
         { id: EntityKind.TASK, label: 'Tasks', icon: <CheckSquare size={14} /> },
         { id: EntityKind.EVENT, label: 'Events', icon: <Calendar size={14} /> },
     ];
 
     const getKindColorClass = (kind: EntityKind) => {
         switch (kind) {
-            case EntityKind.NOTE: return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/10'; // Fallback
+            case EntityKind.NOTE: return 'text-cyan-400 border-cyan-500/30 bg-cyan-500/10';
             case EntityKind.PERSON: return 'text-pink-400 border-pink-500/30 bg-pink-500/10';
-            case EntityKind.ROLE: return 'text-amber-400 border-amber-500/30 bg-amber-500/10';
-            case EntityKind.COURSE: return 'text-blue-400 border-blue-500/30 bg-blue-500/10';
-            case EntityKind.TOPIC: return 'text-violet-400 border-violet-500/30 bg-violet-500/10';
+            case EntityKind.CONTEXT: return 'text-amber-400 border-amber-500/30 bg-amber-500/10';
             case EntityKind.TASK: return 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10';
             case EntityKind.PROJECT: return 'text-purple-400 border-purple-500/30 bg-purple-500/10';
             case EntityKind.GOAL: return 'text-indigo-400 border-indigo-500/30 bg-indigo-500/10';

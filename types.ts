@@ -3,13 +3,10 @@
 export enum EntityKind {
   GOAL = 'GOAL',
   PROJECT = 'PROJECT',
-  COURSE = 'COURSE',
-  TOPIC = 'TOPIC',
   TASK = 'TASK',
   EVENT = 'EVENT',
   ACTIVITY = 'ACTIVITY',
   HABIT = 'HABIT',
-  ROLE = 'ROLE',
   TAG = 'TAG',
   NOTE = 'NOTE',
   CONTEXT = 'CONTEXT',
@@ -92,14 +89,81 @@ export interface ActivityLogEntry {
   color_hex?: string;
 }
 
-// Flowmate 2.5 — Opportunity Metadata (Opportunity Engine)
-export interface OpportunityMetadata {
-  type: 'lead' | 'competition' | 'connection' | 'internship' | 'collaboration';
-  source_person_id?: string;
-  source_person_name?: string;
-  potential_value?: string;
-  next_action?: string;
-  expires_at?: string;
+
+
+// --- Type-Safe Entity Metadata ---
+
+// Common metadata fields present on all entity kinds
+export interface CommonMetadata {
+  archived?: boolean;
+  deleted?: boolean;
+  hidden?: boolean;
+  activity_log?: ActivityLogEntry[];
+  _legacy?: Record<string, any>; // Migration bucket for unrecognized fields
+}
+
+// Per-kind metadata (extends CommonMetadata at the type level)
+export interface TaskMetadata extends CommonMetadata {
+  subtasks?: Subtask[];
+  productivity?: ProductivityType;
+}
+
+export interface EventMetadata extends CommonMetadata {
+  rrule?: string;
+  location?: string;
+  gcal_id?: string;
+  gcal_link?: string;
+}
+
+export interface GoalMetadata extends CommonMetadata {
+  progress?: number;      // 0-100
+  subtasks?: Subtask[];
+  milestones?: string[];
+}
+
+export interface ProjectMetadata extends CommonMetadata {
+  subtasks?: Subtask[];
+  completion_percentage?: number;
+}
+
+export interface NoteMetadata extends CommonMetadata {
+  content_format?: 'markdown' | 'plain';
+}
+
+export interface MiniStreakMetadata extends CommonMetadata {
+  streak_current: number;
+  streak_best: number;
+  last_completed_at?: string;
+  app_name?: string;
+}
+
+// Type guards for narrowing Entity metadata by kind
+export function isHabitEntity(e: Entity): e is Entity & { metadata: HabitMetadata & CommonMetadata } {
+  return e.kind === EntityKind.HABIT;
+}
+export function isTaskEntity(e: Entity): e is Entity & { metadata: TaskMetadata } {
+  return e.kind === EntityKind.TASK;
+}
+export function isEventEntity(e: Entity): e is Entity & { metadata: EventMetadata } {
+  return e.kind === EntityKind.EVENT;
+}
+export function isGoalEntity(e: Entity): e is Entity & { metadata: GoalMetadata } {
+  return e.kind === EntityKind.GOAL;
+}
+export function isProjectEntity(e: Entity): e is Entity & { metadata: ProjectMetadata } {
+  return e.kind === EntityKind.PROJECT;
+}
+export function isPersonEntity(e: Entity): e is Entity & { metadata: PersonMetadata & CommonMetadata } {
+  return e.kind === EntityKind.PERSON;
+}
+export function isPromiseEntity(e: Entity): e is Entity & { metadata: PromiseMetadata & CommonMetadata } {
+  return e.kind === EntityKind.PROMISE;
+}
+export function isNoteEntity(e: Entity): e is Entity & { metadata: NoteMetadata } {
+  return e.kind === EntityKind.NOTE;
+}
+export function isMiniStreakEntity(e: Entity): e is Entity & { metadata: MiniStreakMetadata } {
+  return e.kind === EntityKind.MINI_STREAK;
 }
 
 export enum EntityStatus {
@@ -247,7 +311,7 @@ export interface UserSettings {
 export interface DebugLogEntry {
   id: string;
   timestamp: string;
-  type: 'orchestrator' | 'sync' | 'system';
+  type: 'orchestrator' | 'sync' | 'system' | 'error' | 'warning';
   summary: string;
   details: any;
 }
@@ -268,7 +332,7 @@ export interface DailyBriefing {
 export interface Toast {
   id: string;
   message: string;
-  type: 'success' | 'error' | 'info';
+  type: 'success' | 'error' | 'info' | 'warning';
 }
 
 // Flowmate 3.0: Food Tracking
@@ -306,14 +370,7 @@ export interface FoodLogEntry {
   serving_unit?: string;
 }
 
-// Mess Menu Entry (for calendar integration)
-export interface MessMenuEntry {
-  id: string;
-  day_of_week: 0 | 1 | 2 | 3 | 4 | 5 | 6; // Sunday-Saturday
-  meal_type: 'breakfast' | 'lunch' | 'dinner';
-  items: string[];
-  is_special?: boolean;
-}
+
 
 // Flowmate 3.1: Attendance Tracking
 export interface Subject {

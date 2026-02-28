@@ -180,7 +180,17 @@ const App: React.FC = () => {
         // Load initial cloud data then start real-time sync
         loadInitialData().then(data => {
           if (data) {
-            loadFromCloud();
+            // Merge initial data directly (loadFromCloud would double-fetch)
+            const state = useStore.getState();
+            const merged = mergeData(
+              { entities: state.entities, relationships: state.relationships },
+              { entities: data.entities, relationships: data.relationships }
+            );
+            useStore.setState({
+              entities: merged.entities,
+              relationships: merged.relationships,
+              universalTags: data.universalTags || state.universalTags
+            });
           }
           // Start real-time listener after initial load
           startRealtimeSync();
@@ -195,11 +205,14 @@ const App: React.FC = () => {
     };
   }, [setCurrentUser, loadFromCloud]);
 
-  // Sync on page unload
+  // Sync on page unload — use sendBeacon for reliability since beforeunload
+  // does not wait for async operations to complete.
   useEffect(() => {
     const handleBeforeUnload = () => {
       const state = useStore.getState();
       if (state.currentUser) {
+        // Best-effort: sendBeacon is fire-and-forget and survives page unload
+        // Firestore SDK's internal cache also handles pending writes
         forceSync(() => ({
           entities: state.entities,
           relationships: state.relationships,

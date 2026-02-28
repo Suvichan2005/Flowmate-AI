@@ -228,7 +228,7 @@ export function executeLookupGoals(args: any, allEntities: Entity[]): any[] {
     if (includeSubtasks && g.metadata?.subtasks) {
       result.subtasks = (g.metadata.subtasks as any[]).map((s: any) => ({
         title: s.title,
-        done: s.is_done,
+        done: s.completed,
       }));
     }
     return result;
@@ -252,8 +252,8 @@ export function executeLookupHabits(args: any, allEntities: Entity[]): any[] {
       status: h.status,
     };
     if (includeStreaks) {
-      result.streak = h.metadata?.streak || 0;
-      result.last_done = h.metadata?.last_interaction;
+      result.streak = h.metadata?.streak_current || 0;
+      result.last_done = h.metadata?.last_completed_at;
     }
     return result;
   });

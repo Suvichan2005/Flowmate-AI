@@ -176,11 +176,19 @@ export function createRetryFetch(
 }
 
 /**
- * Circuit breaker state for preventing cascading failures
+ * Circuit breaker state machine:
+ *   CLOSED → (failures >= threshold in window) → OPEN
+ *   OPEN → (wait resetTimeoutMs) → HALF_OPEN
+ *   HALF_OPEN → (1 success) → CLOSED
+ *   HALF_OPEN → (1 failure) → OPEN
  */
+export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+
 export interface CircuitBreakerState {
+    state: CircuitState;
     failures: number;
     lastFailure: number;
+    /** @deprecated Use `state === 'OPEN'` instead */
     isOpen: boolean;
 }
 
@@ -190,17 +198,20 @@ export interface CircuitBreakerState {
 export interface CircuitBreakerConfig {
     /** Number of failures before opening circuit */
     failureThreshold: number;
-    /** Time in ms before attempting to close circuit */
+    /** Time in ms before transitioning OPEN → HALF_OPEN */
     resetTimeoutMs: number;
+    /** Time window in ms for counting failures (default: 5 minutes) */
+    failureWindowMs: number;
 }
 
 export const DEFAULT_CIRCUIT_BREAKER: CircuitBreakerConfig = {
     failureThreshold: 5,
-    resetTimeoutMs: 60000, // 1 minute
+    resetTimeoutMs: 30_000,    // 30 seconds
+    failureWindowMs: 300_000,  // 5 minutes
 };
 
 /**
- * Create a circuit breaker
+ * Create a circuit breaker with CLOSED → OPEN → HALF_OPEN state machine
  */
 export function createCircuitBreaker(
     config: Partial<CircuitBreakerConfig> = {}
@@ -208,30 +219,47 @@ export function createCircuitBreaker(
     execute: <T>(fn: () => Promise<T>) => Promise<T>;
     getState: () => CircuitBreakerState;
     reset: () => void;
+    isAvailable: () => boolean;
 } {
     const fullConfig = { ...DEFAULT_CIRCUIT_BREAKER, ...config };
     
-    const state: CircuitBreakerState = {
-        failures: 0,
-        lastFailure: 0,
-        isOpen: false,
-    };
+    let circuitState: CircuitState = 'CLOSED';
+    const failureTimestamps: number[] = [];
+    let lastFailure = 0;
     
     const reset = () => {
-        state.failures = 0;
-        state.lastFailure = 0;
-        state.isOpen = false;
+        circuitState = 'CLOSED';
+        failureTimestamps.length = 0;
+        lastFailure = 0;
+    };
+
+    const getState = (): CircuitBreakerState => ({
+        state: circuitState,
+        failures: failureTimestamps.length,
+        lastFailure,
+        isOpen: circuitState === 'OPEN',
+    });
+
+    /** Check if the breaker will accept a call right now */
+    const isAvailable = (): boolean => {
+        if (circuitState === 'CLOSED') return true;
+        if (circuitState === 'OPEN') {
+            // Check if enough time has passed to transition to HALF_OPEN
+            if (Date.now() - lastFailure >= fullConfig.resetTimeoutMs) {
+                return true; // Will become HALF_OPEN on next execute
+            }
+            return false;
+        }
+        // HALF_OPEN: allow exactly one probe call
+        return true;
     };
     
     const execute = async <T>(fn: () => Promise<T>): Promise<T> => {
-        // Check if circuit is open
-        if (state.isOpen) {
-            const timeSinceLastFailure = Date.now() - state.lastFailure;
-            
-            // Try to close circuit after timeout
+        if (circuitState === 'OPEN') {
+            const timeSinceLastFailure = Date.now() - lastFailure;
             if (timeSinceLastFailure >= fullConfig.resetTimeoutMs) {
-                state.isOpen = false;
-                state.failures = 0;
+                // Transition OPEN → HALF_OPEN: allow one probe call
+                circuitState = 'HALF_OPEN';
             } else {
                 throw new Error('Circuit breaker is open. Service temporarily unavailable.');
             }
@@ -239,17 +267,39 @@ export function createCircuitBreaker(
         
         try {
             const result = await fn();
-            // Success - reset failure count
-            state.failures = 0;
+
+            if (circuitState === 'HALF_OPEN') {
+                // Probe succeeded → HALF_OPEN → CLOSED
+                reset();
+            } else {
+                // CLOSED: clear stale failures outside window
+                const windowStart = Date.now() - fullConfig.failureWindowMs;
+                while (failureTimestamps.length > 0 && failureTimestamps[0] < windowStart) {
+                    failureTimestamps.shift();
+                }
+            }
+
             return result;
         } catch (error) {
-            // Record failure
-            state.failures++;
-            state.lastFailure = Date.now();
-            
-            // Open circuit if threshold exceeded
-            if (state.failures >= fullConfig.failureThreshold) {
-                state.isOpen = true;
+            const now = Date.now();
+            lastFailure = now;
+
+            if (circuitState === 'HALF_OPEN') {
+                // Probe failed → HALF_OPEN → OPEN
+                circuitState = 'OPEN';
+            } else {
+                // CLOSED: record failure, check threshold
+                failureTimestamps.push(now);
+
+                // Prune old failures outside window
+                const windowStart = now - fullConfig.failureWindowMs;
+                while (failureTimestamps.length > 0 && failureTimestamps[0] < windowStart) {
+                    failureTimestamps.shift();
+                }
+
+                if (failureTimestamps.length >= fullConfig.failureThreshold) {
+                    circuitState = 'OPEN';
+                }
             }
             
             throw error;
@@ -258,8 +308,9 @@ export function createCircuitBreaker(
     
     return {
         execute,
-        getState: () => ({ ...state }),
+        getState,
         reset,
+        isAvailable,
     };
 }
 

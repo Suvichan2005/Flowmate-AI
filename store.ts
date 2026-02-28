@@ -145,6 +145,9 @@ interface FlowmateState {
     // Computed
     getXP: () => number;
 
+    // Auto-maintenance
+    autoArchiveStaleEntities: () => number;
+
     // Auth & Cloud Sync
     setCurrentUser: (user: User | null) => void;
     setCloudSyncEnabled: (enabled: boolean) => void;
@@ -636,6 +639,7 @@ export const useStore = create<FlowmateState>()(
                     let newEntities = [...(state.entities || [])];
                     let newRelationships = [...(state.relationships || [])];
                     let newUniversalTags = [...(state.universalTags || [])];
+                    let newFoodLogs: FoodLogEntry[] | null = null;
 
                     const sideEffectOps: ToonOperation[] = [];
 
@@ -831,16 +835,34 @@ export const useStore = create<FlowmateState>()(
                                 }
 
                                 case 'delete_entity': {
-                                    let targetId = payload.id;
-                                    if (!newEntities.find(e => e.id === targetId)) {
-                                        targetId = resolveEntityId(payload.id, newEntities) || targetId;
+                                    // SOFT DELETE: Mark as deleted instead of hard removing
+                                    // This allows sync to propagate the deletion properly
+                                    const entityId = payload.id || payload.entity_id;
+                                    const resolvedId = resolveEntityId(entityId, newEntities);
+                                    if (!resolvedId) {
+                                        addDebugLog('system', 'delete_entity: Entity not found', { id: entityId });
+                                        break;
                                     }
 
                                     // Remove from universal tags if applicable
-                                    newUniversalTags = newUniversalTags.filter(t => t.id !== targetId);
+                                    newUniversalTags = newUniversalTags.filter(t => t.id !== resolvedId);
 
-                                    newEntities = newEntities.filter(e => e.id !== targetId);
-                                    newRelationships = newRelationships.filter(r => r.from !== targetId && r.to !== targetId);
+                                    newEntities = newEntities.map(e =>
+                                        e.id === resolvedId
+                                            ? {
+                                                ...e,
+                                                metadata: { ...e.metadata, deleted: true },
+                                                updated_at: now
+                                            }
+                                            : e
+                                    );
+
+                                    // Also remove relationships involving this entity
+                                    newRelationships = newRelationships.filter(
+                                        r => r.from !== resolvedId && r.to !== resolvedId
+                                    );
+
+                                    addDebugLog('system', 'Soft-deleted entity', { id: resolvedId });
                                     break;
                                 }
 
@@ -965,35 +987,6 @@ export const useStore = create<FlowmateState>()(
                                             }
                                         }
                                     }
-                                    break;
-                                }
-
-                                case 'delete_entity': {
-                                    // SOFT DELETE: Mark as deleted instead of removing
-                                    // This allows sync to propagate the deletion properly
-                                    const entityId = payload.id || payload.entity_id;
-                                    const resolvedId = resolveEntityId(entityId, newEntities);
-                                    if (!resolvedId) {
-                                        addDebugLog('system', 'delete_entity: Entity not found', { id: entityId });
-                                        break;
-                                    }
-
-                                    newEntities = newEntities.map(e =>
-                                        e.id === resolvedId
-                                            ? {
-                                                ...e,
-                                                metadata: { ...e.metadata, deleted: true },
-                                                updated_at: now
-                                            }
-                                            : e
-                                    );
-
-                                    // Also remove relationships involving this entity
-                                    newRelationships = newRelationships.filter(
-                                        r => r.from !== resolvedId && r.to !== resolvedId
-                                    );
-
-                                    addDebugLog('system', 'Soft-deleted entity', { id: resolvedId });
                                     break;
                                 }
 
@@ -1367,13 +1360,8 @@ export const useStore = create<FlowmateState>()(
                                         skipped: payload.skipped // For skipped meals
                                     };
 
-                                    // Store will add this to foodLogs after the switch
-                                    // For now, we'll use a side effect
-                                    setTimeout(() => {
-                                        set(state => ({
-                                            foodLogs: [...state.foodLogs, foodEntry]
-                                        }));
-                                    }, 0);
+                                    // Add directly to state (returned from set() below)
+                                    newFoodLogs = [...(newFoodLogs || state.foodLogs), foodEntry];
 
                                     triggerConfetti();
                                     break;
@@ -1405,7 +1393,10 @@ export const useStore = create<FlowmateState>()(
                         created_at: new Date().toISOString()
                     }));
 
-                    const currentSyncQueue = state.syncQueue || [];
+                    // Cap syncQueue: keep only pending + recent items (max 200)
+                    const currentSyncQueue = (state.syncQueue || [])
+                        .filter(item => item.status === 'pending' || item.status === 'in_progress');
+                    const cappedQueue = [...currentSyncQueue, ...newSyncItems].slice(-200);
 
                     return {
                         history: newHistory,
@@ -1414,7 +1405,8 @@ export const useStore = create<FlowmateState>()(
                         relationships: newRelationships,
                         universalTags: newUniversalTags,
                         pendingOps: null,
-                        syncQueue: [...currentSyncQueue, ...newSyncItems]
+                        syncQueue: cappedQueue,
+                        ...(newFoodLogs ? { foodLogs: newFoodLogs } : {})
                     };
                 });
 
@@ -1434,7 +1426,7 @@ export const useStore = create<FlowmateState>()(
         {
             name: 'flowmate-storage',
             storage: asyncStorage,
-            version: 15,
+            version: 16,
             // Only persist data that should survive page reloads
             partialize: (state: FlowmateState) => ({
                 entities: state.entities,
@@ -1494,6 +1486,32 @@ export const useStore = create<FlowmateState>()(
                         ...t,
                         usage_count: usageMap[t.id] || 0
                     }));
+                }
+
+                // Migration v15→v16: Remap dead EntityKinds, normalize metadata fields
+                if (version < 16) {
+                    safeEntities.forEach(e => {
+                        // Remap dead kinds
+                        if ((e.kind as string) === 'COURSE') e.kind = EntityKind.PROJECT;
+                        if ((e.kind as string) === 'TOPIC') e.kind = EntityKind.TAG;
+                        if ((e.kind as string) === 'ROLE') e.kind = EntityKind.CONTEXT;
+
+                        // Normalize metadata field names
+                        if (e.metadata?.streak !== undefined) {
+                            e.metadata.streak_current = e.metadata.streak;
+                            delete e.metadata.streak;
+                        }
+                        if (e.metadata?.last_interaction !== undefined) {
+                            e.metadata.last_completed_at = e.metadata.last_interaction;
+                            delete e.metadata.last_interaction;
+                        }
+                    });
+
+                    // Clean up orphaned relationships
+                    const entityIds = new Set(safeEntities.map(e => e.id));
+                    const cleanedRelationships = safeRelationships.filter(r => entityIds.has(r.from) && entityIds.has(r.to));
+                    safeRelationships.length = 0;
+                    cleanedRelationships.forEach(r => safeRelationships.push(r));
                 }
 
                 const mergedSettings = {
