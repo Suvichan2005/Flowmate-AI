@@ -5,7 +5,7 @@ import { CalendarClock, Utensils, Upload, FileText, ExternalLink, Calendar as Ca
 import MarkdownText from './MarkdownText';
 
 const SchedulesView: React.FC = () => {
-    const { entities, addMessage, setView } = useStore();
+    const { entities, setView } = useStore();
     // In a real implementation, we would toggle 'isChatOpen' in App.tsx via a global state or event.
     // However, App.tsx controls chat visibility.
     // For now, we will assume user manually opens chat or we trigger a command if possible.
@@ -43,8 +43,7 @@ const SchedulesView: React.FC = () => {
                         <button
                             className="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-lg border border-indigo-500/30 transition-colors flex items-center gap-2"
                             onClick={() => {
-                                // Trigger instructions
-                                alert("Open the Chat > Switch to 'Schedules' tab > Upload your schedule image.");
+                                setView('chat_graph');
                             }}
                         >
                             <Upload size={12} />
@@ -90,7 +89,7 @@ const SchedulesView: React.FC = () => {
                         <button
                             className="text-xs bg-orange-600/20 hover:bg-orange-600/40 text-orange-300 px-3 py-1.5 rounded-lg border border-orange-500/30 transition-colors flex items-center gap-2"
                             onClick={() => {
-                                alert("Open the Chat > Switch to 'Schedules' tab > Upload your mess menu.");
+                                setView('chat_graph');
                             }}
                         >
                             <Upload size={12} />

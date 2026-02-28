@@ -4,24 +4,48 @@
  * 
  * Features:
  * - Auto-sync on state changes with debouncing (2s)
- * - Real-time listener for remote changes
- * - Optimistic updates
- * - Offline queue with retry
+ * - Real-time listeners for entities, relationships, config, AND messages
+ * - Individual message sync (write-through, no debounce)
+ * - Food logs and attendance sync
+ * - Optimistic updates with conflict resolution
  * - Connection status tracking
  */
 
-import { saveUserData, loadUserData, subscribeToUserData, unsubscribeFromUserData, mergeData } from './firestoreSync';
+import {
+    saveUserData,
+    loadUserData,
+    subscribeToUserData,
+    unsubscribeFromUserData,
+    mergeData,
+    mergeMessages,
+    saveMessage as saveMessageToFirestore,
+    saveFoodLogs,
+    saveAttendanceData,
+    UserData,
+} from './firestoreSync';
 import { isFirebaseConfigured } from './firebase';
+import type { Message, FoodLogEntry, Subject, ClassSchedule, Holiday, AttendanceLog, UserSettings } from '../types';
 
 // Sync state
 let syncUserId: string | null = null;
 let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let isSyncing = false;
 let realtimeUnsubscribe: (() => void) | null = null;
+let lastSyncTimestamp: string | null = null;
+
+// Track message IDs we've just written to suppress echo from onSnapshot
+const recentlyWrittenMessageIds = new Set<string>();
+const MESSAGE_ECHO_TIMEOUT_MS = 5000;
 
 // Listeners for store updates (will be connected from store.ts)
 type OnSyncStatusChange = (status: 'idle' | 'syncing' | 'error', error?: string) => void;
-type OnRemoteDataChange = (data: { entities: any[]; relationships: any[]; universalTags: any[] }) => void;
+type OnRemoteDataChange = (data: {
+    entities: any[];
+    relationships: any[];
+    universalTags: any[];
+    messages?: Message[];
+    settings?: Partial<UserSettings>;
+}) => void;
 
 let onSyncStatusChange: OnSyncStatusChange | null = null;
 let onRemoteDataChange: OnRemoteDataChange | null = null;
@@ -63,11 +87,18 @@ export const startRealtimeSync = (): (() => void) | null => {
     realtimeUnsubscribe = subscribeToUserData(syncUserId, (data) => {
         // Only process if we're not currently pushing an update
         if (!isSyncing && onRemoteDataChange) {
+            // Filter out messages we just wrote (echo suppression)
+            const filteredMessages = (data.messages || []).filter(
+                (m: Message) => !recentlyWrittenMessageIds.has(m.id)
+            );
+
             console.log('[SyncManager] Received remote update');
             onRemoteDataChange({
                 entities: data.entities || [],
                 relationships: data.relationships || [],
-                universalTags: data.universalTags || []
+                universalTags: data.universalTags || [],
+                messages: filteredMessages,
+                settings: data.settings,
             });
         }
     });
@@ -92,7 +123,7 @@ export const stopRealtimeSync = () => {
  * Call this whenever local state changes
  */
 export const scheduleSync = (
-    getData: () => { entities: any[]; relationships: any[]; universalTags: any[] }
+    getData: () => { entities: any[]; relationships: any[]; universalTags: any[]; settings?: Partial<UserSettings> }
 ) => {
     if (!syncUserId || !isFirebaseConfigured()) {
         return;
@@ -114,7 +145,7 @@ export const scheduleSync = (
  * Use for critical operations like sign-out or page unload
  */
 export const forceSync = async (
-    getData: () => { entities: any[]; relationships: any[]; universalTags: any[] }
+    getData: () => { entities: any[]; relationships: any[]; universalTags: any[]; settings?: Partial<UserSettings> }
 ): Promise<boolean> => {
     if (!syncUserId || !isFirebaseConfigured()) {
         return false;
@@ -130,10 +161,12 @@ export const forceSync = async (
 };
 
 /**
- * Perform the actual sync operation
+ * Perform the actual sync operation.
+ * Incremental: only writes entities/relationships changed since lastSyncTimestamp.
+ * Falls back to full save on first sync or error.
  */
 const performSync = async (
-    getData: () => { entities: any[]; relationships: any[]; universalTags: any[] }
+    getData: () => { entities: any[]; relationships: any[]; universalTags: any[]; settings?: Partial<UserSettings> }
 ): Promise<boolean> => {
     if (!syncUserId || isSyncing) {
         return false;
@@ -144,20 +177,64 @@ const performSync = async (
 
     try {
         const data = getData();
-        const success = await saveUserData(syncUserId, {
-            entities: data.entities,
-            relationships: data.relationships,
-            universalTags: data.universalTags
-        });
+        const { syncEntities, syncRelationships, saveUserConfig } = await import('./firestoreSync');
+        const now = new Date().toISOString();
 
-        if (success) {
-            console.log('[SyncManager] Sync successful');
-            onSyncStatusChange?.('idle');
-            return true;
+        if (lastSyncTimestamp) {
+            // Incremental sync: only write entities modified since last sync
+            const changedEntities = data.entities.filter((e: any) => {
+                const updatedAt = e.updated_at || e.created_at;
+                return updatedAt && updatedAt > lastSyncTimestamp!;
+            });
+            const changedRelationships = data.relationships.filter((r: any) => {
+                return r.created_at && r.created_at > lastSyncTimestamp!;
+            });
+
+            const promises: Promise<boolean>[] = [];
+            if (changedEntities.length > 0) {
+                promises.push(syncEntities(syncUserId!, changedEntities));
+            }
+            if (changedRelationships.length > 0) {
+                promises.push(syncRelationships(syncUserId!, changedRelationships));
+            }
+            // Always update config (tags, settings) — it's a single doc
+            promises.push(saveUserConfig(syncUserId!, {
+                universalTags: data.universalTags,
+                settings: data.settings,
+            }));
+
+            const results = await Promise.all(promises);
+            const allSuccess = results.every(r => r);
+
+            if (allSuccess) {
+                lastSyncTimestamp = now;
+                console.log(`[SyncManager] Incremental sync: ${changedEntities.length} entities, ${changedRelationships.length} rels`);
+                onSyncStatusChange?.('idle');
+                return true;
+            } else {
+                console.warn('[SyncManager] Partial sync failure, will retry');
+                onSyncStatusChange?.('error', 'Partial sync failure');
+                return false;
+            }
         } else {
-            console.error('[SyncManager] Sync failed');
-            onSyncStatusChange?.('error', 'Sync failed');
-            return false;
+            // First sync: full save
+            const success = await saveUserData(syncUserId, {
+                entities: data.entities,
+                relationships: data.relationships,
+                universalTags: data.universalTags,
+                settings: data.settings,
+            });
+
+            if (success) {
+                lastSyncTimestamp = now;
+                console.log('[SyncManager] Full initial sync successful');
+                onSyncStatusChange?.('idle');
+                return true;
+            } else {
+                console.error('[SyncManager] Initial sync failed');
+                onSyncStatusChange?.('error', 'Sync failed');
+                return false;
+            }
         }
     } catch (error) {
         console.error('[SyncManager] Sync error:', error);
@@ -170,13 +247,9 @@ const performSync = async (
 
 /**
  * Load initial data from cloud
- * Call after initializeSync
+ * Returns full data: entities, relationships, tags, messages, food, attendance
  */
-export const loadInitialData = async (): Promise<{
-    entities: any[];
-    relationships: any[];
-    universalTags: any[];
-} | null> => {
+export const loadInitialData = async (): Promise<UserData | null> => {
     if (!syncUserId || !isFirebaseConfigured()) {
         return null;
     }
@@ -184,12 +257,8 @@ export const loadInitialData = async (): Promise<{
     try {
         const data = await loadUserData(syncUserId);
         if (data) {
-            console.log('[SyncManager] Loaded initial data:', data.entities.length, 'entities');
-            return {
-                entities: data.entities,
-                relationships: data.relationships,
-                universalTags: data.universalTags || []
-            };
+            console.log('[SyncManager] Loaded initial data:', data.entities.length, 'entities,', data.messages.length, 'messages');
+            return data;
         }
         return null;
     } catch (error) {
@@ -210,6 +279,61 @@ export const mergeWithLocal = (
 };
 
 /**
+ * Merge remote messages with local messages
+ */
+export const mergeMessagesWithLocal = (
+    local: Message[],
+    remote: Message[]
+): Message[] => {
+    return mergeMessages(local, remote);
+};
+
+/**
+ * Sync a single message to Firestore immediately (write-through).
+ * Does NOT debounce — messages are written as they arrive.
+ */
+export const syncMessage = async (message: Message): Promise<boolean> => {
+    if (!syncUserId || !isFirebaseConfigured()) {
+        return false;
+    }
+
+    // Add to echo suppression set
+    recentlyWrittenMessageIds.add(message.id);
+    setTimeout(() => {
+        recentlyWrittenMessageIds.delete(message.id);
+    }, MESSAGE_ECHO_TIMEOUT_MS);
+
+    try {
+        return await saveMessageToFirestore(syncUserId, message);
+    } catch (error) {
+        console.error('[SyncManager] Message sync failed:', error);
+        recentlyWrittenMessageIds.delete(message.id);
+        return false;
+    }
+};
+
+/**
+ * Sync food logs to Firestore
+ */
+export const syncFoodLogsToCloud = async (foodLogs: FoodLogEntry[]): Promise<boolean> => {
+    if (!syncUserId || !isFirebaseConfigured()) return false;
+    return saveFoodLogs(syncUserId, foodLogs);
+};
+
+/**
+ * Sync attendance data to Firestore
+ */
+export const syncAttendanceToCloud = async (data: {
+    subjects: Subject[];
+    classSchedule: ClassSchedule[];
+    holidays: Holiday[];
+    attendanceLogs: AttendanceLog[];
+}): Promise<boolean> => {
+    if (!syncUserId || !isFirebaseConfigured()) return false;
+    return saveAttendanceData(syncUserId, data);
+};
+
+/**
  * Clean up sync manager
  * Call on logout
  */
@@ -219,6 +343,8 @@ export const cleanupSync = () => {
         syncDebounceTimer = null;
     }
     stopRealtimeSync();
+    recentlyWrittenMessageIds.clear();
+    lastSyncTimestamp = null;
     syncUserId = null;
     onSyncStatusChange = null;
     onRemoteDataChange = null;

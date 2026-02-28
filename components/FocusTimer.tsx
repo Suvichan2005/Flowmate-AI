@@ -6,6 +6,8 @@ const FocusTimer: React.FC = () => {
   const { focusSession, endFocusSession, entities, applyOperations, addMessage } = useStore();
   const [timeLeft, setTimeLeft] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [completed, setCompleted] = useState(false);
 
   // Initialize timer
   useEffect(() => {
@@ -28,6 +30,14 @@ const FocusTimer: React.FC = () => {
 
     return () => clearInterval(interval);
   }, [focusSession, isPaused, timeLeft]);
+
+  // Auto-complete when timer reaches 0
+  useEffect(() => {
+    if (focusSession && timeLeft === 0 && !completed) {
+      setCompleted(true);
+      handleComplete();
+    }
+  }, [timeLeft, focusSession, completed]);
 
   if (!focusSession) return null;
 
@@ -62,8 +72,11 @@ const FocusTimer: React.FC = () => {
   };
 
   const handleCancel = () => {
-      if (confirm("Stop focus session without logging?")) {
+      if (confirmingCancel) {
           endFocusSession();
+      } else {
+          setConfirmingCancel(true);
+          setTimeout(() => setConfirmingCancel(false), 3000);
       }
   };
 
@@ -83,8 +96,8 @@ const FocusTimer: React.FC = () => {
                     <Timer className="animate-pulse" size={18} />
                     <span>Focus Mode</span>
                 </div>
-                <button onClick={handleCancel} className="text-slate-500 hover:text-slate-300">
-                    <X size={16} />
+                <button onClick={handleCancel} className={`text-sm px-2 py-1 rounded-lg transition-all ${confirmingCancel ? 'bg-red-500/20 text-red-400 font-medium' : 'text-slate-500 hover:text-slate-300'}`}>
+                    {confirmingCancel ? 'Confirm?' : <X size={16} />}
                 </button>
             </div>
 

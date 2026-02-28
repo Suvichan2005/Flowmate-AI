@@ -2,7 +2,6 @@ import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { EntityKind, EntityStatus, RelationshipType, Entity } from '../types';
 import { Clock, CheckCircle2, Target, Calendar, TrendingUp, Sparkles, RefreshCw, ArrowRight, Zap, Briefcase, AlertTriangle, Link, Layers, X, Bot, CalendarClock, ListTodo, Flame, Trophy, Wand2 } from 'lucide-react';
-import ActivityHeatmap from './ActivityHeatmap';
 import MomentumHeatmap from './MomentumHeatmap';
 import MarkdownText from './MarkdownText';
 import { calculateProgress } from '../utils/progressCalculation';

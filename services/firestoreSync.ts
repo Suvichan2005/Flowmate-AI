@@ -1,5 +1,11 @@
-// Firestore Sync Service — Granular subcollection-based sync
-// Schema: users/{uid}/entities/{id}, users/{uid}/relationships/{id}, users/{uid}/config
+﻿// Firestore Sync Service — Granular subcollection-based sync
+// Schema:
+//   users/{uid}                    → config (tags, settings, schemaVersion)
+//   users/{uid}/entities/{id}      → Entity docs
+//   users/{uid}/relationships/{id} → Relationship docs
+//   users/{uid}/messages/{id}      → Message docs (chat history, real-time sync)
+//   users/{uid}/meta/food          → { foodLogs: FoodLogEntry[] }
+//   users/{uid}/meta/attendance    → { subjects, classSchedule, holidays, attendanceLogs }
 
 import {
     doc,
@@ -7,23 +13,35 @@ import {
     setDoc,
     getDoc,
     getDocs,
-    deleteDoc,
     writeBatch,
     serverTimestamp,
     Timestamp,
     onSnapshot,
     Unsubscribe,
     query,
-    DocumentChange,
+    orderBy,
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from './firebase';
-import { Entity, Relationship, TagDefinition } from '../types';
+import {
+    Entity,
+    Relationship,
+    TagDefinition,
+    Message,
+    FoodLogEntry,
+    UserSettings,
+    Subject,
+    ClassSchedule,
+    Holiday,
+    AttendanceLog,
+} from '../types';
 
 // --- Collection Paths ---
 
 const usersCol = 'users';
 const entitiesSubCol = 'entities';
 const relationshipsSubCol = 'relationships';
+const messagesSubCol = 'messages';
+const metaSubCol = 'meta';
 
 function userDoc(uid: string) {
     return doc(db!, usersCol, uid);
@@ -45,10 +63,23 @@ function relationshipDoc(uid: string, relId: string) {
     return doc(db!, usersCol, uid, relationshipsSubCol, relId);
 }
 
+function messagesCol(uid: string) {
+    return collection(db!, usersCol, uid, messagesSubCol);
+}
+
+function messageDoc(uid: string, msgId: string) {
+    return doc(db!, usersCol, uid, messagesSubCol, msgId);
+}
+
+function metaDoc(uid: string, docName: string) {
+    return doc(db!, usersCol, uid, metaSubCol, docName);
+}
+
 // --- Types ---
 
 export interface UserConfig {
     universalTags: TagDefinition[];
+    settings?: Partial<UserSettings>;
     lastSyncedAt: Timestamp | null;
     schemaVersion: number;
 }
@@ -57,6 +88,13 @@ export interface UserData {
     entities: Entity[];
     relationships: Relationship[];
     universalTags: TagDefinition[];
+    messages: Message[];
+    settings?: Partial<UserSettings>;
+    foodLogs: FoodLogEntry[];
+    subjects: Subject[];
+    classSchedule: ClassSchedule[];
+    holidays: Holiday[];
+    attendanceLogs: AttendanceLog[];
     lastSyncedAt: Timestamp | null;
 }
 
@@ -66,17 +104,18 @@ interface ActiveListeners {
     entities: Unsubscribe | null;
     relationships: Unsubscribe | null;
     config: Unsubscribe | null;
+    messages: Unsubscribe | null;
 }
 
 const listeners: ActiveListeners = {
     entities: null,
     relationships: null,
     config: null,
+    messages: null,
 };
 
 /**
  * Subscribe to real-time entity changes.
- * Calls onUpdate with the full entity list whenever any entity changes.
  */
 export function subscribeToEntities(
     userId: string,
@@ -90,8 +129,8 @@ export function subscribeToEntities(
 
     const unsub = onSnapshot(q, (snapshot) => {
         const entities: Entity[] = [];
-        snapshot.forEach((doc) => {
-            entities.push({ id: doc.id, ...doc.data() } as Entity);
+        snapshot.forEach((d) => {
+            entities.push({ id: d.id, ...d.data() } as Entity);
         });
         console.log(`[FirestoreSync] Entities snapshot: ${entities.length} docs`);
         onUpdate(entities);
@@ -118,8 +157,8 @@ export function subscribeToRelationships(
 
     const unsub = onSnapshot(q, (snapshot) => {
         const relationships: Relationship[] = [];
-        snapshot.forEach((doc) => {
-            relationships.push({ id: doc.id, ...doc.data() } as Relationship);
+        snapshot.forEach((d) => {
+            relationships.push({ id: d.id, ...d.data() } as Relationship);
         });
         console.log(`[FirestoreSync] Relationships snapshot: ${relationships.length} docs`);
         onUpdate(relationships);
@@ -147,6 +186,7 @@ export function subscribeToConfig(
             const data = snap.data();
             onUpdate({
                 universalTags: data.universalTags || [],
+                settings: data.settings || undefined,
                 lastSyncedAt: data.lastSyncedAt || null,
                 schemaVersion: data.schemaVersion || 1,
             });
@@ -160,23 +200,57 @@ export function subscribeToConfig(
 }
 
 /**
- * Combined subscription for backward compatibility.
+ * Subscribe to real-time message changes.
+ * Orders by created_at ascending for chat display.
+ */
+export function subscribeToMessages(
+    userId: string,
+    onUpdate: (messages: Message[]) => void,
+): Unsubscribe {
+    if (!isFirebaseConfigured() || !db) return () => {};
+
+    listeners.messages?.();
+
+    const q = query(messagesCol(userId), orderBy('created_at', 'asc'));
+
+    const unsub = onSnapshot(q, (snapshot) => {
+        const messages: Message[] = [];
+        snapshot.forEach((d) => {
+            messages.push({ id: d.id, ...d.data() } as Message);
+        });
+        console.log(`[FirestoreSync] Messages snapshot: ${messages.length} docs`);
+        onUpdate(messages);
+    }, (error) => {
+        console.error('[FirestoreSync] Messages listener error:', error);
+    });
+
+    listeners.messages = unsub;
+    return unsub;
+}
+
+/**
+ * Combined subscription for all user data.
+ * Fires onDataChange whenever any subcollection changes.
  */
 export const subscribeToUserData = (
     userId: string,
-    onDataChange: (data: UserData) => void,
+    onDataChange: (data: Partial<UserData>) => void,
 ): Unsubscribe => {
     if (!isFirebaseConfigured() || !db) return () => {};
 
     let currentEntities: Entity[] = [];
     let currentRelationships: Relationship[] = [];
     let currentTags: TagDefinition[] = [];
+    let currentMessages: Message[] = [];
+    let currentSettings: Partial<UserSettings> | undefined;
 
     const notify = () => {
         onDataChange({
             entities: currentEntities,
             relationships: currentRelationships,
             universalTags: currentTags,
+            messages: currentMessages,
+            settings: currentSettings,
             lastSyncedAt: null,
         });
     };
@@ -193,6 +267,12 @@ export const subscribeToUserData = (
 
     const unsub3 = subscribeToConfig(userId, (config) => {
         currentTags = config.universalTags;
+        currentSettings = config.settings;
+        notify();
+    });
+
+    const unsub4 = subscribeToMessages(userId, (messages) => {
+        currentMessages = messages;
         notify();
     });
 
@@ -200,6 +280,7 @@ export const subscribeToUserData = (
         unsub1();
         unsub2();
         unsub3();
+        unsub4();
     };
 };
 
@@ -207,9 +288,11 @@ export const unsubscribeFromUserData = () => {
     listeners.entities?.();
     listeners.relationships?.();
     listeners.config?.();
+    listeners.messages?.();
     listeners.entities = null;
     listeners.relationships = null;
     listeners.config = null;
+    listeners.messages = null;
 };
 
 // --- Read Operations ---
@@ -221,27 +304,71 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
         // Load entities
         const entitiesSnap = await getDocs(entitiesCol(userId));
         const entities: Entity[] = [];
-        entitiesSnap.forEach((doc) => {
-            entities.push({ id: doc.id, ...doc.data() } as Entity);
+        entitiesSnap.forEach((d) => {
+            entities.push({ id: d.id, ...d.data() } as Entity);
         });
 
         // Load relationships
         const relsSnap = await getDocs(relationshipsCol(userId));
         const relationships: Relationship[] = [];
-        relsSnap.forEach((doc) => {
-            relationships.push({ id: doc.id, ...doc.data() } as Relationship);
+        relsSnap.forEach((d) => {
+            relationships.push({ id: d.id, ...d.data() } as Relationship);
+        });
+
+        // Load messages
+        const msgsQuery = query(messagesCol(userId), orderBy('created_at', 'asc'));
+        const msgsSnap = await getDocs(msgsQuery);
+        const messages: Message[] = [];
+        msgsSnap.forEach((d) => {
+            messages.push({ id: d.id, ...d.data() } as Message);
         });
 
         // Load config
         const configSnap = await getDoc(userDoc(userId));
         const configData = configSnap.exists() ? configSnap.data() : {};
 
-        console.log(`[FirestoreSync] Loaded: ${entities.length} entities, ${relationships.length} relationships`);
+        // Load food logs
+        let foodLogs: FoodLogEntry[] = [];
+        try {
+            const foodSnap = await getDoc(metaDoc(userId, 'food'));
+            if (foodSnap.exists()) {
+                foodLogs = foodSnap.data().foodLogs || [];
+            }
+        } catch (e) {
+            console.warn('[FirestoreSync] Food logs load failed:', e);
+        }
+
+        // Load attendance data
+        let subjects: Subject[] = [];
+        let classSchedule: ClassSchedule[] = [];
+        let holidays: Holiday[] = [];
+        let attendanceLogs: AttendanceLog[] = [];
+        try {
+            const attSnap = await getDoc(metaDoc(userId, 'attendance'));
+            if (attSnap.exists()) {
+                const data = attSnap.data();
+                subjects = data.subjects || [];
+                classSchedule = data.classSchedule || [];
+                holidays = data.holidays || [];
+                attendanceLogs = data.attendanceLogs || [];
+            }
+        } catch (e) {
+            console.warn('[FirestoreSync] Attendance data load failed:', e);
+        }
+
+        console.log(`[FirestoreSync] Loaded: ${entities.length} entities, ${relationships.length} rels, ${messages.length} msgs`);
 
         return {
             entities,
             relationships,
             universalTags: configData?.universalTags || [],
+            settings: configData?.settings || undefined,
+            messages,
+            foodLogs,
+            subjects,
+            classSchedule,
+            holidays,
+            attendanceLogs,
             lastSyncedAt: configData?.lastSyncedAt || null,
         };
     } catch (error) {
@@ -253,19 +380,63 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
 // --- Write Operations ---
 
 /**
+ * Save a single message to Firestore.
+ */
+export async function saveMessage(userId: string, message: Message): Promise<boolean> {
+    if (!isFirebaseConfigured() || !db) return false;
+
+    try {
+        const { id, ...data } = message;
+        await setDoc(messageDoc(userId, id), data);
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Message save failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Save multiple messages to Firestore in a batch.
+ */
+export async function saveMessages(userId: string, messages: Message[]): Promise<boolean> {
+    if (!isFirebaseConfigured() || !db || messages.length === 0) return false;
+
+    try {
+        const BATCH_SIZE = 450;
+        for (let i = 0; i < messages.length; i += BATCH_SIZE) {
+            const batch = writeBatch(db);
+            const chunk = messages.slice(i, i + BATCH_SIZE);
+            for (const msg of chunk) {
+                const { id, ...data } = msg;
+                batch.set(messageDoc(userId, id), data);
+            }
+            await batch.commit();
+        }
+        console.log(`[FirestoreSync] Saved ${messages.length} messages`);
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Messages batch save failed:', error);
+        return false;
+    }
+}
+
+/**
  * Sync specific changed entities to Firestore (granular write).
- * Uses a batch write for efficiency.
  */
 export async function syncEntities(userId: string, entities: Entity[]): Promise<boolean> {
     if (!isFirebaseConfigured() || !db || entities.length === 0) return false;
 
     try {
-        const batch = writeBatch(db);
-        for (const entity of entities) {
-            const { id, ...data } = entity;
-            batch.set(entityDoc(userId, id), data);
+        const BATCH_SIZE = 450;
+        for (let i = 0; i < entities.length; i += BATCH_SIZE) {
+            const batch = writeBatch(db);
+            const chunk = entities.slice(i, i + BATCH_SIZE);
+            for (const entity of chunk) {
+                const { id, ...data } = entity;
+                batch.set(entityDoc(userId, id), data);
+            }
+            await batch.commit();
         }
-        await batch.commit();
         console.log(`[FirestoreSync] Synced ${entities.length} entities`);
         return true;
     } catch (error) {
@@ -281,12 +452,16 @@ export async function syncRelationships(userId: string, relationships: Relations
     if (!isFirebaseConfigured() || !db || relationships.length === 0) return false;
 
     try {
-        const batch = writeBatch(db);
-        for (const rel of relationships) {
-            const { id, ...data } = rel;
-            batch.set(relationshipDoc(userId, id), data);
+        const BATCH_SIZE = 450;
+        for (let i = 0; i < relationships.length; i += BATCH_SIZE) {
+            const batch = writeBatch(db);
+            const chunk = relationships.slice(i, i + BATCH_SIZE);
+            for (const rel of chunk) {
+                const { id, ...data } = rel;
+                batch.set(relationshipDoc(userId, id), data);
+            }
+            await batch.commit();
         }
-        await batch.commit();
         console.log(`[FirestoreSync] Synced ${relationships.length} relationships`);
         return true;
     } catch (error) {
@@ -335,7 +510,7 @@ export async function deleteRelationshipsFromCloud(userId: string, relIds: strin
 }
 
 /**
- * Save user config (tags, metadata) to the user document.
+ * Save user config (tags, settings, metadata) to the user document.
  */
 export async function saveUserConfig(
     userId: string,
@@ -357,7 +532,40 @@ export async function saveUserConfig(
 }
 
 /**
- * Full save — writes all entities and relationships to subcollections.
+ * Save food logs to meta/food document.
+ */
+export async function saveFoodLogs(userId: string, foodLogs: FoodLogEntry[]): Promise<boolean> {
+    if (!isFirebaseConfigured() || !db) return false;
+
+    try {
+        await setDoc(metaDoc(userId, 'food'), { foodLogs, updatedAt: serverTimestamp() });
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Food logs save failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Save attendance data to meta/attendance document.
+ */
+export async function saveAttendanceData(
+    userId: string,
+    data: { subjects: Subject[]; classSchedule: ClassSchedule[]; holidays: Holiday[]; attendanceLogs: AttendanceLog[] }
+): Promise<boolean> {
+    if (!isFirebaseConfigured() || !db) return false;
+
+    try {
+        await setDoc(metaDoc(userId, 'attendance'), { ...data, updatedAt: serverTimestamp() });
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Attendance save failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Full save — writes all entities, relationships, and messages to subcollections.
  * Used for initial migration or full sync.
  */
 export const saveUserData = async (
@@ -366,12 +574,18 @@ export const saveUserData = async (
         entities: Entity[];
         relationships: Relationship[];
         universalTags?: TagDefinition[];
+        messages?: Message[];
+        settings?: Partial<UserSettings>;
+        foodLogs?: FoodLogEntry[];
+        subjects?: Subject[];
+        classSchedule?: ClassSchedule[];
+        holidays?: Holiday[];
+        attendanceLogs?: AttendanceLog[];
     },
 ): Promise<boolean> => {
     if (!isFirebaseConfigured() || !db) return false;
 
     try {
-        // Batch writes (Firestore limit: 500 per batch)
         const BATCH_SIZE = 450;
 
         // Write entities in batches
@@ -396,12 +610,41 @@ export const saveUserData = async (
             await batch.commit();
         }
 
+        // Write messages in batches
+        if (data.messages && data.messages.length > 0) {
+            for (let i = 0; i < data.messages.length; i += BATCH_SIZE) {
+                const batch = writeBatch(db);
+                const chunk = data.messages.slice(i, i + BATCH_SIZE);
+                for (const msg of chunk) {
+                    const { id, ...msgData } = msg;
+                    batch.set(messageDoc(userId, id), msgData);
+                }
+                await batch.commit();
+            }
+        }
+
         // Write config
         await saveUserConfig(userId, {
             universalTags: data.universalTags || [],
+            settings: data.settings,
         });
 
-        console.log(`[FirestoreSync] Full save: ${data.entities.length} entities, ${data.relationships.length} relationships`);
+        // Write food logs
+        if (data.foodLogs && data.foodLogs.length > 0) {
+            await saveFoodLogs(userId, data.foodLogs);
+        }
+
+        // Write attendance data
+        if (data.subjects || data.classSchedule || data.holidays || data.attendanceLogs) {
+            await saveAttendanceData(userId, {
+                subjects: data.subjects || [],
+                classSchedule: data.classSchedule || [],
+                holidays: data.holidays || [],
+                attendanceLogs: data.attendanceLogs || [],
+            });
+        }
+
+        console.log(`[FirestoreSync] Full save: ${data.entities.length} entities, ${data.relationships.length} rels, ${data.messages?.length || 0} msgs`);
         return true;
     } catch (error) {
         console.error('[FirestoreSync] Full save failed:', error);
@@ -423,22 +666,14 @@ export const syncOperation = async (
     if (!isFirebaseConfigured() || !db) return false;
 
     try {
-        // Determine which entities/relationships were affected by the operation
         const changedEntityIds: string[] = [];
         const changedRelIds: string[] = [];
-        const deletedEntityIds: string[] = [];
-        const deletedRelIds: string[] = [];
 
         if (operation?.payload) {
             const p = operation.payload;
             const id = p.id || p.entity_id;
             if (id) {
-                if (operation.type === 'delete_entity') {
-                    // Soft-deleted entities still need to be synced (with deleted flag)
-                    changedEntityIds.push(id);
-                } else {
-                    changedEntityIds.push(id);
-                }
+                changedEntityIds.push(id);
             }
             if (p.from) changedRelIds.push(p.from);
             if (p.to) changedRelIds.push(p.to);
@@ -522,6 +757,32 @@ export const mergeData = (
     return { entities: activeEntities, relationships: activeRelationships };
 };
 
+/**
+ * Merge messages — union by ID, sorted by created_at.
+ * Never drops messages — additive merge.
+ */
+export const mergeMessages = (
+    local: Message[],
+    remote: Message[],
+): Message[] => {
+    const merged = new Map<string, Message>();
+
+    // Remote first
+    remote.forEach(m => merged.set(m.id, m));
+
+    // Local fills in any not in remote
+    local.forEach(m => {
+        if (!merged.has(m.id)) {
+            merged.set(m.id, m);
+        }
+    });
+
+    // Sort chronologically
+    return Array.from(merged.values()).sort((a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+};
+
 // --- Delete User Data ---
 
 export const deleteUserData = async (userId: string): Promise<boolean> => {
@@ -531,14 +792,20 @@ export const deleteUserData = async (userId: string): Promise<boolean> => {
         // Delete all entities
         const entitiesSnap = await getDocs(entitiesCol(userId));
         const batch1 = writeBatch(db);
-        entitiesSnap.forEach((doc) => batch1.delete(doc.ref));
+        entitiesSnap.forEach((d) => batch1.delete(d.ref));
         await batch1.commit();
 
         // Delete all relationships
         const relsSnap = await getDocs(relationshipsCol(userId));
         const batch2 = writeBatch(db);
-        relsSnap.forEach((doc) => batch2.delete(doc.ref));
+        relsSnap.forEach((d) => batch2.delete(d.ref));
         await batch2.commit();
+
+        // Delete all messages
+        const msgsSnap = await getDocs(messagesCol(userId));
+        const batch3 = writeBatch(db);
+        msgsSnap.forEach((d) => batch3.delete(d.ref));
+        await batch3.commit();
 
         // Reset config
         await setDoc(userDoc(userId), {

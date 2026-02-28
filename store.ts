@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { GoogleCalendarAdapter } from './services/googleSync';
 import { generateBriefing } from './services/ai';
 import { saveUserData, loadUserData } from './services/firestoreSync';
-import { scheduleSync } from './services/syncManager';
+import { scheduleSync, syncMessage, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
 import { onAuthChange, User } from './services/firebase';
 import { validatePersistedState, validateOperations } from './utils/validation';
 import {
@@ -249,14 +249,25 @@ export const useStore = create<FlowmateState>()(
             setCloudSyncEnabled: (enabled) => set({ isCloudSyncEnabled: enabled }),
 
             syncToCloud: async () => {
-                const { currentUser, entities, relationships, universalTags, addDebugLog, addToast } = get();
+                const { currentUser, entities, relationships, universalTags, messages, settings, foodLogs, subjects, classSchedule, holidays, attendanceLogs, addDebugLog, addToast } = get();
                 if (!currentUser) {
                     addToast('Sign in to sync to cloud', 'info');
                     return;
                 }
 
                 try {
-                    const success = await saveUserData(currentUser.uid, { entities, relationships, universalTags });
+                    const success = await saveUserData(currentUser.uid, {
+                        entities,
+                        relationships,
+                        universalTags,
+                        messages,
+                        settings,
+                        foodLogs,
+                        subjects,
+                        classSchedule,
+                        holidays,
+                        attendanceLogs,
+                    });
                     if (success) {
                         addDebugLog('sync', 'Synced to Firestore', { entityCount: entities.length });
                         addToast('Synced to cloud', 'success');
@@ -268,26 +279,37 @@ export const useStore = create<FlowmateState>()(
             },
 
             loadFromCloud: async () => {
-                const { currentUser, entities, relationships, addDebugLog, addToast } = get();
+                const { currentUser, entities, relationships, messages, addDebugLog, addToast } = get();
                 if (!currentUser) return;
 
                 try {
-                    const { mergeData } = await import('./services/firestoreSync');
+                    const { mergeData, mergeMessages } = await import('./services/firestoreSync');
                     const data = await loadUserData(currentUser.uid);
                     if (data) {
-                        // FIXED: Merge instead of overwrite to preserve newer local changes
+                        // Merge entities and relationships (newer wins)
                         const merged = mergeData(
                             { entities, relationships },
                             { entities: data.entities, relationships: data.relationships }
                         );
+                        // Merge messages (additive union by ID)
+                        const mergedMsgs = mergeMessages(messages || [], data.messages || []);
+
                         set({
                             entities: merged.entities,
                             relationships: merged.relationships,
-                            universalTags: data.universalTags
+                            universalTags: data.universalTags,
+                            messages: mergedMsgs,
+                            settings: data.settings || get().settings,
+                            foodLogs: data.foodLogs?.length ? data.foodLogs : get().foodLogs,
+                            subjects: data.subjects?.length ? data.subjects : get().subjects,
+                            classSchedule: data.classSchedule?.length ? data.classSchedule : get().classSchedule,
+                            holidays: data.holidays?.length ? data.holidays : get().holidays,
+                            attendanceLogs: data.attendanceLogs?.length ? data.attendanceLogs : get().attendanceLogs,
                         });
                         addDebugLog('sync', 'Merged from Firestore', {
                             cloudCount: data.entities.length,
-                            mergedCount: merged.entities.length
+                            mergedCount: merged.entities.length,
+                            messagesCount: mergedMsgs.length,
                         });
                         addToast('Synced with cloud', 'success');
                     }
@@ -445,6 +467,12 @@ export const useStore = create<FlowmateState>()(
                     ops_preview: ops
                 };
                 set((state) => ({ messages: [...(state.messages || []), newMessage] }));
+
+                // Write-through to Firestore (fire and forget — no debounce)
+                syncMessage(newMessage).catch((err) =>
+                    console.warn('[Store] Message sync failed:', err)
+                );
+
                 return id;
             },
 
@@ -1418,7 +1446,8 @@ export const useStore = create<FlowmateState>()(
                     return {
                         entities: state.entities,
                         relationships: state.relationships,
-                        universalTags: state.universalTags
+                        universalTags: state.universalTags,
+                        settings: state.settings,
                     };
                 });
             }

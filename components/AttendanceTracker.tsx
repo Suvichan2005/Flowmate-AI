@@ -17,6 +17,7 @@ const AttendanceTracker: React.FC = () => {
 
     const [showAddSubject, setShowAddSubject] = useState(false);
     const [expandedSubject, setExpandedSubject] = useState<string | null>(null);
+    const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const [newSubject, setNewSubject] = useState({
         name: '',
         code: '',
@@ -175,12 +176,17 @@ const AttendanceTracker: React.FC = () => {
     };
 
     const handleDeleteSubject = (subjectId: string) => {
-        if (!confirm('Delete this subject and all attendance records?')) return;
-        useStore.setState(state => ({
-            subjects: state.subjects.filter(s => s.id !== subjectId),
-            classSchedule: state.classSchedule.filter(c => c.subject_id !== subjectId),
-            attendanceLogs: state.attendanceLogs.filter(l => l.subject_id !== subjectId)
-        }));
+        if (confirmDeleteId === subjectId) {
+            useStore.setState(state => ({
+                subjects: state.subjects.filter(s => s.id !== subjectId),
+                classSchedule: state.classSchedule.filter(c => c.subject_id !== subjectId),
+                attendanceLogs: state.attendanceLogs.filter(l => l.subject_id !== subjectId)
+            }));
+            setConfirmDeleteId(null);
+        } else {
+            setConfirmDeleteId(subjectId);
+            setTimeout(() => setConfirmDeleteId(prev => prev === subjectId ? null : prev), 3000);
+        }
     };
 
     const getStatusColor = (status: string) => {
@@ -379,10 +385,10 @@ const AttendanceTracker: React.FC = () => {
                                     )}
                                     <button
                                         onClick={() => handleDeleteSubject(subject.id)}
-                                        className="p-1.5 text-slate-600 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
-                                        title="Delete subject"
+                                        className={`p-1.5 rounded transition-colors ${confirmDeleteId === subject.id ? 'text-red-400 bg-red-500/20 ring-1 ring-red-500/40' : 'text-slate-600 hover:text-red-400 hover:bg-red-500/10'}`}
+                                        title={confirmDeleteId === subject.id ? 'Click again to confirm' : 'Delete subject'}
                                     >
-                                        <Trash2 size={12} />
+                                        {confirmDeleteId === subject.id ? <span className="text-[10px] font-bold px-1">Sure?</span> : <Trash2 size={12} />}
                                     </button>
                                 </div>
                             </div>

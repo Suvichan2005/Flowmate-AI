@@ -3,8 +3,8 @@ import { useStore } from './store';
 import { orchestrateMessage } from './services/ai';
 import { processFileAttachment } from './utils/imageProcessing';
 import { onAuthChange, signOut } from './services/firebase';
-import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync } from './services/syncManager';
-import { mergeData } from './services/firestoreSync';
+import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
+import { mergeData, mergeMessages } from './services/firestoreSync';
 import { preventDoubleClick } from './utils/debounce';
 import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -169,10 +169,15 @@ const App: React.FC = () => {
               { entities: state.entities, relationships: state.relationships },
               { entities: remoteData.entities, relationships: remoteData.relationships }
             );
+            const mergedMsgs = remoteData.messages
+              ? mergeMessages(state.messages || [], remoteData.messages)
+              : state.messages;
             useStore.setState({
               entities: merged.entities,
               relationships: merged.relationships,
-              universalTags: remoteData.universalTags || state.universalTags
+              universalTags: remoteData.universalTags || state.universalTags,
+              messages: mergedMsgs,
+              ...(remoteData.settings ? { settings: { ...state.settings, ...remoteData.settings } } : {}),
             });
           }
         );
@@ -186,10 +191,18 @@ const App: React.FC = () => {
               { entities: state.entities, relationships: state.relationships },
               { entities: data.entities, relationships: data.relationships }
             );
+            const mergedMsgs = mergeMessages(state.messages || [], data.messages || []);
             useStore.setState({
               entities: merged.entities,
               relationships: merged.relationships,
-              universalTags: data.universalTags || state.universalTags
+              universalTags: data.universalTags || state.universalTags,
+              messages: mergedMsgs,
+              ...(data.settings ? { settings: { ...state.settings, ...data.settings } } : {}),
+              ...(data.foodLogs?.length ? { foodLogs: data.foodLogs } : {}),
+              ...(data.subjects?.length ? { subjects: data.subjects } : {}),
+              ...(data.classSchedule?.length ? { classSchedule: data.classSchedule } : {}),
+              ...(data.holidays?.length ? { holidays: data.holidays } : {}),
+              ...(data.attendanceLogs?.length ? { attendanceLogs: data.attendanceLogs } : {}),
             });
           }
           // Start real-time listener after initial load
@@ -205,6 +218,54 @@ const App: React.FC = () => {
     };
   }, [setCurrentUser, loadFromCloud]);
 
+  // Auto-sync food logs and attendance data to cloud when they change
+  useEffect(() => {
+    let foodDebounce: ReturnType<typeof setTimeout> | null = null;
+    let attDebounce: ReturnType<typeof setTimeout> | null = null;
+    let prevFood = useStore.getState().foodLogs;
+    let prevSubjects = useStore.getState().subjects;
+    let prevSchedule = useStore.getState().classSchedule;
+    let prevHolidays = useStore.getState().holidays;
+    let prevAttLogs = useStore.getState().attendanceLogs;
+
+    const unsub = useStore.subscribe((state) => {
+      if (!state.currentUser) return;
+
+      // Food logs changed
+      if (state.foodLogs !== prevFood) {
+        prevFood = state.foodLogs;
+        if (foodDebounce) clearTimeout(foodDebounce);
+        foodDebounce = setTimeout(() => {
+          syncFoodLogsToCloud(state.foodLogs);
+        }, 3000);
+      }
+
+      // Attendance data changed
+      if (state.subjects !== prevSubjects || state.classSchedule !== prevSchedule ||
+          state.holidays !== prevHolidays || state.attendanceLogs !== prevAttLogs) {
+        prevSubjects = state.subjects;
+        prevSchedule = state.classSchedule;
+        prevHolidays = state.holidays;
+        prevAttLogs = state.attendanceLogs;
+        if (attDebounce) clearTimeout(attDebounce);
+        attDebounce = setTimeout(() => {
+          syncAttendanceToCloud({
+            subjects: state.subjects,
+            classSchedule: state.classSchedule,
+            holidays: state.holidays,
+            attendanceLogs: state.attendanceLogs,
+          });
+        }, 3000);
+      }
+    });
+
+    return () => {
+      unsub();
+      if (foodDebounce) clearTimeout(foodDebounce);
+      if (attDebounce) clearTimeout(attDebounce);
+    };
+  }, []);
+
   // Sync on page unload — use sendBeacon for reliability since beforeunload
   // does not wait for async operations to complete.
   useEffect(() => {
@@ -216,7 +277,8 @@ const App: React.FC = () => {
         forceSync(() => ({
           entities: state.entities,
           relationships: state.relationships,
-          universalTags: state.universalTags
+          universalTags: state.universalTags,
+          settings: state.settings,
         }));
       }
     };
@@ -237,7 +299,8 @@ const App: React.FC = () => {
         scheduleSync(() => ({
           entities: state.entities,
           relationships: state.relationships,
-          universalTags: state.universalTags
+          universalTags: state.universalTags,
+          settings: state.settings,
         }));
       }
     };
@@ -445,6 +508,22 @@ const App: React.FC = () => {
     switch (currentView) {
       case 'dashboard':
         return <Dashboard />;
+      case 'chat':
+        // Mobile: 'chat' view should show chat panel + graph
+        if (!isChatOpen) setIsChatOpen(true);
+        return (
+          <div className="flex-1 flex flex-col bg-slate-950 p-4 relative h-full">
+            {safeEntities.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-slate-600 border border-dashed border-slate-800 rounded-xl m-2">
+                <Cloud className="w-12 h-12 mb-4 opacity-20" />
+                <p className="text-sm">Graph is empty.</p>
+                <p className="text-xs mt-1 text-slate-500">Use the chat to create entities.</p>
+              </div>
+            ) : (
+              <GraphView entities={safeEntities} relationships={relationships || []} />
+            )}
+          </div>
+        );
       case 'analytics':
         return <AnalyticsView />;
       case 'goals':

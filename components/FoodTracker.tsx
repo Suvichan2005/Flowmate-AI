@@ -149,10 +149,18 @@ const FoodTracker: React.FC = () => {
         snack: <Apple size={14} className="text-green-400" />
     };
 
+    const [confirmDeleteFood, setConfirmDeleteFood] = useState<string | null>(null);
+
     const handleDeleteFood = (foodId: string) => {
-        useStore.setState(state => ({
-            foodLogs: state.foodLogs.filter(l => l.id !== foodId)
-        }));
+        if (confirmDeleteFood === foodId) {
+            useStore.setState(state => ({
+                foodLogs: state.foodLogs.filter(l => l.id !== foodId)
+            }));
+            setConfirmDeleteFood(null);
+        } else {
+            setConfirmDeleteFood(foodId);
+            setTimeout(() => setConfirmDeleteFood(prev => prev === foodId ? null : prev), 3000);
+        }
     };
 
     return (
@@ -357,10 +365,10 @@ const FoodTracker: React.FC = () => {
                                     </div>
                                     <button
                                         onClick={() => handleDeleteFood(log.id)}
-                                        className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded transition-all"
-                                        title="Delete"
+                                        className={`p-1 rounded transition-all ${confirmDeleteFood === log.id ? 'opacity-100 text-red-400 bg-red-500/20 ring-1 ring-red-500/40' : 'opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 hover:bg-red-500/10'}`}
+                                        title={confirmDeleteFood === log.id ? 'Click again to confirm' : 'Delete'}
                                     >
-                                        <X size={14} />
+                                        {confirmDeleteFood === log.id ? <span className="text-[10px] font-bold px-1">Sure?</span> : <X size={14} />}
                                     </button>
                                 </div>
                             </div>

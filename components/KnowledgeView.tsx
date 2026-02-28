@@ -159,27 +159,27 @@ const KnowledgeView: React.FC = () => {
     };
 
     // Quick Creation
+    const [showQuickCreate, setShowQuickCreate] = useState(false);
+    const [quickCreateTitle, setQuickCreateTitle] = useState('');
+    const quickCreateRef = useRef<HTMLInputElement>(null);
+
     const handleCreateEntity = () => {
-        let kindToCreate: EntityKind = EntityKind.TASK;
-
-        // If filtering by specific kinds, create the first selected kind
-        if (!kindFilters.has('all') && kindFilters.size > 0) {
-            const firstKind = Array.from(kindFilters)[0];
-            if (firstKind !== 'all') kindToCreate = firstKind as EntityKind;
-        } else {
-            // Ask user for kind if not filtered, defaulting to Task usually but maybe Person here?
-            // Let's just create a Task for generic quick add, or prompt.
-            // For simplicity in quick add, let's keep it creating a Task if 'All'.
-            // Or better, create a NOTE if it existed, but since removed, maybe just generic Task.
-            kindToCreate = EntityKind.TASK;
-        }
-
-        const title = prompt(`Create new ${kindToCreate}:`);
-        if (title) {
+        if (showQuickCreate && quickCreateTitle.trim()) {
+            // Submit the quick-create
+            let kindToCreate: EntityKind = EntityKind.TASK;
+            if (!kindFilters.has('all') && kindFilters.size > 0) {
+                const firstKind = Array.from(kindFilters)[0];
+                if (firstKind !== 'all') kindToCreate = firstKind as EntityKind;
+            }
             applyOperations([{
                 type: 'create_entity',
-                payload: { kind: kindToCreate, title, status: EntityStatus.ACTIVE }
+                payload: { kind: kindToCreate, title: quickCreateTitle.trim(), status: EntityStatus.ACTIVE }
             }]);
+            setQuickCreateTitle('');
+            setShowQuickCreate(false);
+        } else {
+            setShowQuickCreate(true);
+            setTimeout(() => quickCreateRef.current?.focus(), 50);
         }
     };
 
@@ -305,12 +305,43 @@ const KnowledgeView: React.FC = () => {
                             >
                                 <CheckSquare size={20} />
                             </button>
-                            <button
-                                onClick={handleCreateEntity}
-                                className="ml-2 bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg shadow-indigo-500/20 transition-all hover:scale-105 active:scale-95"
-                            >
-                                <Plus size={18} /> <span className="hidden sm:inline">New Item</span>
-                            </button>
+                            {showQuickCreate ? (
+                                <form
+                                    onSubmit={(e) => { e.preventDefault(); handleCreateEntity(); }}
+                                    className="ml-2 flex items-center gap-1"
+                                >
+                                    <input
+                                        ref={quickCreateRef}
+                                        value={quickCreateTitle}
+                                        onChange={(e) => setQuickCreateTitle(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Escape') { setShowQuickCreate(false); setQuickCreateTitle(''); } }}
+                                        placeholder="Title…"
+                                        className="w-36 sm:w-48 bg-slate-800 border border-indigo-500/40 rounded-lg px-3 py-2 text-sm text-slate-200 placeholder:text-slate-500 outline-none focus:border-indigo-400 transition-colors"
+                                        autoFocus
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={!quickCreateTitle.trim()}
+                                        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white p-2 rounded-lg transition-all"
+                                    >
+                                        <Plus size={18} />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => { setShowQuickCreate(false); setQuickCreateTitle(''); }}
+                                        className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 transition-all"
+                                    >
+                                        <X size={18} />
+                                    </button>
+                                </form>
+                            ) : (
+                                <button
+                                    onClick={handleCreateEntity}
+                                    className="ml-2 bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg shadow-indigo-500/20 transition-all hover:scale-105 active:scale-95"
+                                >
+                                    <Plus size={18} /> <span className="hidden sm:inline">New Item</span>
+                                </button>
+                            )}
                         </div>
                     </div>
 
