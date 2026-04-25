@@ -304,6 +304,8 @@ export interface UserSettings {
   // Flowmate 3.1: Feature Toggles
   feature_toggles: FeatureToggles;
   productivity_calc_method?: 'LOGGED_TIME' | 'AWAKE_TIME'; // Flowmate 3.2
+  // Flowmate 3.0: Food Preferences
+  food_preferences?: FoodPreferences;
 }
 
 

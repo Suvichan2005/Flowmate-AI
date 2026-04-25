@@ -56,7 +56,7 @@ The application uses **Zustand** as the central store.
 
 ### Gemini (AI)
 *   Access via `@google/genai` SDK.
-*   Uses `gemini-2.0-flash-exp` (or configured model).
+*   Uses `gemini-3-flash` (or configured model).
 *   Tools are defined not as function calls (to avoid roundtrips) but as a structured JSON schema the model must adhere to.
 *   **Live Voice**: WebSocket connection for real-time voice via `liveSession.ts`.
 

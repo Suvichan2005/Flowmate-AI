@@ -231,6 +231,7 @@ const EntityDetailPanel: React.FC = () => {
             tags: entity.canonical_tags || [],
             tagInput: '',
             startTime: entity.start_time || '',
+            endTime: entity.end_time || '',
             deadline: entity.deadline || ''
         });
     };
@@ -698,7 +699,7 @@ const EntityDetailPanel: React.FC = () => {
                         ) : (
                             <div className="text-sm text-slate-300">
                                 {entity.description ? (
-                                    <MarkdownText text={entity.description} />
+                                    <MarkdownText content={entity.description} />
                                 ) : (
                                     <span className="text-slate-500 italic">No description</span>
                                 )}

@@ -1,7 +1,6 @@
 /// <reference types="vite/client" />
 
 // Firebase Configuration and Initialization
-// Flowmate Project - REDACTED_PROJECT_ID
 // 
 // SECURITY: All credentials MUST come from environment variables.
 // Create a .env.local file with the following variables:

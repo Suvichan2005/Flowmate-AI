@@ -229,7 +229,7 @@ export async function fixGraphChunk(
     onProgress?: (log: string) => void
 ): Promise<ToonOperation[]> {
     const { settings, addDebugLog } = useStore.getState();
-    const modelName = settings?.preferred_model || 'gemini-2.5-flash';
+    const modelName = settings?.preferred_model || 'gemini-3-flash';
 
     const ai = getAiClient();
 

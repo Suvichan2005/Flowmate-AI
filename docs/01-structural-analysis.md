@@ -5,7 +5,7 @@ This document provides a breakdown of the codebase structure, file organization,
 ## Top-Level Structure
 
 ```
-c:/Users/KIIT0001/Documents/FLOWMATE/flowmate-v3/
+./
 ├── App.tsx                  # Main Application Shell & Chat Logic
 ├── store.ts                 # Global State Management (Zustand)
 ├── types.ts                 # TypeScript Core Definitions

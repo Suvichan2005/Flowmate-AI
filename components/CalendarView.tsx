@@ -433,7 +433,7 @@ const CalendarView: React.FC = () => {
                         results.push({ entity: e, isRecurring: true });
                     }
                 }
-                else if (e.recurrence && e.recurrence !== 'None' && matchesRecurrence(itemDate, date, e.recurrence)) {
+                else if (e.recurrence && e.recurrence != null && matchesRecurrence(itemDate, date, e.recurrence)) {
                     results.push({ entity: e, isRecurring: true });
                 }
             }
@@ -446,7 +446,7 @@ const CalendarView: React.FC = () => {
                 }
             }
             // Then check simple recurrence (DAILY, WEEKLY, etc.) - skip if recurrence is null/undefined/'None'
-            else if (e.recurrence && e.recurrence !== 'None' && matchesRecurrence(itemDate, date, e.recurrence)) {
+            else if (e.recurrence && e.recurrence != null && matchesRecurrence(itemDate, date, e.recurrence)) {
                 results.push({ entity: e, isRecurring: true });
             }
         });

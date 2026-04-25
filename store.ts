@@ -182,7 +182,7 @@ export const useStore = create<FlowmateState>()(
             selectedEntityId: null,
             settings: {
                 timezone: 'Asia/Kolkata', // Force IST
-                preferred_model: 'gemini-2.5-flash',
+                preferred_model: 'gemini-3-flash',
                 sync_enabled: false,
                 debug_mode: false,
                 custom_instructions: '',
@@ -299,7 +299,7 @@ export const useStore = create<FlowmateState>()(
                             relationships: merged.relationships,
                             universalTags: data.universalTags,
                             messages: mergedMsgs,
-                            settings: data.settings || get().settings,
+                            settings: { ...get().settings, ...(data.settings || {}) },
                             foodLogs: data.foodLogs?.length ? data.foodLogs : get().foodLogs,
                             subjects: data.subjects?.length ? data.subjects : get().subjects,
                             classSchedule: data.classSchedule?.length ? data.classSchedule : get().classSchedule,
@@ -1454,7 +1454,7 @@ export const useStore = create<FlowmateState>()(
         }),
         {
             name: 'flowmate-storage',
-            storage: asyncStorage,
+            storage: asyncStorage as any,
             version: 16,
             // Only persist data that should survive page reloads
             partialize: (state: FlowmateState) => ({
@@ -1472,7 +1472,7 @@ export const useStore = create<FlowmateState>()(
                 debugLogs: state.debugLogs,
                 dailyBriefing: state.dailyBriefing,
             }),
-            migrate: (persistedState: any, version) => {
+            migrate: (persistedState: any, version): any => {
                 const state = persistedState as Partial<FlowmateState>;
 
                 // Validate and sanitize persisted state first
@@ -1545,7 +1545,7 @@ export const useStore = create<FlowmateState>()(
 
                 const mergedSettings = {
                     timezone: 'Asia/Kolkata', // Force IST fallback
-                    preferred_model: 'gemini-2.5-flash',
+                    preferred_model: 'gemini-3-flash',
                     sync_enabled: false,
                     debug_mode: false,
                     custom_instructions: '',
