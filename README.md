@@ -4,22 +4,22 @@
   <img width="1200" height="475" alt="Flowmate Banner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-**AI-powered productivity orchestration platform** - Manage goals, projects, tasks, and knowledge through a graph-based data structure with natural language.
+**AI-powered productivity platform** — manage goals, projects, tasks, and knowledge through a graph-based data model with natural language.
 
 ## Features
 
-- 🤖 **AI Orchestrator** - Natural language chat powered by Gemini 2.5 Flash
-- 🕸️ **Knowledge Graph** - Interactive D3.js visualization of your productivity data
-- 📅 **Calendar** - Drag-and-drop event scheduling with multiple views
-- 📚 **Knowledge Base** - AI-powered Q&A over your notes with tag filtering
-- 🔥 **Focus Timer** - Pomodoro-style sessions with activity logging
-- 🍕 **Food Tracking** - Meal logging with vendor analytics and nutrition tracking
-- 📊 **Attendance** - Academic class attendance with skip calculator
-- ⚡ **Quick Streaks** - Lightweight daily habit tracking
-- 🎮 **Gamification** - XP system and productivity levels
-- ☁️ **Cloud Sync** - Firebase authentication and real-time sync
-- 🎤 **Voice Mode** - Real-time voice AI interaction
-- 📱 **Mobile Ready** - Responsive design with PWA support
+- 🤖 **AI Orchestrator** — natural language chat powered by Gemini 3 Flash
+- 🕸️ **Knowledge Graph** — interactive D3.js visualization of your productivity data
+- 📅 **Calendar** — drag-and-drop scheduling with month/week/day/agenda views
+- 📚 **Knowledge Base** — AI-powered Q&A over your notes with tag filtering
+- 🔥 **Focus Timer** — Pomodoro-style sessions with activity logging
+- 🍕 **Food Tracking** — meal logging with vendor analytics and nutrition tracking
+- 📊 **Attendance** — academic class attendance tracking with skip calculator
+- ⚡ **Quick Streaks** — lightweight daily habit tracking
+- 🎮 **Gamification** — XP system and productivity levels
+- ☁️ **Cloud Sync** — Firebase auth and real-time Firestore sync
+- 🎤 **Voice Mode** — real-time voice interaction via Gemini Live API
+- 📱 **Mobile Ready** — responsive design with PWA support
 
 ## Quick Start
 
@@ -29,8 +29,9 @@
 # Install dependencies
 npm install
 
-# Set up environment (create .env.local)
-echo "API_KEY=your_gemini_api_key" > .env.local
+# Set up environment
+cp .env.example .env.local
+# Then edit .env.local with your API keys
 
 # Start dev server
 npm run dev
@@ -40,46 +41,46 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ## Firebase Setup (Optional)
 
-For cloud sync and authentication:
+Cloud sync and authentication require Firebase:
 
 1. Create a project at [Firebase Console](https://console.firebase.google.com)
-2. Enable **Authentication** → Email/Password + Google
-3. Create a **Firestore Database** (Standard edition)
-4. The Firebase config is already set in `services/firebase.ts`
+2. Enable **Authentication** → Email/Password + Google sign-in
+3. Create a **Firestore Database**
+4. Copy your project config values into `.env.local` (see `.env.example` for required keys)
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | React 19 + TypeScript |
+| Frontend | React 19, TypeScript |
 | Styling | TailwindCSS |
-| State | Zustand (localStorage + Firestore) |
-| AI | Google Gemini API |
-| Visualization | D3.js |
+| State | Zustand 5 (localStorage + Firestore) |
+| AI | Google Gemini 3 Flash (`@google/genai`) |
+| Visualization | D3.js force-directed graph |
 | Cloud | Firebase (Auth + Firestore) |
 | Build | Vite |
 
 ## Project Structure
 
 ```
-├── App.tsx              # Main application shell
-├── store.ts             # Zustand global state (~81KB)
-├── types.ts             # TypeScript definitions
-├── components/          # 42 React components
+├── App.tsx              # Main application shell + chat UI
+├── store.ts             # Zustand global state
+├── types.ts             # TypeScript type definitions
+├── components/          # React components
 ├── services/
-│   ├── geminiService.ts # AI orchestration
+│   ├── ai/              # Gemini orchestrator + context builder
 │   ├── firebase.ts      # Firebase config & auth
 │   ├── firestoreSync.ts # Cloud data sync
-│   ├── googleSync.ts    # Google Calendar sync
-│   ├── graphAnalyzer.ts # Graph health analysis
-│   └── liveSession.ts   # Voice AI
-├── utils/               # Helper functions
-└── docs/                # Documentation (11 files)
+│   ├── googleSync.ts    # Google Calendar integration
+│   ├── graphAnalyzer.ts # Graph topology analysis
+│   └── liveSession.ts   # Voice AI (Gemini Live API)
+├── utils/               # Helpers (validation, retry, debounce)
+└── docs/                # Technical documentation
 ```
 
 ## Documentation
 
-See the [/docs](./docs) folder for detailed documentation:
+See [/docs](./docs) for technical docs:
 - [Overview](./docs/00-overview.md)
 - [Structural Analysis](./docs/01-structural-analysis.md)
 - [Semantic Analysis](./docs/02-semantic-analysis.md)
@@ -87,9 +88,7 @@ See the [/docs](./docs) folder for detailed documentation:
 - [Architecture](./docs/04-architecture-analysis.md)
 - [Components Reference](./docs/05-components-reference.md)
 - [Services Reference](./docs/06-services-reference.md)
-- [Feature Roadmap](./docs/07-feature-roadmap.md)
 
 ## License
 
-MIT
-
+MIT — see [LICENSE](./LICENSE)

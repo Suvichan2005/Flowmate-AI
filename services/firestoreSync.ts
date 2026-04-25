@@ -1,11 +1,11 @@
-﻿// Firestore Sync Service — Granular subcollection-based sync
+// Firestore Sync Service � Granular subcollection-based sync
 // Schema:
-//   users/{uid}                    → config (tags, settings, schemaVersion)
-//   users/{uid}/entities/{id}      → Entity docs
-//   users/{uid}/relationships/{id} → Relationship docs
-//   users/{uid}/messages/{id}      → Message docs (chat history, real-time sync)
-//   users/{uid}/meta/food          → { foodLogs: FoodLogEntry[] }
-//   users/{uid}/meta/attendance    → { subjects, classSchedule, holidays, attendanceLogs }
+//   users/{uid}                    ? config (tags, settings, schemaVersion)
+//   users/{uid}/entities/{id}      ? Entity docs
+//   users/{uid}/relationships/{id} ? Relationship docs
+//   users/{uid}/messages/{id}      ? Message docs (chat history, real-time sync)
+//   users/{uid}/meta/food          ? { foodLogs: FoodLogEntry[] }
+//   users/{uid}/meta/attendance    ? { subjects, classSchedule, holidays, attendanceLogs }
 
 import {
     doc,
@@ -565,7 +565,7 @@ export async function saveAttendanceData(
 }
 
 /**
- * Full save — writes all entities, relationships, and messages to subcollections.
+ * Full save � writes all entities, relationships, and messages to subcollections.
  * Used for initial migration or full sync.
  */
 export const saveUserData = async (
@@ -655,7 +655,7 @@ export const saveUserData = async (
 // --- Incremental Sync ---
 
 /**
- * Incremental sync — writes only the changed entities/relationships.
+ * Incremental sync � writes only the changed entities/relationships.
  * Falls back to granular batch writes, NOT a full save.
  */
 export const syncOperation = async (
@@ -758,8 +758,8 @@ export const mergeData = (
 };
 
 /**
- * Merge messages — union by ID, sorted by created_at.
- * Never drops messages — additive merge.
+ * Merge messages � union by ID, sorted by created_at.
+ * Never drops messages � additive merge.
  */
 export const mergeMessages = (
     local: Message[],

@@ -250,7 +250,7 @@ const CalendarView: React.FC = () => {
 
         try {
             // 1. IMPORT: Fetch events from Google Calendar → create in Flowmate
-            console.log('[Sync] Starting import from Google Calendar...');
+            console.debug('[Sync] Starting import from Google Calendar...');
             const newEvents = await GoogleCalendarAdapter.importFromGoogleCalendar(entities);
 
             if (newEvents.length > 0) {
@@ -266,11 +266,11 @@ const CalendarView: React.FC = () => {
                 }));
                 applyOperations(ops);
                 importCount = newEvents.length;
-                console.log(`[Sync] Imported ${importCount} events from GCal`);
+                console.debug(`[Sync] Imported ${importCount} events from GCal`);
             }
 
             // 2. EXPORT: Push Flowmate events (without google_calendar_id) → Google Calendar
-            console.log('[Sync] Starting export to Google Calendar...');
+            console.debug('[Sync] Starting export to Google Calendar...');
             const eventsToExport = entities.filter(e =>
                 e.kind === EntityKind.EVENT &&
                 e.start_time &&
@@ -295,7 +295,7 @@ const CalendarView: React.FC = () => {
                         }
                     }]);
                     exportCount++;
-                    console.log(`[Sync] Exported "${event.title}" to GCal`);
+                    console.debug(`[Sync] Exported "${event.title}" to GCal`);
                 } else {
                     console.error(`[Sync] Failed to export "${event.title}":`, result.error);
                 }
@@ -440,7 +440,6 @@ const CalendarView: React.FC = () => {
             // Check if this date matches a recurring pattern (rrule takes priority)
             // Check rrule first (handles complex patterns like "every 2nd Saturday")
             else if (e.metadata?.rrule) {
-                console.log('[RRULE Check]', { title: e.title, itemDate: itemDate.toDateString(), targetDate: date.toDateString() });
                 if (matchesRecurrence(itemDate, date, e.recurrence, e.metadata.rrule)) {
                     results.push({ entity: e, isRecurring: true });
                 }

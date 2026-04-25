@@ -41,3 +41,8 @@ Thumbs.db
 # Backups & temp
 flowmate_backup*.json
 metadata.json
+
+# Internal planning docs (keep local, not public)
+docs/FLOWMATE_V4_ARCHITECTURE.md
+docs/07-feature-roadmap.md
+docs/08-ideation-map.md

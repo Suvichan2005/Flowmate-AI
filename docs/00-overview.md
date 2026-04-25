@@ -1,6 +1,6 @@
-# Flowmate - Comprehensive Documentation
+# Flowmate — Documentation
 
-## Executive Summary
+## Overview
 
 **Flowmate** is an AI-powered productivity orchestration platform that helps users manage their goals, projects, tasks, events, and knowledge through a graph-based data structure. The application uses Google's Gemini AI as the core intelligence layer to understand user intent and modify the productivity graph through natural language interactions.
 
