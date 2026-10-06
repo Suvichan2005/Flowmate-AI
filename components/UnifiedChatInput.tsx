@@ -5,6 +5,7 @@ import { sanitizeUserInput } from '../utils/validation';
 interface UnifiedChatInputProps {
     onSend: (message: string, attachment?: string | null) => void;
     onAttach?: (file: File) => void;
+    onLiveVoice?: () => void;
     loading?: boolean;
     placeholder?: string;
     attachment?: string | null;
@@ -16,12 +17,13 @@ interface UnifiedChatInputProps {
  * Unified Chat Input - ChatGPT-style input with:
  * - Attachment button on left
  * - Auto-expanding textarea in center
- * - Mic button (uses Web Speech API - FREE!)
+ * - Mic button (starts Gemini Live session or fallback STT)
  * - Send button on right (always visible on desktop, shown when has content on mobile)
  */
 const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
     onSend,
     onAttach,
+    onLiveVoice,
     loading = false,
     placeholder = "Message...",
     attachment = null,
@@ -227,8 +229,29 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
 
                 {/* Right buttons - Vertically centered */}
                 <div className="flex items-center gap-1 shrink-0 self-center">
-                    {/* Mic Button */}
-                    {speechSupported && (
+                    {/* Live Voice Button (Gemini Live Mode) */}
+                    {onLiveVoice && (
+                        <button
+                            type="button"
+                            onClick={onLiveVoice}
+                            className={`
+                                ${isMobile ? 'p-2' : 'p-2.5'}
+                                rounded-xl
+                                transition-all duration-150
+                                active:scale-95
+                                text-indigo-400 hover:text-indigo-300 hover:bg-indigo-600/20
+                                relative group
+                            `}
+                            title="Start Gemini Live Voice Session"
+                            aria-label="Start Gemini Live Voice Session"
+                        >
+                            <Mic size={isMobile ? 18 : 20} />
+                            <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                        </button>
+                    )}
+
+                    {/* Speech Recognition (STT text typing into input box) when no Live Voice */}
+                    {!onLiveVoice && speechSupported && (
                         <button
                             type="button"
                             onClick={toggleListening}

@@ -152,8 +152,6 @@ export class LiveManager {
         config: {
           responseModalities: [Modality.AUDIO],
           tools: [{ functionDeclarations: [createEntityTool, logActivityTool] }],
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
           systemInstruction: {
              parts: [{ text: systemInstructionText }]
           }
