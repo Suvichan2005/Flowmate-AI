@@ -23,20 +23,44 @@ import ChatSessionBar from './components/ChatSessionBar';
 import ConnectionStatus from './components/ConnectionStatus';
 import { EntityKind, ToonOperation } from './types';
 
-// Lazy load heavier components for better initial load performance
-const GraphView = lazy(() => import('./components/GraphView'));
-const CalendarView = lazy(() => import('./components/CalendarView'));
-const SettingsView = lazy(() => import('./components/SettingsView'));
-const EntityList = lazy(() => import('./components/EntityList'));
-const LiveVoiceModal = lazy(() => import('./components/LiveVoiceModal'));
-const CreateEntityModal = lazy(() => import('./components/CreateEntityModal'));
-const KnowledgeView = lazy(() => import('./components/KnowledgeView'));
-const AnalyticsView = lazy(() => import('./components/AnalyticsView'));
-const TimelineView = lazy(() => import('./components/TimelineView'));
-const SchedulesView = lazy(() => import('./components/SchedulesView'));
-const FoodTracker = lazy(() => import('./components/FoodTracker'));
-const AttendanceTracker = lazy(() => import('./components/AttendanceTracker'));
-const GraphFixingModal = lazy(() => import('./components/GraphFixingModal'));
+// Helper to safely load dynamic chunks across deployments
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T }>
+) {
+  return lazy(async () => {
+    try {
+      const component = await factory();
+      sessionStorage.removeItem('lazy_chunk_retry');
+      return component;
+    } catch (err: any) {
+      const isChunkError =
+        err?.message?.includes('Failed to fetch dynamically imported module') ||
+        err?.message?.includes('error loading dynamically imported module') ||
+        err?.message?.includes('Importing a module script failed');
+      const hasRetried = sessionStorage.getItem('lazy_chunk_retry');
+      if (isChunkError && !hasRetried) {
+        sessionStorage.setItem('lazy_chunk_retry', 'true');
+        window.location.reload();
+      }
+      throw err;
+    }
+  });
+}
+
+// Lazy load heavier components with auto-recovery on deployment chunk hash changes
+const GraphView = lazyWithRetry(() => import('./components/GraphView'));
+const CalendarView = lazyWithRetry(() => import('./components/CalendarView'));
+const SettingsView = lazyWithRetry(() => import('./components/SettingsView'));
+const EntityList = lazyWithRetry(() => import('./components/EntityList'));
+const LiveVoiceModal = lazyWithRetry(() => import('./components/LiveVoiceModal'));
+const CreateEntityModal = lazyWithRetry(() => import('./components/CreateEntityModal'));
+const KnowledgeView = lazyWithRetry(() => import('./components/KnowledgeView'));
+const AnalyticsView = lazyWithRetry(() => import('./components/AnalyticsView'));
+const TimelineView = lazyWithRetry(() => import('./components/TimelineView'));
+const SchedulesView = lazyWithRetry(() => import('./components/SchedulesView'));
+const FoodTracker = lazyWithRetry(() => import('./components/FoodTracker'));
+const AttendanceTracker = lazyWithRetry(() => import('./components/AttendanceTracker'));
+const GraphFixingModal = lazyWithRetry(() => import('./components/GraphFixingModal'));
 
 // Loading fallback for lazy components
 const LazyLoadFallback = () => (

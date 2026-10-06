@@ -1,27 +1,64 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useStore } from '../store';
 import { EntityKind, Entity } from '../types';
-import { CalendarClock, Utensils, Upload, FileText, ExternalLink, Calendar as CalendarIcon, Clock } from 'lucide-react';
+import { CalendarClock, Utensils, Upload, FileText, ExternalLink, Calendar as CalendarIcon, Clock, Loader2 } from 'lucide-react';
 import MarkdownText from './MarkdownText';
 
 const SchedulesView: React.FC = () => {
-    const { entities, setView } = useStore();
-    // In a real implementation, we would toggle 'isChatOpen' in App.tsx via a global state or event.
-    // However, App.tsx controls chat visibility.
-    // For now, we will assume user manually opens chat or we trigger a command if possible.
-    // Actually, we can't easily open chat from here without passing props or store action.
-    // But we can instruct the user.
+    const { entities, setView, addToast, addMessage, activeSessionId } = useStore();
+    const [isUploading, setIsUploading] = useState(false);
+    const classFileRef = useRef<HTMLInputElement>(null);
+    const messFileRef = useRef<HTMLInputElement>(null);
+
+    const handleFileUpload = (type: 'class' | 'mess') => (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setIsUploading(true);
+        const reader = new FileReader();
+        reader.onload = () => {
+            const dataUrl = reader.result as string;
+            const channel = activeSessionId || 'general';
+            const prompt = type === 'class'
+                ? 'Please parse this class schedule timetable image and schedule all recurring classes as events in my calendar.'
+                : 'Please parse this mess dining menu image and save the daily breakfast, lunch, snacks, and dinner meal details.';
+            
+            addMessage('user', prompt, undefined, dataUrl, channel);
+            addToast(`${type === 'class' ? 'Timetable' : 'Mess menu'} uploaded! Opening Chat for processing...`, 'success');
+            setView('chat');
+            setIsUploading(false);
+        };
+        reader.onerror = () => {
+            addToast('Failed to read timetable file', 'error');
+            setIsUploading(false);
+        };
+        reader.readAsDataURL(file);
+    };
 
     // Filter for entities that represents schedules (if any created)
-    // We'll look for Notes with specific tags for now.
-    const classSchedules = entities.filter(e => e.kind === EntityKind.NOTE && e.canonical_tags.includes('class-schedule'));
-    const messSchedules = entities.filter(e => e.kind === EntityKind.NOTE && e.canonical_tags.includes('mess-schedule'));
+    const classSchedules = entities.filter(e => e.kind === EntityKind.NOTE && e.canonical_tags?.includes('class-schedule'));
+    const messSchedules = entities.filter(e => e.kind === EntityKind.NOTE && e.canonical_tags?.includes('mess-schedule'));
 
     // Events for "Class Schedule" preview (recurring events)
     const recurringEvents = entities.filter(e => e.kind === EntityKind.EVENT && e.recurrence);
 
     return (
         <div className="flex flex-col h-full bg-slate-950 text-slate-100 p-6 overflow-y-auto">
+            {/* Hidden File Inputs */}
+            <input
+                ref={classFileRef}
+                type="file"
+                accept="image/*,.pdf"
+                className="hidden"
+                onChange={handleFileUpload('class')}
+            />
+            <input
+                ref={messFileRef}
+                type="file"
+                accept="image/*,.pdf"
+                className="hidden"
+                onChange={handleFileUpload('mess')}
+            />
+
             <header className="flex items-center justify-between mb-8 pl-14">
                 <div>
                     <h1 className="text-2xl font-bold flex items-center gap-2">
@@ -41,13 +78,12 @@ const SchedulesView: React.FC = () => {
                             Class Schedule
                         </h2>
                         <button
-                            className="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-lg border border-indigo-500/30 transition-colors flex items-center gap-2"
-                            onClick={() => {
-                                setView('chat_graph');
-                            }}
+                            disabled={isUploading}
+                            className="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-lg border border-indigo-500/30 transition-colors flex items-center gap-2 disabled:opacity-50"
+                            onClick={() => classFileRef.current?.click()}
                         >
-                            <Upload size={12} />
-                            Upload New
+                            {isUploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                            Upload Timetable
                         </button>
                     </div>
 
@@ -87,12 +123,11 @@ const SchedulesView: React.FC = () => {
                             Mess Menu
                         </h2>
                         <button
-                            className="text-xs bg-orange-600/20 hover:bg-orange-600/40 text-orange-300 px-3 py-1.5 rounded-lg border border-orange-500/30 transition-colors flex items-center gap-2"
-                            onClick={() => {
-                                setView('chat_graph');
-                            }}
+                            disabled={isUploading}
+                            className="text-xs bg-orange-600/20 hover:bg-orange-600/40 text-orange-300 px-3 py-1.5 rounded-lg border border-orange-500/30 transition-colors flex items-center gap-2 disabled:opacity-50"
+                            onClick={() => messFileRef.current?.click()}
                         >
-                            <Upload size={12} />
+                            {isUploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
                             Upload Menu
                         </button>
                     </div>

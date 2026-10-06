@@ -189,30 +189,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
             {showLabels && <span className={forceExpanded ? '' : 'hidden md:block'}>Zen</span>}
           </button>
         )}
-
-        {/* Sync Status Indicator */}
-        {currentUser && showLabels && (
-          <div className={`px-2.5 py-2 border-t border-slate-800/50 ${forceExpanded ? '' : 'hidden md:flex'} items-center gap-2`}>
-            {syncStatus === 'syncing' && (
-              <>
-                <Loader2 size={14} className="text-blue-400 animate-spin" />
-                <span className="text-xs text-blue-400">Syncing...</span>
-              </>
-            )}
-            {syncStatus === 'idle' && (
-              <>
-                <Check size={14} className="text-emerald-400" />
-                <span className="text-xs text-emerald-400">Synced</span>
-              </>
-            )}
-            {syncStatus === 'error' && (
-              <>
-                <AlertTriangle size={14} className="text-red-400" />
-                <span className="text-xs text-red-400">Sync error</span>
-              </>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

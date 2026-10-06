@@ -94,17 +94,17 @@ export const ChatSessionBar: React.FC<ChatSessionBarProps> = ({
 
     return (
         <div className="relative border-b border-slate-800/80 bg-slate-900/90 backdrop-blur-md px-3 py-2 z-20" ref={menuRef}>
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-3">
                 {/* Left: Chat Session Switcher Dropdown */}
-                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
                     <button
                         onClick={() => setIsMenuOpen(!isMenuOpen)}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-slate-800/80 text-slate-200 transition-all text-xs font-semibold border border-transparent hover:border-slate-700/60 shrink-0"
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl hover:bg-slate-800/80 text-slate-200 transition-all text-xs font-medium border border-slate-800 hover:border-slate-700/60 shrink-0"
                         title="Switch chat session"
                     >
-                        <MessageSquare size={14} className="text-indigo-400 shrink-0" />
-                        <span className="max-w-[140px] sm:max-w-[220px] truncate">{activeSession.title}</span>
-                        <ChevronDown size={13} className={`text-slate-400 shrink-0 transition-transform duration-200 ${isMenuOpen ? 'rotate-180' : ''}`} />
+                        <MessageSquare size={13} className="text-indigo-400 shrink-0" />
+                        <span className="max-w-[110px] sm:max-w-[180px] md:max-w-[220px] truncate">{activeSession.title}</span>
+                        <ChevronDown size={12} className={`text-slate-400 shrink-0 transition-transform duration-200 ${isMenuOpen ? 'rotate-180' : ''}`} />
                     </button>
 
                     {/* New Chat Pill Button (ChatGPT-style) */}
@@ -119,10 +119,10 @@ export const ChatSessionBar: React.FC<ChatSessionBarProps> = ({
                 </div>
 
                 {/* Right: Model badge & Close button */}
-                <div className="flex items-center gap-1.5 shrink-0">
-                    <div className="hidden sm:flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-800/60 px-2 py-1 rounded-lg border border-slate-700/60">
+                <div className="flex items-center gap-2 shrink-0">
+                    <div className="hidden md:flex items-center gap-1.5 text-[10px] text-slate-400 bg-slate-800/60 px-2 py-1 rounded-lg border border-slate-700/60">
                         <span className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-indigo-400 animate-pulse' : 'bg-emerald-400'}`} />
-                        <span>{settings?.preferred_model || 'gemini-3.8-flash'}</span>
+                        <span>{settings?.preferred_model || 'gemini-2.5-flash'}</span>
                     </div>
 
                     {showCloseButton && onCloseChat && (

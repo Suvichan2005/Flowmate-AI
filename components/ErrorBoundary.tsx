@@ -89,25 +89,36 @@ class ErrorBoundary extends Component<Props, State> {
     render(): ReactNode {
         if (this.state.hasError) {
             const { error, errorInfo } = this.state;
+            const isChunkError = error?.message?.includes('dynamically imported module') ||
+                error?.message?.includes('Loading chunk') ||
+                error?.message?.includes('module script failed');
 
             return (
                 <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
                     <div className="max-w-lg w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
                         {/* Header */}
                         <div className="flex items-center gap-3 mb-6">
-                            <div className="p-3 bg-red-500/10 rounded-xl">
-                                <AlertTriangle className="w-8 h-8 text-red-400" />
+                            <div className={`p-3 rounded-xl ${isChunkError ? 'bg-indigo-500/10' : 'bg-red-500/10'}`}>
+                                {isChunkError ? (
+                                    <RefreshCw className="w-8 h-8 text-indigo-400" />
+                                ) : (
+                                    <AlertTriangle className="w-8 h-8 text-red-400" />
+                                )}
                             </div>
                             <div>
-                                <h1 className="text-xl font-bold text-slate-100">Something went wrong</h1>
-                                <p className="text-sm text-slate-400">Flowmate encountered an unexpected error</p>
+                                <h1 className="text-xl font-bold text-slate-100">
+                                    {isChunkError ? 'New Update Available' : 'Something went wrong'}
+                                </h1>
+                                <p className="text-sm text-slate-400">
+                                    {isChunkError ? 'A newer version of Flowmate has been deployed.' : 'Flowmate encountered an unexpected error'}
+                                </p>
                             </div>
                         </div>
 
                         {/* Error Details */}
                         <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 mb-6">
-                            <p className="text-sm font-medium text-red-400 mb-2">
-                                {error?.name || 'Error'}: {error?.message || 'Unknown error'}
+                            <p className={`text-sm font-medium mb-2 ${isChunkError ? 'text-indigo-300' : 'text-red-400'}`}>
+                                {isChunkError ? 'The application assets were updated on the server. Reloading will refresh your session cleanly.' : `${error?.name || 'Error'}: ${error?.message || 'Unknown error'}`}
                             </p>
                             {errorInfo?.componentStack && (
                                 <details className="mt-2">

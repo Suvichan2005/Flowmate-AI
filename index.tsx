@@ -3,7 +3,16 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
 
-// Register Service Worker for PWA support (production only)
+// Auto-recover from chunk loading mismatches caused by fresh deployments
+window.addEventListener('vite:preloadError', (event) => {
+  console.warn('[Vite] Dynamic chunk failed to load, reloading to fetch updated assets...', event);
+  const reloaded = sessionStorage.getItem('vite_preload_error_reload');
+  if (!reloaded) {
+    sessionStorage.setItem('vite_preload_error_reload', 'true');
+    window.location.reload();
+  }
+});
+
 if ('serviceWorker' in navigator) {
   if (import.meta.env.PROD) {
     window.addEventListener('load', () => {

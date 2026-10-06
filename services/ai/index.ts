@@ -174,12 +174,24 @@ export const orchestrateMessage = async (
 
       // --- Handle read-only function calls (continue loop) ---
       if (response.functionCalls && response.functionCalls.length > 0) {
+        // First append the model turn that invoked the function calls
+        if (response.candidates && response.candidates[0]?.content) {
+          contents.push(response.candidates[0].content);
+        } else {
+          contents.push({
+            role: 'model',
+            parts: response.functionCalls.map(call => ({
+              functionCall: { name: call.name!, args: call.args },
+            })),
+          });
+        }
+
         const functionResponses = response.functionCalls.map(call =>
           dispatchToolCall({ name: call.name!, args: call.args }, snapshot.entities),
         );
 
         contents.push({
-          role: 'function' as any,
+          role: 'user',
           parts: functionResponses.map(r => ({
             functionResponse: { name: r.name, response: r.response },
           })),
