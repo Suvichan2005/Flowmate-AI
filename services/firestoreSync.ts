@@ -75,6 +75,27 @@ function metaDoc(uid: string, docName: string) {
     return doc(db!, usersCol, uid, metaSubCol, docName);
 }
 
+// Recursively remove undefined values from an object before saving to Firestore
+function sanitizeForFirestore<T>(obj: T): T {
+    if (obj === undefined || obj === null) {
+        return null as any;
+    }
+    if (Array.isArray(obj)) {
+        return obj.map(item => sanitizeForFirestore(item)) as any;
+    }
+    if (typeof obj === 'object') {
+        const cleaned: Record<string, any> = {};
+        for (const [key, val] of Object.entries(obj)) {
+            if (val !== undefined) {
+                cleaned[key] = sanitizeForFirestore(val);
+            }
+        }
+        return cleaned as any;
+    }
+    return obj;
+}
+
+
 // --- Types ---
 
 export interface UserConfig {
@@ -387,7 +408,7 @@ export async function saveMessage(userId: string, message: Message): Promise<boo
 
     try {
         const { id, ...data } = message;
-        await setDoc(messageDoc(userId, id), data);
+        await setDoc(messageDoc(userId, id), sanitizeForFirestore(data));
         return true;
     } catch (error) {
         console.error('[FirestoreSync] Message save failed:', error);
@@ -408,7 +429,7 @@ export async function saveMessages(userId: string, messages: Message[]): Promise
             const chunk = messages.slice(i, i + BATCH_SIZE);
             for (const msg of chunk) {
                 const { id, ...data } = msg;
-                batch.set(messageDoc(userId, id), data);
+                batch.set(messageDoc(userId, id), sanitizeForFirestore(data));
             }
             await batch.commit();
         }
@@ -433,7 +454,7 @@ export async function syncEntities(userId: string, entities: Entity[]): Promise<
             const chunk = entities.slice(i, i + BATCH_SIZE);
             for (const entity of chunk) {
                 const { id, ...data } = entity;
-                batch.set(entityDoc(userId, id), data);
+                batch.set(entityDoc(userId, id), sanitizeForFirestore(data));
             }
             await batch.commit();
         }
@@ -594,7 +615,7 @@ export const saveUserData = async (
             const chunk = data.entities.slice(i, i + BATCH_SIZE);
             for (const entity of chunk) {
                 const { id, ...entityData } = entity;
-                batch.set(entityDoc(userId, id), entityData);
+                batch.set(entityDoc(userId, id), sanitizeForFirestore(entityData));
             }
             await batch.commit();
         }
@@ -605,7 +626,7 @@ export const saveUserData = async (
             const chunk = data.relationships.slice(i, i + BATCH_SIZE);
             for (const rel of chunk) {
                 const { id, ...relData } = rel;
-                batch.set(relationshipDoc(userId, id), relData);
+                batch.set(relationshipDoc(userId, id), sanitizeForFirestore(relData));
             }
             await batch.commit();
         }
@@ -617,7 +638,7 @@ export const saveUserData = async (
                 const chunk = data.messages.slice(i, i + BATCH_SIZE);
                 for (const msg of chunk) {
                     const { id, ...msgData } = msg;
-                    batch.set(messageDoc(userId, id), msgData);
+                    batch.set(messageDoc(userId, id), sanitizeForFirestore(msgData));
                 }
                 await batch.commit();
             }
