@@ -22,7 +22,8 @@ import {
   Cloud,
   Loader2,
   AlertTriangle,
-  Check
+  Check,
+  Network
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -54,13 +55,13 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
 
   // Navigation items with feature toggle control
   const navItems = [
-    { icon: MessageCircle, label: 'Chat', view: 'chat' as ViewType, mobileOnly: true },
     { icon: LayoutDashboard, label: 'Dashboard', view: 'dashboard' as ViewType },
+    { icon: MessageSquare, label: 'Chat', view: 'chat' as ViewType },
+    { icon: Network, label: 'Graph', view: 'chat_graph' as ViewType },
     { icon: Clock, label: 'Timeline', view: 'timeline' as ViewType },
-    { icon: TrendingUp, label: 'Analytics', view: 'analytics' as ViewType },
-    { icon: MessageSquare, label: 'Graph', view: 'chat_graph' as ViewType },
-    { icon: Library, label: 'Library', view: 'knowledge' as ViewType },
     { icon: Calendar, label: 'Calendar', view: 'calendar' as ViewType },
+    { icon: TrendingUp, label: 'Analytics', view: 'analytics' as ViewType },
+    { icon: Library, label: 'Library', view: 'knowledge' as ViewType },
     ...(toggles.food_tracking ? [{ icon: Table2, label: 'Schedules', view: 'schedules' as ViewType }] : []),
     ...(toggles.food_tracking ? [{ icon: UtensilsCrossed, label: 'Food', view: 'food' as ViewType }] : []),
     ...(toggles.attendance_tracking ? [{ icon: GraduationCap, label: 'Attendance', view: 'attendance' as ViewType }] : []),
@@ -124,22 +125,22 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
       </nav>
 
       {/* Undo/Redo */}
-      <div className={`px-2 py-1.5 flex gap-0.5 ${isCompact ? 'flex-col items-center' : 'justify-center'} border-t border-slate-800/50`}>
+      <div className={`px-2 py-1.5 flex gap-1 ${isCompact ? 'flex-col items-center' : 'justify-center'} border-t border-slate-800/60`}>
         <button
           onClick={undo}
           disabled={!canUndo()}
-          className="p-1.5 rounded-md hover:bg-slate-800 text-slate-500 disabled:opacity-30 transition-colors"
-          title="Undo"
+          className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white disabled:text-slate-600 disabled:hover:bg-transparent transition-all"
+          title="Undo (Ctrl+Z)"
         >
-          <Undo2 size={16} />
+          <Undo2 size={15} />
         </button>
         <button
           onClick={redo}
           disabled={!canRedo()}
-          className="p-1.5 rounded-md hover:bg-slate-800 text-slate-500 disabled:opacity-30 transition-colors"
-          title="Redo"
+          className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white disabled:text-slate-600 disabled:hover:bg-transparent transition-all"
+          title="Redo (Ctrl+Y)"
         >
-          <Redo2 size={16} />
+          <Redo2 size={15} />
         </button>
       </div>
 

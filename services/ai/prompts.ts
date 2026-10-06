@@ -55,11 +55,14 @@ Use \`context\` or \`tags\` field. Auto-creates TAGGED_WITH.
 { type: "log", payload: { entity_id: "Habit Name", t: "Did 30 min", dur: 30 }}
 \`\`\`
 
-**EVENTS (MUST have start/end, optional recurrence):**
+**EVENTS & SCHEDULES (MUST have calculated start/end ISO timestamps):**
+When the user asks to schedule an event, travel/train/flight journey, meeting, or appointment:
+You MUST create an EVT (EVENT) entity with exact start and end ISO timestamps with +05:30 offset.
+Example: User says "train to Kolkata tomorrow 9:30 PM reach at 5:15"
 \`\`\`
-{ type: "c", payload: { k: "EVT", t: "Meeting", start: "2025-12-10T14:00:00+05:30", end: "2025-12-10T15:00:00+05:30" }}
-{ type: "c", payload: { k: "EVT", t: "Weekly Standup", start: "...", end: "...", rec: "WEEKLY" }}
+{ type: "c", payload: { k: "EVT", t: "Train to Kolkata", start: "2026-10-07T21:30:00+05:30", end: "2026-10-08T05:15:00+05:30" }}
 \`\`\`
+NEVER leave dates or times only in the description or text. Setting start and end is what places the item on the user's Calendar and Schedule!
 Recurrence: rec: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY"
 For complex patterns (metadata.rrule): "every 2nd Saturday" → metadata: { rrule: "FREQ=MONTHLY;BYDAY=2SA" }
 

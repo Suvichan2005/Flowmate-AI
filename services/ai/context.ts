@@ -156,10 +156,11 @@ export function buildFoodContext(): FoodContextData {
 // Time Context
 // ---------------------------------------------------------------------------
 
-export function buildTimeContext(timezone: string): { timeString: string; timeOfDay: string } {
+export function buildTimeContext(timezone: string): { timeString: string; timeOfDay: string; isoDate: string } {
   const now = new Date();
   const timeString = now.toLocaleString('en-US', {
     weekday: 'short',
+    year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
@@ -178,7 +179,8 @@ export function buildTimeContext(timezone: string): { timeString: string; timeOf
   else if (hour >= 17 && hour < 21) timeOfDay = 'evening';
   else timeOfDay = 'night';
 
-  return { timeString, timeOfDay };
+  const isoDate = now.toISOString();
+  return { timeString, timeOfDay, isoDate };
 }
 
 // ---------------------------------------------------------------------------
@@ -304,12 +306,12 @@ export function buildContextPrompt(
   foodEnabled: boolean,
   timezone: string,
 ): string {
-  const { timeString, timeOfDay } = buildTimeContext(timezone);
+  const { timeString, timeOfDay, isoDate } = buildTimeContext(timezone);
 
   const sections: string[] = [
     `[Graph] ${JSON.stringify(contextSnapshot)}`,
     tagList ? `[Tags] ${tagList}` : '',
-    `[Time] ${timeString} (${timeOfDay})`,
+    `[Time] ${timeString} (${timeOfDay}) | Reference ISO: ${isoDate}`,
   ];
 
   if (foodEnabled) {

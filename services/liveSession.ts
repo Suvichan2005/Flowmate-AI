@@ -62,19 +62,41 @@ function pcmToAudioBuffer(
 
 // --- Tool Definitions ---
 
+const scheduleEventTool: FunctionDeclaration = {
+  name: 'schedule_event',
+  description: 'Schedule an event, trip, train or flight journey, meeting, or appointment in the user\'s calendar and schedule. MUST include start_time and end_time.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      title: { type: Type.STRING, description: 'The title of the event, e.g. "Train to Kolkata"' },
+      start_time: { type: Type.STRING, description: 'Start time in ISO 8601 format with timezone offset, e.g. "2026-10-07T21:30:00+05:30"' },
+      end_time: { type: Type.STRING, description: 'End time in ISO 8601 format with timezone offset, e.g. "2026-10-08T05:15:00+05:30"' },
+      description: { type: Type.STRING, description: 'Additional details or notes about the journey/event' },
+      location: { type: Type.STRING, description: 'Location, origin, or destination' },
+      recurrence: { type: Type.STRING, enum: ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'], description: 'Optional recurrence frequency' }
+    },
+    required: ['title', 'start_time']
+  }
+};
+
 const createEntityTool: FunctionDeclaration = {
   name: 'create_entity',
-  description: 'Create a new item in the database. Use this for goals, projects, tasks, or notes.',
+  description: 'Create an entity in the user\'s life graph. For EVENT items, start_time and end_time MUST be provided.',
   parameters: {
     type: Type.OBJECT,
     properties: {
       title: { type: Type.STRING, description: 'The title of the entity' },
       kind: { 
         type: Type.STRING, 
-        enum: ['GOAL', 'PROJECT', 'TASK', 'NOTE', 'EVENT', 'CONTEXT'],
-        description: 'The type of entity. IMPORTANT: If user mentions a domain like "IEEE" or "Gym", use "CONTEXT".'
+        enum: ['GOAL', 'PROJECT', 'TASK', 'NOTE', 'EVENT', 'CONTEXT', 'HABIT'],
+        description: 'The type of entity. Use EVENT for meetings, trips, train journeys, appointments.'
       },
-      description: { type: Type.STRING, description: 'Additional details' }
+      description: { type: Type.STRING, description: 'Additional details' },
+      start_time: { type: Type.STRING, description: 'Start time in ISO 8601 format with timezone offset (+05:30)' },
+      end_time: { type: Type.STRING, description: 'End time in ISO 8601 format with timezone offset (+05:30)' },
+      deadline: { type: Type.STRING, description: 'Due date / deadline for tasks (ISO 8601)' },
+      duration_minutes: { type: Type.NUMBER, description: 'Estimated duration in minutes' },
+      recurrence: { type: Type.STRING, enum: ['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'] }
     },
     required: ['title', 'kind']
   }
@@ -82,14 +104,41 @@ const createEntityTool: FunctionDeclaration = {
 
 const logActivityTool: FunctionDeclaration = {
   name: 'log_activity',
-  description: 'Log a completed activity or progress.',
+  description: 'Log completed activity, workout, study session, or habit progress.',
   parameters: {
     type: Type.OBJECT,
     properties: {
       title: { type: Type.STRING, description: 'What was done' },
-      minutes: { type: Type.NUMBER, description: 'Duration in minutes' }
+      minutes: { type: Type.NUMBER, description: 'Duration in minutes' },
+      productivity: { type: Type.STRING, enum: ['PRODUCTIVE', 'NEUTRAL', 'UNPRODUCTIVE'], description: 'Productivity rating' }
     },
     required: ['title']
+  }
+};
+
+const readCalendarTool: FunctionDeclaration = {
+  name: 'read_calendar',
+  description: 'Check calendar events and scheduled tasks in a date range.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      start_date: { type: Type.STRING, description: 'Start date (YYYY-MM-DD)' },
+      end_date: { type: Type.STRING, description: 'End date (YYYY-MM-DD)' }
+    },
+    required: ['start_date', 'end_date']
+  }
+};
+
+const searchEntitiesTool: FunctionDeclaration = {
+  name: 'search_entities',
+  description: 'Search existing items in the database by title, keyword, or kind.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      query: { type: Type.STRING, description: 'Query text to search for' },
+      kind: { type: Type.STRING, description: 'Filter by kind' }
+    },
+    required: ['query']
   }
 };
 
@@ -111,6 +160,12 @@ export class LiveManager {
   public onStatusChange: (status: string) => void = () => {};
   public onTranscription: (text: string, source: 'user' | 'model') => void = () => {};
 
+  // Turn buffers for saving to store messages
+  private userTurnBuffer: string = '';
+  private modelTurnBuffer: string = '';
+  private turnPendingOps: any[] = [];
+  private lastTurnMessageId: string = '';
+
   constructor() {
     this.ai = getAiClient();
   }
@@ -119,24 +174,53 @@ export class LiveManager {
     try {
       this.onStatusChange('connecting');
 
-      // Fetch User Settings for Persona
-      const { settings } = useStore.getState();
+      // Fetch User Settings & Context
+      const { settings, entities } = useStore.getState();
+      const timezone = settings.timezone || 'Asia/Kolkata';
+      const now = new Date();
+      const localTimeString = now.toLocaleString('en-US', {
+        timeZone: timezone,
+        dateStyle: 'full',
+        timeStyle: 'medium'
+      });
+      const localIsoString = now.toISOString();
+
+      // Recent upcoming events for context
+      const upcomingEvents = (entities || [])
+        .filter(e => e.kind === 'EVENT' && e.start_time && new Date(e.start_time) >= now)
+        .slice(0, 5)
+        .map(e => `${e.title} (${e.start_time})`)
+        .join(', ');
+
       const customInst = settings.custom_instructions 
         ? `\nImportant User Instructions:\n${settings.custom_instructions}` 
         : "";
       
       const systemInstructionText = `
-      You are Flowmate, a helpful productivity assistant. 
-      Keep responses concise and friendly. 
-      You have access to tools to create entities and log activity.
-      CRITICAL: If the user creates a broad area or group (e.g. "Work", "School", "IEEE"), create a CONTEXT entity, NOT a PROJECT.
-      ${customInst}`;
+You are Flowmate, a helpful personal productivity assistant.
+Keep responses concise, natural, and friendly.
+
+CURRENT TIME & DATE:
+- Local Time: ${localTimeString}
+- ISO Timestamp: ${localIsoString}
+- Timezone: ${timezone}
+${upcomingEvents ? `- Upcoming Events: ${upcomingEvents}` : ''}
+
+CRITICAL RULES FOR CREATING EVENTS & SCHEDULING:
+1. When the user asks to schedule an event, travel/train/flight journey, meeting, or appointment:
+   You MUST call the \`schedule_event\` or \`create_entity\` tool with kind="EVENT".
+2. You MUST compute the exact \`start_time\` and \`end_time\` as ISO 8601 strings with timezone offset (+05:30).
+   - Example: If current local time is ${localTimeString}, and user says "tomorrow 9:30 PM... reach at 5:15",
+     compute tomorrow's date at 21:30:00+05:30 for start_time, and the arrival time (e.g. 05:15:00+05:30 next morning) for end_time.
+   - NEVER put the times in description or title alone! Setting start_time and end_time is required for the event to show up in the user's schedule.
+3. You have full capability to schedule events and manage the calendar. An operation preview will be displayed to the user on their screen for review.
+4. If the user creates a broad area or group (e.g. "Work", "School", "IEEE"), create a CONTEXT entity, NOT a PROJECT.
+${customInst}`;
       
       // 1. Audio Setup
       this.inputContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       this.outputContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       
-      // Ensure audio contexts are active (browsers suspend contexts created without recent user gesture)
       if (this.inputContext.state === 'suspended') {
         await this.inputContext.resume();
       }
@@ -151,7 +235,15 @@ export class LiveManager {
         model: MODEL_NAME,
         config: {
           responseModalities: [Modality.AUDIO],
-          tools: [{ functionDeclarations: [createEntityTool, logActivityTool] }],
+          tools: [{
+            functionDeclarations: [
+              scheduleEventTool,
+              createEntityTool,
+              logActivityTool,
+              readCalendarTool,
+              searchEntitiesTool
+            ]
+          }],
           systemInstruction: {
              parts: [{ text: systemInstructionText }]
           }
@@ -166,18 +258,19 @@ export class LiveManager {
           },
           onclose: (e) => {
             console.log('[LiveManager] Connection closed', e);
+            this.flushBuffers();
             this.onStatusChange('disconnected');
             this.cleanup();
           },
           onerror: (err) => {
             console.error("[LiveManager] Live Error:", err);
+            this.flushBuffers();
             this.onStatusChange('error');
             this.cleanup();
           }
         }
       });
       
-      // Wait for session to be established before starting audio streaming
       this.session = await sessionPromise;
       this.startAudioInput();
 
@@ -209,7 +302,6 @@ export class LiveManager {
       const base64 = bytesToBase64(uint8);
 
       try {
-        // Correct Gemini Live realtime audio payload format
         this.session.sendRealtimeInput({
           audio: {
             mimeType: 'audio/pcm;rate=16000',
@@ -221,16 +313,45 @@ export class LiveManager {
       }
     };
 
-    // Connect Graph: Source -> Analyser -> Processor -> Destination
     this.source.connect(this.analyser);
     this.analyser.connect(this.processor);
     this.processor.connect(this.inputContext.destination);
+  }
+
+  private flushUserTurn() {
+    if (this.userTurnBuffer.trim()) {
+      const { addMessage, activeSessionId } = useStore.getState();
+      const msgId = addMessage('user', this.userTurnBuffer.trim(), undefined, null, activeSessionId || 'general');
+      this.lastTurnMessageId = msgId;
+      this.userTurnBuffer = '';
+    }
+  }
+
+  private flushModelTurn() {
+    if (this.modelTurnBuffer.trim()) {
+      const { addMessage, setPendingOps, activeSessionId } = useStore.getState();
+      const ops = this.turnPendingOps.length > 0 ? [...this.turnPendingOps] : undefined;
+      const msgId = addMessage('assistant', this.modelTurnBuffer.trim(), ops, null, activeSessionId || 'general');
+      
+      if (ops && ops.length > 0) {
+        setPendingOps(ops, msgId);
+      }
+
+      this.modelTurnBuffer = '';
+      this.turnPendingOps = [];
+    }
+  }
+
+  private flushBuffers() {
+    this.flushUserTurn();
+    this.flushModelTurn();
   }
 
   private async handleMessage(msg: LiveServerMessage) {
     // 0. Interruption Handling
     if (msg.serverContent?.interrupted) {
       this.nextStartTime = 0;
+      this.flushModelTurn();
     }
 
     // 1. Audio Output and Inline Text from parts
@@ -250,6 +371,7 @@ export class LiveManager {
           this.nextStartTime += buffer.duration;
         }
         if (part.text) {
+          this.modelTurnBuffer += part.text;
           this.onTranscription(part.text, 'model');
         }
       }
@@ -258,17 +380,34 @@ export class LiveManager {
     // 2. Transcription
     const outTrans = msg.serverContent?.outputTranscription;
     if (outTrans?.text) {
+      this.modelTurnBuffer += outTrans.text;
       this.onTranscription(outTrans.text, 'model');
     }
+
     const inTrans = msg.serverContent?.inputTranscription;
     if (inTrans?.text) {
+      // If user starts speaking while previous model turn wasn't flushed, flush it
+      if (this.modelTurnBuffer.trim()) {
+        this.flushModelTurn();
+      }
+      this.userTurnBuffer += inTrans.text;
       this.onTranscription(inTrans.text, 'user');
     }
 
-    // 3. Tool Calls
+    // 3. Turn Complete
+    if (msg.serverContent?.turnComplete) {
+      // Ensure user turn was logged before the model turn
+      this.flushUserTurn();
+      this.flushModelTurn();
+    }
+
+    // 4. Tool Calls
     if (msg.toolCall?.functionCalls && this.session) {
-      const { applyOperations, addDebugLog } = useStore.getState();
+      const { setPendingOps, addDebugLog, entities } = useStore.getState();
       const responses: Array<{ name: string; id?: string; response: Record<string, any> }> = [];
+
+      // Make sure user's utterance before the tool call is saved
+      this.flushUserTurn();
 
       for (const fc of msg.toolCall.functionCalls) {
         addDebugLog('system', `Live Tool Call: ${fc.name}`, fc.args);
@@ -276,19 +415,91 @@ export class LiveManager {
         let result: Record<string, any> = { status: 'ok' };
         const id = uuidv4();
 
-        if (fc.name === 'create_entity') {
-          const { title, kind, description } = (fc.args || {}) as any;
-          applyOperations([{
+        if (fc.name === 'schedule_event') {
+          const { title, start_time, end_time, description, location, recurrence } = (fc.args || {}) as any;
+          const op: any = {
             type: 'create_entity',
-            payload: { id, title, kind, description }
-          }]);
-          result = { status: 'created', id };
+            payload: {
+              id,
+              kind: EntityKind.EVENT,
+              title: title || 'Scheduled Event',
+              description: description || null,
+              start_time: start_time || null,
+              end_time: end_time || null,
+              recurrence: recurrence || null,
+              metadata: location ? { location } : {}
+            }
+          };
+
+          this.turnPendingOps.push(op);
+          setPendingOps([op], this.lastTurnMessageId || id);
+          result = {
+            status: 'prepared_for_preview',
+            id,
+            title,
+            start_time,
+            end_time,
+            message: `Event "${title}" from ${start_time} to ${end_time} prepared for user review on screen.`
+          };
+        } else if (fc.name === 'create_entity') {
+          const { title, kind, description, start_time, end_time, deadline, duration_minutes, recurrence } = (fc.args || {}) as any;
+          const resolvedKind = (kind || 'TASK').toUpperCase();
+          const op: any = {
+            type: 'create_entity',
+            payload: {
+              id,
+              title,
+              kind: resolvedKind,
+              description: description || null,
+              start_time: start_time || null,
+              end_time: end_time || null,
+              deadline: deadline || null,
+              duration_minutes: duration_minutes || null,
+              recurrence: recurrence || null
+            }
+          };
+
+          this.turnPendingOps.push(op);
+          setPendingOps([op], this.lastTurnMessageId || id);
+          result = {
+            status: 'prepared_for_preview',
+            id,
+            title,
+            kind: resolvedKind,
+            message: `Entity "${title}" prepared for user review on screen.`
+          };
         } else if (fc.name === 'log_activity') {
-          const { title, minutes } = (fc.args || {}) as any;
-          applyOperations([{
+          const { title, minutes, productivity } = (fc.args || {}) as any;
+          const op: any = {
             type: 'log_activity',
-            payload: { title, duration_minutes: minutes }
-          }]);
+            payload: {
+              title,
+              duration_minutes: minutes,
+              metadata: productivity ? { productivity } : {}
+            }
+          };
+
+          this.turnPendingOps.push(op);
+          setPendingOps([op], this.lastTurnMessageId || id);
+          result = { status: 'logged', title, minutes };
+        } else if (fc.name === 'read_calendar') {
+          const { start_date, end_date } = (fc.args || {}) as any;
+          const s = start_date ? new Date(start_date).getTime() : 0;
+          const e = end_date ? new Date(end_date).getTime() : Infinity;
+          const matched = (entities || []).filter(item => {
+            if (item.kind !== 'EVENT' || !item.start_time) return false;
+            const t = new Date(item.start_time).getTime();
+            return t >= s && t <= e;
+          }).map(i => ({ id: i.id, title: i.title, start: i.start_time, end: i.end_time }));
+          result = { events: matched };
+        } else if (fc.name === 'search_entities') {
+          const { query: q, kind } = (fc.args || {}) as any;
+          const qLower = (q || '').toLowerCase();
+          const matched = (entities || []).filter(item => {
+            if (kind && item.kind !== kind) return false;
+            return item.title.toLowerCase().includes(qLower) || (item.description || '').toLowerCase().includes(qLower);
+          }).slice(0, 10).map(i => ({ id: i.id, title: i.title, kind: i.kind }));
+          result = { results: matched };
         }
 
         responses.push({
@@ -309,6 +520,7 @@ export class LiveManager {
   }
 
   disconnect() {
+    this.flushBuffers();
     if (this.session) {
       try {
         this.session.close();

@@ -19,6 +19,7 @@ import {
     Entity,
     Relationship,
     Message,
+    ChatSession,
     EntityKind,
     EntityStatus,
     RelationshipType,
@@ -95,9 +96,18 @@ interface FlowmateState {
     history: HistorySnapshot[];
     historyPointer: number;
 
+    // Chat Sessions (ChatGPT-style multi-chat)
+    chatSessions: ChatSession[];
+    activeSessionId: string;
+
     // Actions
     setHydrated: (val: boolean) => void;
     addMessage: (role: 'user' | 'assistant', text: string, ops?: ToonOperation[], attachment?: string | null, channelId?: string) => string;
+    createChatSession: (title?: string) => string;
+    setActiveSessionId: (id: string) => void;
+    deleteChatSession: (id: string) => void;
+    renameChatSession: (id: string, newTitle: string) => void;
+    clearChatSession: (id: string) => void;
     setPendingOps: (ops: ToonOperation[], originalMessageId: string) => void;
     clearPendingOps: () => void;
     applyOperations: (ops: ToonOperation[]) => void;
@@ -173,9 +183,19 @@ export const useStore = create<FlowmateState>()(
                     id: 'init-1',
                     role: 'assistant',
                     text: 'Welcome to Flowmate. I am ready to organize your productivity graph. What are you working on?',
-                    created_at: new Date().toISOString()
+                    created_at: new Date().toISOString(),
+                    channelId: 'general'
                 }
             ],
+            chatSessions: [
+                {
+                    id: 'general',
+                    title: 'General Chat',
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                }
+            ],
+            activeSessionId: 'general',
             pendingOps: null,
             syncQueue: [],
             currentView: 'chat_graph',
@@ -455,18 +475,36 @@ export const useStore = create<FlowmateState>()(
                 }));
             },
 
-            addMessage: (role, text, ops, attachment, channelId = 'general') => {
+            addMessage: (role, text, ops, attachment, channelId) => {
+                const state = get();
+                const effectiveChannelId = channelId || state.activeSessionId || 'general';
                 const id = uuidv4();
                 const newMessage: Message = {
                     id,
                     role,
                     text,
-                    channelId,
+                    channelId: effectiveChannelId,
                     attachment: attachment || null,
                     created_at: new Date().toISOString(),
                     ops_preview: ops
                 };
-                set((state) => ({ messages: [...(state.messages || []), newMessage] }));
+
+                let updatedSessions = state.chatSessions || [];
+                // Auto-rename session if it's the first user message and session has generic title
+                if (role === 'user' && text.trim()) {
+                    const session = updatedSessions.find(s => s.id === effectiveChannelId);
+                    if (session && (session.title === 'New Chat' || (session.title === 'General Chat' && (state.messages || []).filter(m => (m.channelId || 'general') === effectiveChannelId).length === 0))) {
+                        const trimmedTitle = text.trim().slice(0, 36) + (text.trim().length > 36 ? '...' : '');
+                        updatedSessions = updatedSessions.map(s =>
+                            s.id === effectiveChannelId ? { ...s, title: trimmedTitle, updated_at: new Date().toISOString() } : s
+                        );
+                    }
+                }
+
+                set((state) => ({
+                    messages: [...(state.messages || []), newMessage],
+                    chatSessions: updatedSessions
+                }));
 
                 // Write-through to Firestore (fire and forget — no debounce)
                 syncMessage(newMessage).catch((err) =>
@@ -474,6 +512,59 @@ export const useStore = create<FlowmateState>()(
                 );
 
                 return id;
+            },
+
+            createChatSession: (title = 'New Chat') => {
+                const id = uuidv4();
+                const now = new Date().toISOString();
+                const newSession: ChatSession = {
+                    id,
+                    title,
+                    created_at: now,
+                    updated_at: now
+                };
+                set((state) => ({
+                    chatSessions: [newSession, ...(state.chatSessions || [])],
+                    activeSessionId: id
+                }));
+                return id;
+            },
+
+            setActiveSessionId: (id: string) => {
+                set({ activeSessionId: id });
+            },
+
+            deleteChatSession: (id: string) => {
+                set((state) => {
+                    const remainingSessions = (state.chatSessions || []).filter(s => s.id !== id);
+                    const finalSessions = remainingSessions.length > 0 ? remainingSessions : [{
+                        id: 'general',
+                        title: 'General Chat',
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                    }];
+                    const nextActive = state.activeSessionId === id ? finalSessions[0].id : state.activeSessionId;
+                    const remainingMessages = (state.messages || []).filter(m => (m.channelId || 'general') !== id);
+                    return {
+                        chatSessions: finalSessions,
+                        activeSessionId: nextActive,
+                        messages: remainingMessages
+                    };
+                });
+            },
+
+            renameChatSession: (id: string, newTitle: string) => {
+                set((state) => ({
+                    chatSessions: (state.chatSessions || []).map(s =>
+                        s.id === id ? { ...s, title: newTitle.trim() || s.title, updated_at: new Date().toISOString() } : s
+                    )
+                }));
+            },
+
+            clearChatSession: (id: string) => {
+                set((state) => ({
+                    messages: (state.messages || []).filter(m => (m.channelId || 'general') !== id)
+                }));
             },
 
             setPendingOps: (ops, messageId) => {
@@ -1462,6 +1553,8 @@ export const useStore = create<FlowmateState>()(
                 relationships: state.relationships,
                 universalTags: state.universalTags,
                 messages: state.messages,
+                chatSessions: state.chatSessions,
+                activeSessionId: state.activeSessionId,
                 settings: state.settings,
                 foodLogs: state.foodLogs,
                 subjects: state.subjects,
@@ -1562,7 +1655,13 @@ export const useStore = create<FlowmateState>()(
                     toasts: [],
                     showConfetti: false,
                     history: [],
-                    historyPointer: -1,
+                    chatSessions: state.chatSessions?.length ? state.chatSessions : [{
+                        id: 'general',
+                        title: 'General Chat',
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                    }],
+                    activeSessionId: state.activeSessionId || 'general',
                     // Entities and relationships are already sanitized by validatePersistedState
                     entities: safeEntities,
                     relationships: safeRelationships,

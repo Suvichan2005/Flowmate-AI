@@ -225,12 +225,19 @@ export interface Relationship {
   created_at: string;
 }
 
+export interface ChatSession {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Message {
   id: string;
   created_at: string;
   role: 'user' | 'assistant' | 'system';
   text: string;
-  channelId?: string; // 'general', 'food', 'finance', 'schedules'
+  channelId?: string; // Chat session ID or channel ('general', session UUID, etc.)
   attachment?: string | null; // Base64 encoded image string
   ops_preview?: ToonOperation[];
   structured?: any;

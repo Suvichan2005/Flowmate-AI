@@ -1,7 +1,7 @@
 // Flowmate Service Worker
 // Enables offline support and caching for PWA
 
-const CACHE_NAME = 'flowmate-v1';
+const CACHE_NAME = 'flowmate-v2';
 const STATIC_ASSETS = [
     '/',
     '/index.html',

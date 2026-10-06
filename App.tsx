@@ -6,7 +6,7 @@ import { onAuthChange, signOut } from './services/firebase';
 import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
 import { mergeData, mergeMessages } from './services/firestoreSync';
 import { preventDoubleClick } from './utils/debounce';
-import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers } from 'lucide-react';
+import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers, Sparkles, LayoutDashboard } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import OpsPreviewForm from './components/OpsPreviewForm';
 import Dashboard from './components/Dashboard';
@@ -19,6 +19,7 @@ import ToastNotification from './components/ToastNotification';
 import Confetti from './components/Confetti';
 import AuthModal from './components/AuthModal';
 import UnifiedChatInput from './components/UnifiedChatInput';
+import ChatSessionBar from './components/ChatSessionBar';
 import ConnectionStatus from './components/ConnectionStatus';
 import { EntityKind, ToonOperation } from './types';
 
@@ -58,11 +59,15 @@ const App: React.FC = () => {
     applyOperations,
     syncQueue,
     currentView,
+    setView,
     isZenMode,
     selectedEntityId,
     settings,
     pendingOrchestration,
-    setPendingOrchestration
+    setPendingOrchestration,
+    chatSessions,
+    activeSessionId,
+    setActiveSessionId
   } = useStore();
 
   const [input, setInput] = useState('');
@@ -79,7 +84,6 @@ const App: React.FC = () => {
   const [isResizing, setIsResizing] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  const [activeChannel, setActiveChannel] = useState('general'); // 'general', 'schedules', 'food', 'finance'
 
   // Rate limiting: track last API call time to prevent abuse
   const lastApiCallRef = useRef<number>(0);
@@ -204,6 +208,17 @@ const App: React.FC = () => {
               ...(data.holidays?.length ? { holidays: data.holidays } : {}),
               ...(data.attendanceLogs?.length ? { attendanceLogs: data.attendanceLogs } : {}),
             });
+
+            // If local state had entities that aren't on the cloud yet (e.g. initial login on new cloud db), push them up immediately
+            if (merged.entities.length > 0 && (!data.entities || data.entities.length === 0)) {
+              console.log('[SyncManager] Seeding local entities to cloud');
+              scheduleSync(() => ({
+                entities: merged.entities,
+                relationships: merged.relationships,
+                universalTags: data.universalTags || state.universalTags,
+                settings: state.settings,
+              }));
+            }
           }
           // Start real-time listener after initial load
           startRealtimeSync();
@@ -218,7 +233,7 @@ const App: React.FC = () => {
     };
   }, [setCurrentUser, loadFromCloud]);
 
-  // Auto-sync food logs and attendance data to cloud when they change
+  // Auto-sync entities, relationships, food logs and attendance data to cloud when they change
   useEffect(() => {
     let foodDebounce: ReturnType<typeof setTimeout> | null = null;
     let attDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -227,9 +242,32 @@ const App: React.FC = () => {
     let prevSchedule = useStore.getState().classSchedule;
     let prevHolidays = useStore.getState().holidays;
     let prevAttLogs = useStore.getState().attendanceLogs;
+    let prevEntities = useStore.getState().entities;
+    let prevRelationships = useStore.getState().relationships;
+    let prevTags = useStore.getState().universalTags;
+    let prevSettings = useStore.getState().settings;
 
     const unsub = useStore.subscribe((state) => {
       if (!state.currentUser) return;
+
+      // Entities, relationships, tags, or settings changed -> auto-sync to Firestore
+      if (
+        state.entities !== prevEntities ||
+        state.relationships !== prevRelationships ||
+        state.universalTags !== prevTags ||
+        state.settings !== prevSettings
+      ) {
+        prevEntities = state.entities;
+        prevRelationships = state.relationships;
+        prevTags = state.universalTags;
+        prevSettings = state.settings;
+        scheduleSync(() => ({
+          entities: state.entities,
+          relationships: state.relationships,
+          universalTags: state.universalTags,
+          settings: state.settings,
+        }));
+      }
 
       // Food logs changed
       if (state.foodLogs !== prevFood) {
@@ -329,6 +367,56 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Sync URL hash with currentView for direct navigation & browser history
+  const isSyncingHashRef = useRef(false);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+
+    const syncFromHash = () => {
+      const hash = window.location.hash.replace('#', '') as any;
+      const validViews = [
+        'dashboard', 'chat', 'chat_graph', 'analytics', 'goals',
+        'projects', 'knowledge', 'calendar', 'timeline', 'schedules',
+        'food', 'attendance', 'settings'
+      ];
+      if (validViews.includes(hash)) {
+        if (useStore.getState().currentView !== hash) {
+          isSyncingHashRef.current = true;
+          setView(hash);
+        }
+      } else if (useStore.getState().currentView) {
+        window.history.replaceState(null, '', `#${useStore.getState().currentView}`);
+      }
+    };
+
+    if (window.location.hash) {
+      syncFromHash();
+    } else if (currentView) {
+      window.history.replaceState(null, '', `#${currentView}`);
+    }
+
+    const handleHashChange = () => {
+      syncFromHash();
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, [isHydrated, setView]);
+
+  // Keep URL hash updated when view changes in state via UI clicks
+  useEffect(() => {
+    if (!isHydrated || !currentView) return;
+    if (isSyncingHashRef.current) {
+      isSyncingHashRef.current = false;
+      return;
+    }
+    const currentHash = window.location.hash.replace('#', '');
+    if (currentHash !== currentView) {
+      window.history.replaceState(null, '', `#${currentView}`);
+    }
+  }, [isHydrated, currentView]);
+
   // Process pending orchestration messages (from Dashboard "Ask AI" button)
   useEffect(() => {
     if (pendingOrchestration && !loading) {
@@ -418,14 +506,12 @@ const App: React.FC = () => {
     setLoading(true);
 
     // Add user message to store
-    // Ensure we default to 'general' if activeChannel is undefined
-    const currentChannel = activeChannel || 'general';
+    const currentChannel = activeSessionId || 'general';
     const msgId = addMessage('user', userText, undefined, attachment, currentChannel);
 
     try {
       const snapshot = getSnapshot();
       // Pass the previous history and the new message content
-      // Filter history for context? Maybe beneficial to keep some cross-context, but for now strict separation.
       const channelHistory = history.filter(m => (m.channelId || 'general') === currentChannel);
       const toon = await orchestrateMessage(channelHistory, userText || (attachment ? "Analyze this attachment." : ""), snapshot, attachment);
 
@@ -440,7 +526,7 @@ const App: React.FC = () => {
       }
     } catch (err) {
       console.error(err);
-      addMessage('assistant', 'Sorry, I encountered an internal error.');
+      addMessage('assistant', 'Sorry, I encountered an internal error.', undefined, null, currentChannel);
     } finally {
       setLoading(false);
     }
@@ -466,7 +552,7 @@ const App: React.FC = () => {
     setAttachmentType(null);
     setLoading(true);
 
-    const currentChannel = activeChannel || 'general';
+    const currentChannel = activeSessionId || 'general';
     const msgId = addMessage('user', userText, undefined, attachment || undefined, currentChannel);
 
     try {
@@ -484,7 +570,7 @@ const App: React.FC = () => {
       }
     } catch (err) {
       console.error(err);
-      addMessage('assistant', 'Sorry, I encountered an internal error.');
+      addMessage('assistant', 'Sorry, I encountered an internal error.', undefined, null, currentChannel);
     } finally {
       setLoading(false);
     }
@@ -514,10 +600,33 @@ const App: React.FC = () => {
         return (
           <div className="flex-1 flex flex-col bg-slate-950 p-4 relative h-full">
             {safeEntities.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-slate-600 border border-dashed border-slate-800 rounded-xl m-2">
-                <Cloud className="w-12 h-12 mb-4 opacity-20" />
-                <p className="text-sm">Graph is empty.</p>
-                <p className="text-xs mt-1 text-slate-500">Use the chat to create entities.</p>
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-8 border border-dashed border-slate-800/80 rounded-2xl m-2 bg-slate-900/20 backdrop-blur-sm">
+                <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-400 shadow-inner">
+                  <Layers className="w-7 h-7" />
+                </div>
+                <h3 className="text-base font-semibold text-slate-200 mb-1">Knowledge Graph is Empty</h3>
+                <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed">
+                  Your goals, projects, tasks, habits, and events will dynamically connect here as an interactive visual network.
+                </p>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowCreateModal(true)}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium shadow-md shadow-indigo-600/20 transition-all active:scale-95"
+                  >
+                    <Plus size={14} />
+                    <span>Create Entity</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!isChatOpen) setIsChatOpen(true);
+                      sendDirectMessage("Create 3 starter goals and tasks for my productivity system");
+                    }}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700/60 text-slate-300 text-xs font-medium transition-all active:scale-95"
+                  >
+                    <Sparkles size={14} className="text-indigo-400" />
+                    <span>Generate with AI</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <GraphView entities={safeEntities} relationships={relationships || []} />
@@ -549,14 +658,33 @@ const App: React.FC = () => {
         return (
           <div className="flex-1 flex flex-col bg-slate-950 p-4 relative h-full">
             {safeEntities.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-slate-600 border border-dashed border-slate-800 rounded-xl m-2">
-                <Cloud className="w-12 h-12 mb-4 opacity-20" />
-                <p className="text-sm">Graph is empty.</p>
-                <p className="text-xs mt-1 text-slate-500">
-                  <button onClick={() => setIsChatOpen(true)} className="text-indigo-400 hover:underline">
-                    Open Chat
-                  </button> to create your first entities.
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-8 border border-dashed border-slate-800/80 rounded-2xl m-2 bg-slate-900/20 backdrop-blur-sm">
+                <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-400 shadow-inner">
+                  <Layers className="w-7 h-7" />
+                </div>
+                <h3 className="text-base font-semibold text-slate-200 mb-1">Knowledge Graph is Empty</h3>
+                <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed">
+                  Your goals, projects, tasks, habits, and events will dynamically connect here as an interactive visual network.
                 </p>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowCreateModal(true)}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium shadow-md shadow-indigo-600/20 transition-all active:scale-95"
+                  >
+                    <Plus size={14} />
+                    <span>Create Entity</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (!isChatOpen) setIsChatOpen(true);
+                      sendDirectMessage("Create 3 starter goals and tasks for my productivity system");
+                    }}
+                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700/60 text-slate-300 text-xs font-medium transition-all active:scale-95"
+                  >
+                    <Sparkles size={14} className="text-indigo-400" />
+                    <span>Generate with AI</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <GraphView entities={safeEntities} relationships={relationships || []} />
@@ -699,28 +827,55 @@ const App: React.FC = () => {
 
       {/* Mobile Header Bar */}
       {isMobile && (
-        <div className="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 shrink-0 z-30">
-          {/* Left: Always hamburger menu */}
-          <button
-            onClick={() => setIsMobileSidebarOpen(true)}
-            className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 transition-colors"
-          >
-            <Menu size={22} />
-          </button>
+        <div className="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-3 shrink-0 z-30">
+          {/* Left: If chat view, show Back button, else hamburger */}
+          {currentView === 'chat' ? (
+            <button
+              onClick={() => setView('dashboard')}
+              className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 transition-colors flex items-center gap-1"
+              aria-label="Back to dashboard"
+            >
+              <ChevronLeft size={20} />
+              <span className="text-xs font-medium">Home</span>
+            </button>
+          ) : (
+            <button
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 transition-colors"
+              aria-label="Open navigation menu"
+            >
+              <Menu size={22} />
+            </button>
+          )}
 
           {/* Center: Dynamic Title based on current view */}
-          <span className="font-bold text-lg text-slate-100">
+          <span className="font-bold text-base text-slate-100">
             {currentView === 'chat' ? 'Chat' :
               currentView === 'dashboard' ? 'Flowmate' :
                 currentView === 'calendar' ? 'Calendar' :
                   currentView === 'knowledge' ? 'Library' :
                     currentView === 'analytics' ? 'Analytics' :
                       currentView === 'chat_graph' ? 'Graph' :
-                        'Flowmate'}
+                        currentView === 'schedules' ? 'Schedules' :
+                          currentView === 'food' ? 'Food' :
+                            currentView === 'attendance' ? 'Attendance' :
+                              currentView === 'settings' ? 'Settings' :
+                                'Flowmate'}
           </span>
 
-          {/* Right spacer for centering title */}
-          <div className="w-10" />
+          {/* Right: Quick action */}
+          {currentView !== 'chat' ? (
+            <button
+              onClick={() => setView('chat')}
+              className="p-2 hover:bg-slate-800 rounded-lg text-indigo-400 transition-colors"
+              aria-label="Open chat"
+              title="Open Chat"
+            >
+              <MessageSquare size={19} />
+            </button>
+          ) : (
+            <div className="w-12" />
+          )}
         </div>
       )}
 
@@ -822,40 +977,51 @@ const App: React.FC = () => {
                   className={`absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-500/40 transition-colors z-20 ${isResizing ? 'bg-indigo-500' : ''}`}
                 />
               )}
-              <div className="flex flex-col border-b border-slate-800 bg-slate-900/95 shrink-0 z-10">
-                <div className="h-14 flex items-center px-4 justify-between">
-                  <h1 className="font-semibold text-base flex items-center gap-2">
-                    <MessageSquare size={16} className="text-indigo-400" />
-                    Orchestrator
-                  </h1>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1.5 text-[10px] text-slate-500 bg-slate-800/80 px-2 py-1 rounded border border-slate-700">
-                      <div className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
-                      {settings.preferred_model || 'gemini-3.8-flash'}
-                    </div>
-                    {/* Only show close button when not in full-screen Chat view */}
-                    {currentView !== 'chat' && (
-                      <button
-                        onClick={() => setIsChatOpen(false)}
-                        className="p-1.5 hover:bg-slate-800 rounded text-slate-500 hover:text-white transition-colors"
-                        title="Close (Cmd+B)"
-                      >
-                        <PanelLeftClose size={18} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Channel Header - Simplified to just General */}
-                <div className="flex items-center px-4 py-2 border-b border-slate-800/50">
-                  <span className="text-sm font-medium text-slate-300">Chat</span>
-                </div>
-              </div>
+              {/* Desktop Chat Header & Session Switcher */}
+              <ChatSessionBar
+                onCloseChat={() => setIsChatOpen(false)}
+                showCloseButton={currentView !== 'chat'}
+              />
 
               <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
-                {(messages || [])
-                  .filter(msg => (msg.channelId || 'general') === activeChannel)
-                  .map((msg) => (
+                {(() => {
+                  const currentChannel = activeSessionId || 'general';
+                  const activeMsgs = (messages || []).filter(msg => (msg.channelId || 'general') === currentChannel);
+                  
+                  if (activeMsgs.length === 0) {
+                    return (
+                      <div className="h-full flex flex-col items-center justify-center p-6 text-center my-auto min-h-[360px]">
+                        <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-400 shadow-inner">
+                          <Sparkles size={22} />
+                        </div>
+                        <h3 className="text-sm font-semibold text-slate-200 mb-1">Flowmate AI Assistant</h3>
+                        <p className="text-xs text-slate-400 max-w-xs mb-5">
+                          Schedule events, manage tasks, track meals, or talk in real-time.
+                        </p>
+                        <div className="grid grid-cols-1 gap-2 w-full max-w-sm">
+                          {[
+                            { icon: '🚄', label: 'Schedule travel / train', prompt: 'Create an event for my train to Kolkata tomorrow at 9:30 PM reaching at 5:15 AM' },
+                            { icon: '🎯', label: 'Add goal or project', prompt: 'Create a new project named "AI Workspace" with milestones' },
+                            { icon: '🥗', label: 'Log food & nutrition', prompt: 'Log lunch: 2 rotis, paneer curry, and salad (~450 kcal)' },
+                            { icon: '📅', label: 'Check schedule', prompt: 'What tasks and events are scheduled for today?' },
+                          ].map((item, i) => (
+                            <button
+                              key={i}
+                              onClick={() => sendDirectMessage(item.prompt)}
+                              className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/30 text-left transition-all text-xs group"
+                            >
+                              <span className="text-sm shrink-0">{item.icon}</span>
+                              <div className="min-w-0 flex-1">
+                                <div className="font-medium text-slate-300 group-hover:text-indigo-300 transition-colors truncate">{item.label}</div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return activeMsgs.map((msg) => (
                     <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                       <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 self-start mt-0.5 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
                         {msg.role === 'user' ? <User size={14} /> : <Bot size={14} />}
@@ -872,7 +1038,8 @@ const App: React.FC = () => {
                         <span className="text-[9px] text-slate-600 mt-1">{new Date(msg.created_at).toLocaleTimeString()}</span>
                       </div>
                     </div>
-                  ))}
+                  ));
+                })()}
                 {loading && (
                   <div className="flex gap-3">
                     <div className="w-7 h-7 rounded-lg bg-slate-700 flex items-center justify-center"><Bot size={14} /></div>
@@ -938,22 +1105,62 @@ const App: React.FC = () => {
           {/* Mobile Full-Screen Chat when Chat view is selected */}
           {currentView === 'chat' ? (
             <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
+              <ChatSessionBar />
 
               <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={!isMobile ? undefined : scrollRef}>
-                {(messages || []).map((msg) => (
-                  <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
-                      {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
-                    </div>
-                    <div className={`flex flex-col max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                      {renderAttachmentPreview(msg)}
-                      <div className={`px-3 py-2 rounded-xl text-sm ${msg.role === 'user' ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20' : 'bg-slate-800 border border-slate-700 text-slate-200'}`}>
-                        {msg.text ? <MarkdownText content={msg.text} /> : <em className="text-slate-400">Attachment</em>}
-                        {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
+                {(() => {
+                  const currentChannel = activeSessionId || 'general';
+                  const activeMsgs = (messages || []).filter(msg => (msg.channelId || 'general') === currentChannel);
+
+                  if (activeMsgs.length === 0) {
+                    return (
+                      <div className="h-full flex flex-col items-center justify-center p-6 text-center my-auto min-h-[300px]">
+                        <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-3 text-indigo-400 shadow-inner">
+                          <Sparkles size={22} />
+                        </div>
+                        <h3 className="text-sm font-semibold text-slate-200 mb-1">Flowmate AI Assistant</h3>
+                        <p className="text-xs text-slate-400 max-w-xs mb-4">
+                          Schedule events, manage tasks, track meals, or talk in real-time.
+                        </p>
+                        <div className="grid grid-cols-1 gap-2 w-full max-w-sm">
+                          {[
+                            { icon: '🚄', label: 'Schedule travel / train', prompt: 'Create an event for my train to Kolkata tomorrow at 9:30 PM reaching at 5:15 AM' },
+                            { icon: '🎯', label: 'Add goal or project', prompt: 'Create a new project named "AI Workspace" with milestones' },
+                            { icon: '🥗', label: 'Log food & nutrition', prompt: 'Log lunch: 2 rotis, paneer curry, and salad (~450 kcal)' },
+                            { icon: '📅', label: 'Check schedule', prompt: 'What tasks and events are scheduled for today?' },
+                          ].map((item, i) => (
+                            <button
+                              key={i}
+                              onClick={() => sendDirectMessage(item.prompt)}
+                              className="flex items-center gap-2.5 p-2 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-800 text-left transition-all text-xs"
+                            >
+                              <span className="text-sm shrink-0">{item.icon}</span>
+                              <div className="min-w-0 flex-1">
+                                <div className="font-medium text-slate-300 truncate">{item.label}</div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return activeMsgs.map((msg) => (
+                    <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
+                        {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
+                      </div>
+                      <div className={`flex flex-col max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                        {renderAttachmentPreview(msg)}
+                        <div className={`px-3 py-2 rounded-xl text-sm ${msg.role === 'user' ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20' : 'bg-slate-800 border border-slate-700 text-slate-200'}`}>
+                          {msg.text ? <MarkdownText content={msg.text} /> : <em className="text-slate-400">Attachment</em>}
+                          {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
+                        </div>
+                        <span className="text-[9px] text-slate-600 mt-1">{new Date(msg.created_at).toLocaleTimeString()}</span>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ));
+                })()}
                 {loading && (
                   <div className="flex gap-3">
                     <div className="w-8 h-8 rounded-lg bg-slate-700 flex items-center justify-center"><Bot size={16} /></div>
@@ -990,12 +1197,59 @@ const App: React.FC = () => {
             </main>
           ) : (
             /* Mobile Main Content - Show regular views */
-            <main className="flex-1 flex flex-col h-full overflow-hidden">
-              <div className="flex-1 overflow-auto">
+            <main className="flex-1 flex flex-col h-full overflow-hidden relative">
+              <div className="flex-1 overflow-auto pb-16">
                 <Suspense fallback={<LazyLoadFallback />}>
                   {renderMainContent()}
                 </Suspense>
               </div>
+
+              {/* Mobile Bottom Navigation Bar */}
+              <nav className="fixed bottom-0 left-0 right-0 h-14 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 flex items-center justify-around px-2 z-30 shadow-lg" aria-label="Mobile Navigation">
+                <button
+                  onClick={() => setView('dashboard')}
+                  className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg text-[10px] font-medium transition-colors ${
+                    currentView === 'dashboard' ? 'text-indigo-400' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <LayoutDashboard size={18} />
+                  <span className="mt-0.5">Home</span>
+                </button>
+                <button
+                  onClick={() => setView('chat')}
+                  className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg text-[10px] font-medium transition-colors ${
+                    currentView === 'chat' ? 'text-indigo-400' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <MessageSquare size={18} />
+                  <span className="mt-0.5">Chat</span>
+                </button>
+                <button
+                  onClick={() => setView('chat_graph')}
+                  className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg text-[10px] font-medium transition-colors ${
+                    currentView === 'chat_graph' ? 'text-indigo-400' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Layers size={18} />
+                  <span className="mt-0.5">Graph</span>
+                </button>
+                <button
+                  onClick={() => setView('calendar')}
+                  className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg text-[10px] font-medium transition-colors ${
+                    currentView === 'calendar' ? 'text-indigo-400' : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Calendar size={18} />
+                  <span className="mt-0.5">Calendar</span>
+                </button>
+                <button
+                  onClick={() => setIsMobileSidebarOpen(true)}
+                  className="flex flex-col items-center justify-center py-1 px-3 rounded-lg text-[10px] font-medium text-slate-400 hover:text-slate-200 transition-colors"
+                >
+                  <Menu size={18} />
+                  <span className="mt-0.5">More</span>
+                </button>
+              </nav>
             </main>
           )}
         </>
