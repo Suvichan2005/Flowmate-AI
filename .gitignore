@@ -46,3 +46,5 @@ metadata.json
 docs/FLOWMATE_V4_ARCHITECTURE.md
 docs/07-feature-roadmap.md
 docs/08-ideation-map.md
+docs/*audit*.md
+docs/SYSTEM_AUDIT_REPORT.md
