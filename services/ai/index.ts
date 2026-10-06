@@ -86,13 +86,29 @@ export const orchestrateMessage = async (
   const conversationSummary = summarizeOlderMessages(history);
   const contents = buildHistory(history, conversationSummary, attachmentDataUrl);
 
-  // Prepend context to the latest user message
-  if (contents.length > 0) {
-    const lastEntry = contents[contents.length - 1];
-    if (lastEntry.role === 'user' && lastEntry.parts?.[0]) {
-      const textPart = lastEntry.parts[0] as { text: string };
-      textPart.text = `${contextPrompt}\n\n${textPart.text}`;
+  // Attach context to the latest user message or append one
+  let lastUserEntry: any = null;
+  for (let i = contents.length - 1; i >= 0; i--) {
+    if (contents[i].role === 'user') {
+      lastUserEntry = contents[i];
+      break;
     }
+  }
+
+  if (lastUserEntry && lastUserEntry.parts && lastUserEntry.parts[0]) {
+    const textPart = lastUserEntry.parts[0] as { text: string };
+    textPart.text = `${contextPrompt}\n\n${textPart.text}`;
+  } else {
+    // If contents has no user message or ended on a model message, append a fresh user turn
+    contents.push({
+      role: 'user',
+      parts: [{ text: `${contextPrompt}\n\n${userMessage || 'Hello'}` }],
+    });
+  }
+
+  // Ensure Gemini payload NEVER ends with a model turn
+  while (contents.length > 0 && contents[contents.length - 1].role === 'model') {
+    contents.pop();
   }
 
   // Debug logging
