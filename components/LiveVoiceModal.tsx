@@ -149,9 +149,9 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose }) => {
         <div className="-mt-8">
           <h2 className="text-2xl font-bold text-white mb-2">Flowmate Live</h2>
           <p className="text-slate-400 text-sm">
-             {status === 'connecting' ? 'Connecting to Gemini...' : 
+             {status === 'connecting' ? 'Connecting to Gemini Live...' : 
               status === 'active' ? 'Listening... Speak naturally.' :
-              status === 'error' ? 'Connection failed.' : 'Disconnected'}
+              status === 'error' ? 'Connection failed. Please check microphone permissions and API key.' : 'Disconnected'}
           </p>
         </div>
 

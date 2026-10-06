@@ -43,17 +43,19 @@ function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
   return output.buffer;
 }
 
-// Convert Int16 (PCM) to Float32 (Web Audio)
+// Convert Int16 (PCM) to Float32 (Web Audio) safely using DataView
 function pcmToAudioBuffer(
   data: Uint8Array, 
   ctx: AudioContext, 
   sampleRate: number
 ): AudioBuffer {
-  const int16 = new Int16Array(data.buffer);
-  const buffer = ctx.createBuffer(1, int16.length, sampleRate);
+  const numSamples = Math.floor(data.byteLength / 2);
+  const buffer = ctx.createBuffer(1, Math.max(1, numSamples), sampleRate);
   const channelData = buffer.getChannelData(0);
-  for (let i = 0; i < int16.length; i++) {
-    channelData[i] = int16[i] / 32768.0;
+  const dataView = new DataView(data.buffer, data.byteOffset, numSamples * 2);
+  for (let i = 0; i < numSamples; i++) {
+    // Little-endian 16-bit signed PCM normalized to [-1.0, 1.0]
+    channelData[i] = dataView.getInt16(i * 2, true) / 32768.0;
   }
   return buffer;
 }
@@ -134,6 +136,14 @@ export class LiveManager {
       this.inputContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       this.outputContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       
+      // Ensure audio contexts are active (browsers suspend contexts created without recent user gesture)
+      if (this.inputContext.state === 'suspended') {
+        await this.inputContext.resume();
+      }
+      if (this.outputContext.state === 'suspended') {
+        await this.outputContext.resume();
+      }
+
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
       // 2. Connect to Gemini Live
@@ -150,35 +160,37 @@ export class LiveManager {
         },
         callbacks: {
           onopen: () => {
+            console.log('[LiveManager] Connected to Gemini Live');
             this.onStatusChange('active');
-            this.startAudioInput(sessionPromise);
           },
           onmessage: async (msg: LiveServerMessage) => {
-            this.handleMessage(msg, sessionPromise);
+            this.handleMessage(msg);
           },
-          onclose: () => {
+          onclose: (e) => {
+            console.log('[LiveManager] Connection closed', e);
             this.onStatusChange('disconnected');
             this.cleanup();
           },
           onerror: (err) => {
-            console.error("Live Error:", err);
+            console.error("[LiveManager] Live Error:", err);
             this.onStatusChange('error');
             this.cleanup();
           }
         }
       });
       
-      // Wait for session to be established before assigning
+      // Wait for session to be established before starting audio streaming
       this.session = await sessionPromise;
+      this.startAudioInput();
 
     } catch (err) {
-      console.error("Failed to connect:", err);
+      console.error("[LiveManager] Failed to connect:", err);
       this.onStatusChange('error');
       this.cleanup();
     }
   }
 
-  private startAudioInput(sessionPromise: Promise<any>) {
+  private startAudioInput() {
     if (!this.inputContext || !this.stream) return;
 
     this.source = this.inputContext.createMediaStreamSource(this.stream);
@@ -192,19 +204,23 @@ export class LiveManager {
     this.processor = this.inputContext.createScriptProcessor(4096, 1, 1);
 
     this.processor.onaudioprocess = (e) => {
+      if (!this.session) return;
       const inputData = e.inputBuffer.getChannelData(0);
       const pcm16 = floatTo16BitPCM(inputData);
       const uint8 = new Uint8Array(pcm16);
       const base64 = bytesToBase64(uint8);
 
-      sessionPromise.then(session => {
-         session.sendRealtimeInput({
-            media: {
-                mimeType: 'audio/pcm;rate=16000',
-                data: base64
-            }
-         });
-      });
+      try {
+        // Correct Gemini Live realtime audio payload format
+        this.session.sendRealtimeInput({
+          audio: {
+            mimeType: 'audio/pcm;rate=16000',
+            data: base64
+          }
+        });
+      } catch (err) {
+        console.warn("[LiveManager] Failed to send audio chunk:", err);
+      }
     };
 
     // Connect Graph: Source -> Analyser -> Processor -> Destination
@@ -213,74 +229,95 @@ export class LiveManager {
     this.processor.connect(this.inputContext.destination);
   }
 
-  private async handleMessage(msg: LiveServerMessage, sessionPromise: Promise<any>) {
-    // 1. Audio Output
-    const audioData = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-    if (audioData && this.outputContext) {
-        const bytes = base64ToBytes(audioData);
-        const buffer = pcmToAudioBuffer(bytes, this.outputContext, 24000);
-        
-        this.nextStartTime = Math.max(this.outputContext.currentTime, this.nextStartTime);
-        
-        const source = this.outputContext.createBufferSource();
-        source.buffer = buffer;
-        source.connect(this.outputContext.destination);
-        source.start(this.nextStartTime);
-        
-        this.nextStartTime += buffer.duration;
+  private async handleMessage(msg: LiveServerMessage) {
+    // 0. Interruption Handling
+    if (msg.serverContent?.interrupted) {
+      this.nextStartTime = 0;
+    }
+
+    // 1. Audio Output and Inline Text from parts
+    if (msg.serverContent?.modelTurn?.parts) {
+      for (const part of msg.serverContent.modelTurn.parts) {
+        if (part.inlineData?.data && this.outputContext) {
+          const bytes = base64ToBytes(part.inlineData.data);
+          const buffer = pcmToAudioBuffer(bytes, this.outputContext, 24000);
+          
+          this.nextStartTime = Math.max(this.outputContext.currentTime, this.nextStartTime);
+          
+          const source = this.outputContext.createBufferSource();
+          source.buffer = buffer;
+          source.connect(this.outputContext.destination);
+          source.start(this.nextStartTime);
+          
+          this.nextStartTime += buffer.duration;
+        }
+        if (part.text) {
+          this.onTranscription(part.text, 'model');
+        }
+      }
     }
 
     // 2. Transcription
     const outTrans = msg.serverContent?.outputTranscription;
     if (outTrans?.text) {
-        this.onTranscription(outTrans.text, 'model');
+      this.onTranscription(outTrans.text, 'model');
     }
     const inTrans = msg.serverContent?.inputTranscription;
     if (inTrans?.text) {
-        this.onTranscription(inTrans.text, 'user');
+      this.onTranscription(inTrans.text, 'user');
     }
 
     // 3. Tool Calls
-    if (msg.toolCall) {
-        const { applyOperations, addDebugLog } = useStore.getState();
+    if (msg.toolCall?.functionCalls && this.session) {
+      const { applyOperations, addDebugLog } = useStore.getState();
+      const responses: Array<{ name: string; id?: string; response: Record<string, any> }> = [];
+
+      for (const fc of msg.toolCall.functionCalls) {
+        addDebugLog('system', `Live Tool Call: ${fc.name}`, fc.args);
         
-        for (const fc of msg.toolCall.functionCalls) {
-            addDebugLog('system', `Live Tool Call: ${fc.name}`, fc.args);
-            
-            let result = { status: 'ok' };
-            const id = uuidv4();
+        let result: Record<string, any> = { status: 'ok' };
+        const id = uuidv4();
 
-            if (fc.name === 'create_entity') {
-                 const { title, kind, description } = fc.args as any;
-                 applyOperations([{
-                     type: 'create_entity',
-                     payload: { id, title, kind, description }
-                 }]);
-                 result = { status: 'created', id } as any;
-            } else if (fc.name === 'log_activity') {
-                 const { title, minutes } = fc.args as any;
-                 applyOperations([{
-                     type: 'log_activity',
-                     payload: { title, duration_minutes: minutes }
-                 }]);
-            }
-
-            sessionPromise.then(session => {
-                session.sendToolResponse({
-                    functionResponses: {
-                        name: fc.name,
-                        id: fc.id,
-                        response: { result }
-                    }
-                });
-            });
+        if (fc.name === 'create_entity') {
+          const { title, kind, description } = (fc.args || {}) as any;
+          applyOperations([{
+            type: 'create_entity',
+            payload: { id, title, kind, description }
+          }]);
+          result = { status: 'created', id };
+        } else if (fc.name === 'log_activity') {
+          const { title, minutes } = (fc.args || {}) as any;
+          applyOperations([{
+            type: 'log_activity',
+            payload: { title, duration_minutes: minutes }
+          }]);
         }
+
+        responses.push({
+          name: fc.name,
+          id: fc.id,
+          response: { result }
+        });
+      }
+
+      try {
+        this.session.sendToolResponse({
+          functionResponses: responses
+        });
+      } catch (err) {
+        console.error("[LiveManager] Failed to send tool response:", err);
+      }
     }
   }
 
   disconnect() {
     if (this.session) {
-       // SDK specific close if available
+      try {
+        this.session.close();
+      } catch (err) {
+        console.warn("[LiveManager] Error closing session:", err);
+      }
+      this.session = null;
     }
     this.cleanup();
     this.onStatusChange('disconnected');
