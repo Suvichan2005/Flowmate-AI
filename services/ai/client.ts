@@ -42,6 +42,6 @@ export const GEMINI_RETRY_CONFIG: Partial<RetryConfig> = {
 // Shared Constants
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_MODEL = 'gemini-3-flash';
+export const DEFAULT_MODEL = 'gemini-3.8-flash';
 export const MAX_FUNCTION_TURNS = 5;
 export const HISTORY_WINDOW = 12;

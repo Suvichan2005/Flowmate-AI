@@ -182,7 +182,7 @@ export const useStore = create<FlowmateState>()(
             selectedEntityId: null,
             settings: {
                 timezone: 'Asia/Kolkata', // Force IST
-                preferred_model: 'gemini-3-flash',
+                preferred_model: 'gemini-3.8-flash',
                 sync_enabled: false,
                 debug_mode: false,
                 custom_instructions: '',
@@ -1545,7 +1545,7 @@ export const useStore = create<FlowmateState>()(
 
                 const mergedSettings = {
                     timezone: 'Asia/Kolkata', // Force IST fallback
-                    preferred_model: 'gemini-3-flash',
+                    preferred_model: 'gemini-3.8-flash',
                     sync_enabled: false,
                     debug_mode: false,
                     custom_instructions: '',

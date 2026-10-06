@@ -94,9 +94,9 @@ const SettingsView: React.FC = () => {
                 onChange={(e) => handleChange('preferred_model', e.target.value)}
                 className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
               >
-                <option value="gemini-3-flash">Gemini 3 Flash (Recommended)</option>
-                <option value="gemini-2.5-flash">Gemini 2.5 Flash (Stable)</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro (Advanced)</option>
+                <option value="gemini-3.8-flash">Gemini 3.8 Flash (Recommended)</option>
+                <option value="gemini-3.7-flash">Gemini 3.7 Flash (Stable)</option>
+                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Advanced)</option>
               </select>
               <p className="text-xs text-slate-500 mt-2">
                 This model will be used by the orchestrator for all reasoning tasks.

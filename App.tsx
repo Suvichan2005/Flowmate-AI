@@ -831,7 +831,7 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-500 bg-slate-800/80 px-2 py-1 rounded border border-slate-700">
                       <div className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
-                      {settings.preferred_model || 'gemini-3-flash'}
+                      {settings.preferred_model || 'gemini-3.8-flash'}
                     </div>
                     {/* Only show close button when not in full-screen Chat view */}
                     {currentView !== 'chat' && (

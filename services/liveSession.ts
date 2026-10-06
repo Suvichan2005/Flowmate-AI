@@ -10,7 +10,7 @@ import { useStore } from "../store";
 import { EntityKind } from "../types";
 import { getAiClient } from './ai/client';
 
-const MODEL_NAME = 'gemini-3-flash';
+const MODEL_NAME = 'gemini-3.8-live';
 
 // --- Audio Utils (PCM 16kHz/24kHz processing) ---
 
