@@ -1,19 +1,18 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { LiveManager } from '../services/liveSession';
-import { Mic, X, Activity, Loader2, User, Bot } from 'lucide-react';
+import { Mic, X, Activity, Loader2, User, Bot, Sparkles } from 'lucide-react';
 
 interface LiveVoiceModalProps {
   onClose: () => void;
 }
 
 interface Subtitle {
-    text: string;
-    source: 'user' | 'model';
-    isFinal?: boolean;
+  text: string;
+  source: 'user' | 'model';
 }
 
 const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose }) => {
-  const [status, setStatus] = useState('initializing');
+  const [status, setStatus] = useState<string>('initializing');
   const [transcript, setTranscript] = useState<Subtitle[]>([]);
   const managerRef = useRef<LiveManager | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -28,91 +27,104 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose }) => {
     
     manager.onStatusChange = (s) => setStatus(s);
     manager.onTranscription = (text, source) => {
-        setTranscript(prev => {
-            const last = prev[prev.length - 1];
-            if (last && last.source === source) {
-                return [...prev.slice(0, -1), { ...last, text: last.text + text }];
-            }
-            const newHistory = [...prev, { text, source }];
-            if (newHistory.length > 3) newHistory.shift();
-            return newHistory;
-        });
+      setTranscript(prev => {
+        const last = prev[prev.length - 1];
+        if (last && last.source === source) {
+          return [...prev.slice(0, -1), { ...last, text: last.text + text }];
+        }
+        const newHistory = [...prev, { text, source }];
+        if (newHistory.length > 5) newHistory.shift();
+        return newHistory;
+      });
     };
 
     manager.connect();
-    
-    // Start Visualizer Loop
+
+    // Horizontal soundwave visualizer loop
     const draw = () => {
-        if (!canvasRef.current) return;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        
-        const width = canvas.width;
-        const height = canvas.height;
-        const centerX = width / 2;
-        const centerY = height / 2;
-        const radius = 60;
+      if (!canvasRef.current) return;
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-        ctx.clearRect(0, 0, width, height);
+      const width = canvas.width;
+      const height = canvas.height;
+      const centerY = height / 2;
 
-        // Basic Circle
-        ctx.beginPath();
-        ctx.arc(centerX, centerY, radius - 5, 0, 2 * Math.PI);
-        ctx.fillStyle = '#1e293b'; // slate-800
-        ctx.fill();
-        
-        if (manager.analyser && status === 'active') {
-            const bufferLength = manager.analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-            manager.analyser.getByteFrequencyData(dataArray);
+      ctx.clearRect(0, 0, width, height);
 
-            const bars = 40;
-            const step = Math.floor(bufferLength / bars);
-            
-            for (let i = 0; i < bars; i++) {
-                const value = dataArray[i * step];
-                const percent = value / 255;
-                const barHeight = percent * 40;
-                
-                const angle = (i / bars) * 2 * Math.PI;
-                const x1 = centerX + Math.cos(angle) * radius;
-                const y1 = centerY + Math.sin(angle) * radius;
-                const x2 = centerX + Math.cos(angle) * (radius + barHeight);
-                const y2 = centerY + Math.sin(angle) * (radius + barHeight);
-                
-                ctx.beginPath();
-                ctx.moveTo(x1, y1);
-                ctx.lineTo(x2, y2);
-                ctx.strokeStyle = `rgba(99, 102, 241, ${0.5 + percent * 0.5})`; // Indigo-500
-                ctx.lineWidth = 4;
-                ctx.lineCap = 'round';
-                ctx.stroke();
-            }
-        } else {
-             // Idle ring
-             ctx.beginPath();
-             ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-             ctx.strokeStyle = '#334155'; // slate-700
-             ctx.lineWidth = 2;
-             ctx.stroke();
+      if (manager.analyser && status === 'active') {
+        const bufferLength = manager.analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        manager.analyser.getByteFrequencyData(dataArray);
+
+        const bars = 36;
+        const barWidth = Math.max(3, Math.floor((width - (bars - 1) * 4) / bars));
+        const spacing = 4;
+        const totalW = bars * barWidth + (bars - 1) * spacing;
+        const startX = Math.max(0, (width - totalW) / 2);
+
+        for (let i = 0; i < bars; i++) {
+          const sampleIndex = Math.floor((i / bars) * (bufferLength * 0.7));
+          const value = dataArray[sampleIndex] || 0;
+          const percent = value / 255;
+          const barHeight = Math.max(4, percent * (height - 8));
+
+          const x = startX + i * (barWidth + spacing);
+          const y = centerY - barHeight / 2;
+
+          // Gradient color from indigo to cyan
+          const grad = ctx.createLinearGradient(0, y, 0, y + barHeight);
+          grad.addColorStop(0, '#818cf8'); // indigo-400
+          grad.addColorStop(1, '#38bdf8'); // sky-400
+
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.roundRect ? ctx.roundRect(x, y, barWidth, barHeight, 2) : ctx.rect(x, y, barWidth, barHeight);
+          ctx.fill();
         }
+      } else {
+        // Idle gentle wave baseline
+        const bars = 36;
+        const barWidth = Math.max(3, Math.floor((width - (bars - 1) * 4) / bars));
+        const spacing = 4;
+        const totalW = bars * barWidth + (bars - 1) * spacing;
+        const startX = Math.max(0, (width - totalW) / 2);
 
-        animationRef.current = requestAnimationFrame(draw);
+        ctx.fillStyle = '#334155'; // slate-700
+        for (let i = 0; i < bars; i++) {
+          const x = startX + i * (barWidth + spacing);
+          const y = centerY - 2;
+          ctx.beginPath();
+          ctx.roundRect ? ctx.roundRect(x, y, barWidth, 4, 2) : ctx.rect(x, y, barWidth, 4);
+          ctx.fill();
+        }
+      }
+
+      animationRef.current = requestAnimationFrame(draw);
     };
 
     draw();
 
+    // Close on Escape key
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
     return () => {
       cancelAnimationFrame(animationRef.current);
+      window.removeEventListener('keydown', handleKeyDown);
       manager.disconnect();
     };
   }, []);
 
-  // Auto-scroll transcript
+  // Auto-scroll transcript drawer
   useEffect(() => {
     if (transcriptRef.current) {
-        transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+      transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
     }
   }, [transcript]);
 
@@ -122,69 +134,98 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md">
-      <div className="flex flex-col items-center gap-6 p-8 max-w-md w-full text-center">
-        
-        {/* Visualizer Canvas Area */}
-        <div className="relative shrink-0 w-64 h-64 flex items-center justify-center">
-            <canvas 
-                ref={canvasRef} 
-                width={256} 
-                height={256} 
-                className="absolute inset-0 w-full h-full"
-            />
-            
-            {/* Center Icon Overlay */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                 {status === 'connecting' || status === 'initializing' ? (
-                    <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
-                 ) : status === 'active' ? (
-                    <Mic className="w-8 h-8 text-indigo-400" />
-                 ) : (
-                    <Activity className="w-8 h-8 text-red-400" />
-                 )}
-            </div>
+    <div className="w-full bg-slate-900/95 border border-indigo-500/30 rounded-2xl p-3 shadow-lg flex flex-col gap-2.5 backdrop-blur-sm animate-fade-in relative overflow-hidden">
+      {/* Background ambient glow */}
+      <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/5 via-sky-500/5 to-purple-500/5 pointer-events-none" />
+
+      {/* Header bar: Status indicator + End button */}
+      <div className="flex items-center justify-between z-10">
+        <div className="flex items-center gap-2">
+          {status === 'connecting' || status === 'initializing' ? (
+            <>
+              <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
+              <span className="text-xs font-medium text-indigo-300">Connecting to Gemini Live...</span>
+            </>
+          ) : status === 'active' ? (
+            <>
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+              </span>
+              <span className="text-xs font-semibold text-emerald-400">Gemini Live</span>
+              <span className="text-[11px] text-slate-400 hidden sm:inline">• Listening (speak naturally)</span>
+            </>
+          ) : status === 'error' ? (
+            <>
+              <Activity className="w-4 h-4 text-red-400" />
+              <span className="text-xs font-medium text-red-400">Connection error. Check mic or API key.</span>
+            </>
+          ) : (
+            <>
+              <span className="w-2.5 h-2.5 rounded-full bg-slate-500" />
+              <span className="text-xs text-slate-400">Disconnected</span>
+            </>
+          )}
         </div>
 
-        <div className="-mt-8">
-          <h2 className="text-2xl font-bold text-white mb-2">Flowmate Live</h2>
-          <p className="text-slate-400 text-sm">
-             {status === 'connecting' ? 'Connecting to Gemini Live...' : 
-              status === 'active' ? 'Listening... Speak naturally.' :
-              status === 'error' ? 'Connection failed. Please check microphone permissions and API key.' : 'Disconnected'}
-          </p>
-        </div>
-
-        {/* Subtitles Area */}
-        <div 
-            ref={transcriptRef}
-            className="w-full h-32 bg-slate-900/50 rounded-xl border border-slate-800 p-3 overflow-y-auto flex flex-col gap-2 text-left"
-        >
-            {transcript.length === 0 && status === 'active' && (
-                <div className="text-slate-600 text-xs italic text-center mt-8">Say "Create a task to buy milk"...</div>
-            )}
-            {transcript.map((t, idx) => (
-                <div key={idx} className={`flex gap-2 text-xs ${t.source === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    {t.source === 'model' && <Bot size={14} className="text-indigo-400 mt-0.5 shrink-0" />}
-                    <span className={`px-2 py-1.5 rounded-lg max-w-[85%] ${
-                        t.source === 'user' 
-                            ? 'bg-indigo-600/20 text-indigo-200 rounded-tr-none' 
-                            : 'bg-slate-800 text-slate-300 rounded-tl-none'
-                    }`}>
-                        {t.text}
-                    </span>
-                    {t.source === 'user' && <User size={14} className="text-slate-500 mt-0.5 shrink-0" />}
-                </div>
-            ))}
-        </div>
-
-        <button 
+        <button
           onClick={handleClose}
-          className="px-8 py-3 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium transition-colors flex items-center gap-2"
+          className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30 text-xs font-medium transition-all active:scale-95"
+          title="End Voice Session (Esc)"
+          aria-label="End Voice Session"
         >
-          <X size={18} />
-          End Session
+          <X size={14} />
+          <span>End</span>
         </button>
+      </div>
+
+      {/* Visualizer Canvas */}
+      <div className="w-full h-10 flex items-center justify-center bg-slate-950/60 rounded-xl px-2 py-1 border border-slate-800/80 z-10">
+        <canvas
+          ref={canvasRef}
+          width={400}
+          height={40}
+          className="w-full h-full block"
+        />
+      </div>
+
+      {/* Compact Real-Time Transcript */}
+      <div
+        ref={transcriptRef}
+        className="max-h-24 min-h-[44px] overflow-y-auto space-y-1.5 p-2 bg-slate-950/60 rounded-xl border border-slate-800/80 text-xs z-10"
+      >
+        {transcript.length === 0 ? (
+          <div className="text-slate-500 text-[11px] italic text-center py-2">
+            {status === 'active'
+              ? 'Say "Create a task for tomorrow at 10am" or "Log 30 min study"'
+              : 'Starting audio session...'}
+          </div>
+        ) : (
+          transcript.map((t, idx) => (
+            <div
+              key={idx}
+              className={`flex gap-1.5 items-start text-xs ${
+                t.source === 'user' ? 'justify-end' : 'justify-start'
+              }`}
+            >
+              {t.source === 'model' && (
+                <Sparkles size={13} className="text-indigo-400 mt-0.5 shrink-0" />
+              )}
+              <span
+                className={`px-2.5 py-1 rounded-lg max-w-[85%] leading-relaxed ${
+                  t.source === 'user'
+                    ? 'bg-indigo-600/20 text-indigo-200 border border-indigo-500/20 rounded-tr-none'
+                    : 'bg-slate-800 text-slate-200 border border-slate-700/80 rounded-tl-none'
+                }`}
+              >
+                {t.text}
+              </span>
+              {t.source === 'user' && (
+                <User size={13} className="text-slate-400 mt-0.5 shrink-0" />
+              )}
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

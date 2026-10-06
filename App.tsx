@@ -719,15 +719,8 @@ const App: React.FC = () => {
                         'Flowmate'}
           </span>
 
-          {/* Right: Live Voice Button */}
-          <button
-            onClick={() => setIsLiveMode(true)}
-            className="p-2 hover:bg-slate-800 rounded-lg text-indigo-400 hover:text-indigo-300 transition-colors"
-            title="Start Gemini Live Voice Session"
-            aria-label="Start Gemini Live Voice Session"
-          >
-            <Activity size={20} className="animate-pulse" />
-          </button>
+          {/* Right spacer for centering title */}
+          <div className="w-10" />
         </div>
       )}
 
@@ -836,14 +829,6 @@ const App: React.FC = () => {
                     Orchestrator
                   </h1>
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setIsLiveMode(true)}
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-medium transition-all shadow-sm active:scale-95"
-                      title="Start Gemini Live Voice Session"
-                    >
-                      <Activity size={13} className="text-indigo-400 animate-pulse" />
-                      <span>Live Voice</span>
-                    </button>
                     <div className="flex items-center gap-1.5 text-[10px] text-slate-500 bg-slate-800/80 px-2 py-1 rounded border border-slate-700">
                       <div className={`w-1.5 h-1.5 rounded-full ${loading ? 'bg-indigo-500 animate-pulse' : 'bg-green-500'}`} />
                       {settings.preferred_model || 'gemini-3.8-flash'}
@@ -902,18 +887,24 @@ const App: React.FC = () => {
                 )}
               </div>
 
-              {/* Desktop Chat Input - Unified ChatGPT-style */}
+              {/* Desktop Chat Input - In-chat Live Voice or Unified ChatGPT-style */}
               <div className="p-3 bg-slate-900 border-t border-slate-800 shrink-0">
-                <UnifiedChatInput
-                  onSend={(msg) => sendDirectMessage(msg, selectedAttachment)}
-                  onAttach={(file) => processFile(file)}
-                  onLiveVoice={() => setIsLiveMode(true)}
-                  loading={loading}
-                  placeholder="Ask AI anything..."
-                  attachment={selectedAttachment}
-                  onRemoveAttachment={handleRemoveAttachment}
-                  isMobile={false}
-                />
+                {isLiveMode ? (
+                  <Suspense fallback={<div className="p-3 text-center text-xs text-slate-400">Loading Gemini Live...</div>}>
+                    <LiveVoiceModal onClose={() => setIsLiveMode(false)} />
+                  </Suspense>
+                ) : (
+                  <UnifiedChatInput
+                    onSend={(msg) => sendDirectMessage(msg, selectedAttachment)}
+                    onAttach={(file) => processFile(file)}
+                    onLiveVoice={() => setIsLiveMode(true)}
+                    loading={loading}
+                    placeholder="Ask AI anything..."
+                    attachment={selectedAttachment}
+                    onRemoveAttachment={handleRemoveAttachment}
+                    isMobile={false}
+                  />
+                )}
               </div>
             </div>
           )}
@@ -977,18 +968,24 @@ const App: React.FC = () => {
                 )}
               </div>
 
-              {/* Mobile Chat Input - Using UnifiedChatInput for consistency */}
+              {/* Mobile Chat Input - In-chat Live Voice or UnifiedChatInput */}
               <div className="p-3 bg-slate-900 border-t border-slate-800 shrink-0">
-                <UnifiedChatInput
-                  onSend={(msg) => sendDirectMessage(msg, selectedAttachment)}
-                  onAttach={(file) => processFile(file)}
-                  onLiveVoice={() => setIsLiveMode(true)}
-                  loading={loading}
-                  placeholder="Message..."
-                  attachment={selectedAttachment}
-                  onRemoveAttachment={handleRemoveAttachment}
-                  isMobile={true}
-                />
+                {isLiveMode ? (
+                  <Suspense fallback={<div className="p-3 text-center text-xs text-slate-400">Loading Gemini Live...</div>}>
+                    <LiveVoiceModal onClose={() => setIsLiveMode(false)} />
+                  </Suspense>
+                ) : (
+                  <UnifiedChatInput
+                    onSend={(msg) => sendDirectMessage(msg, selectedAttachment)}
+                    onAttach={(file) => processFile(file)}
+                    onLiveVoice={() => setIsLiveMode(true)}
+                    loading={loading}
+                    placeholder="Message..."
+                    attachment={selectedAttachment}
+                    onRemoveAttachment={handleRemoveAttachment}
+                    isMobile={true}
+                  />
+                )}
               </div>
             </main>
           ) : (
@@ -1022,10 +1019,6 @@ const App: React.FC = () => {
 
         {showGraphFixingModal && (
           <GraphFixingModal onClose={() => setShowGraphFixingModal(false)} />
-        )}
-
-        {isLiveMode && (
-          <LiveVoiceModal onClose={() => setIsLiveMode(false)} />
         )}
       </Suspense>
 
