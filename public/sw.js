@@ -1,7 +1,7 @@
 // Flowmate Service Worker
 // Enables offline support and caching for PWA
 
-const CACHE_NAME = 'flowmate-v2';
+const CACHE_NAME = 'flowmate-v4-0-1';
 const STATIC_ASSETS = [
     '/',
     '/index.html',
@@ -41,7 +41,7 @@ self.addEventListener('activate', (event) => {
     );
 });
 
-// Fetch event - serve from cache, fallback to network
+// Fetch event - serve latest content
 self.addEventListener('fetch', (event) => {
     const { request } = event;
     const url = new URL(request.url);
@@ -56,14 +56,31 @@ self.addEventListener('fetch', (event) => {
         event.respondWith(
             fetch(request)
                 .catch(() => {
-                    // Return a cached response or a fallback
                     return caches.match(request);
                 })
         );
         return;
     }
 
-    // Cache-first for static assets
+    // Network-first for navigation (HTML) requests so dev & prod always get latest version
+    if (request.mode === 'navigate' || request.headers.get('accept')?.includes('text/html')) {
+        event.respondWith(
+            fetch(request)
+                .then((networkResponse) => {
+                    if (networkResponse.ok) {
+                        const copy = networkResponse.clone();
+                        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+                    }
+                    return networkResponse;
+                })
+                .catch(() => {
+                    return caches.match('/') || caches.match('/index.html') || new Response('Offline', { status: 503 });
+                })
+        );
+        return;
+    }
+
+    // Cache-first for hashed static assets
     event.respondWith(
         caches.match(request)
             .then((cachedResponse) => {
@@ -85,7 +102,6 @@ self.addEventListener('fetch', (event) => {
                 // Not in cache, fetch from network
                 return fetch(request)
                     .then((networkResponse) => {
-                        // Clone and cache the response
                         if (networkResponse.ok) {
                             const responseToCache = networkResponse.clone();
                             caches.open(CACHE_NAME)
@@ -94,10 +110,6 @@ self.addEventListener('fetch', (event) => {
                         return networkResponse;
                     })
                     .catch(() => {
-                        // Offline fallback for navigation requests
-                        if (request.mode === 'navigate') {
-                            return caches.match('/');
-                        }
                         return new Response('Offline', { status: 503 });
                     });
             })

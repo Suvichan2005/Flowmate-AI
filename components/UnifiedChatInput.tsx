@@ -3,6 +3,8 @@ import { Paperclip, Mic, MicOff, Send, X, Image, Loader2 } from 'lucide-react';
 import { sanitizeUserInput } from '../utils/validation';
 
 interface UnifiedChatInputProps {
+    value?: string;
+    onChange?: (value: string) => void;
     onSend: (message: string, attachment?: string | null) => void;
     onAttach?: (file: File) => void;
     onLiveVoice?: () => void;
@@ -11,6 +13,7 @@ interface UnifiedChatInputProps {
     attachment?: string | null;
     onRemoveAttachment?: () => void;
     isMobile?: boolean;
+    textareaRef?: React.RefObject<HTMLTextAreaElement>;
 }
 
 /**
@@ -21,6 +24,8 @@ interface UnifiedChatInputProps {
  * - Send button on right (always visible on desktop, shown when has content on mobile)
  */
 const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
+    value,
+    onChange,
     onSend,
     onAttach,
     onLiveVoice,
@@ -28,14 +33,24 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
     placeholder = "Message...",
     attachment = null,
     onRemoveAttachment,
-    isMobile = false
+    isMobile = false,
+    textareaRef: externalTextareaRef
 }) => {
-    const [input, setInput] = useState('');
+    const [internalInput, setInternalInput] = useState('');
+    const input = value !== undefined ? value : internalInput;
     const [isListening, setIsListening] = useState(false);
     const [speechSupported, setSpeechSupported] = useState(false);
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const localTextareaRef = useRef<HTMLTextAreaElement>(null);
+    const textareaRef = externalTextareaRef || localTextareaRef;
     const recognitionRef = useRef<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const updateInput = (newVal: string) => {
+        if (value === undefined) {
+            setInternalInput(newVal);
+        }
+        onChange?.(newVal);
+    };
 
     // Check for Web Speech API support
     useEffect(() => {
@@ -62,7 +77,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                 }
 
                 if (finalTranscript) {
-                    setInput(prev => prev + finalTranscript);
+                    updateInput(input + finalTranscript);
                 }
             };
 
@@ -81,7 +96,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                 recognitionRef.current.stop();
             }
         };
-    }, []);
+    }, [input]);
 
     // Auto-resize textarea
     useEffect(() => {
@@ -100,7 +115,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
         const sanitizedInput = sanitizeUserInput(trimmedInput);
         
         onSend(sanitizedInput, attachment);
-        setInput('');
+        updateInput('');
 
         if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
@@ -205,7 +220,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                 <textarea
                     ref={textareaRef}
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
+                    onChange={(e) => updateInput(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder={isListening ? "Listening..." : placeholder}
                     rows={1}

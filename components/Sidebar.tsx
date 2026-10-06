@@ -68,7 +68,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
   ];
 
   return (
-    <div className={`h-screen flex flex-col bg-gradient-to-b from-slate-900 to-slate-950 transition-all duration-300 ${forceExpanded ? 'w-full' : (isZenMode ? 'w-14' : 'w-14 md:w-56')
+    <div className={`h-full flex flex-col bg-gradient-to-b from-slate-900 to-slate-950 transition-all duration-300 ${forceExpanded ? 'w-full' : (isZenMode ? 'w-14' : 'w-14 md:w-56')
       }`}>
 
       {/* Logo */}

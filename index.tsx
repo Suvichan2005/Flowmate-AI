@@ -27,7 +27,7 @@ if ('serviceWorker' in navigator) {
         });
     });
   } else {
-    // In development (e.g. npm run dev), unregister any cached service workers to prevent stale builds
+    // In development (e.g. npm run dev), unregister any cached service workers and purge caches to prevent stale builds
     navigator.serviceWorker.getRegistrations().then((registrations) => {
       for (const registration of registrations) {
         registration.unregister().then(() => {
@@ -35,6 +35,13 @@ if ('serviceWorker' in navigator) {
         });
       }
     });
+    if ('caches' in window) {
+      caches.keys().then((names) => {
+        for (const name of names) {
+          caches.delete(name);
+        }
+      });
+    }
   }
 }
 

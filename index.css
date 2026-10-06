@@ -212,11 +212,13 @@
     animation: slideInFromBottom 0.3s ease-out forwards;
   }
 
-  /* Touch-friendly targets */
-  button,
-  a {
-    min-height: 44px;
-    min-width: 44px;
+  /* Safe-area insets for mobile edge-to-edge rendering */
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0px);
   }
 }
 

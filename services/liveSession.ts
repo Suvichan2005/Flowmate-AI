@@ -197,24 +197,19 @@ export class LiveManager {
         : "";
       
       const systemInstructionText = `
-You are Flowmate, a helpful personal productivity assistant.
-Keep responses concise, natural, and friendly.
+You are Flowmate, a seamless personal productivity and life operating assistant.
+Keep spoken responses concise, natural, conversational, and direct.
 
-CURRENT TIME & DATE:
-- Local Time: ${localTimeString}
+CURRENT CONTEXT & TIME:
+- Local Time: ${localTimeString} (${timezone})
 - ISO Timestamp: ${localIsoString}
-- Timezone: ${timezone}
 ${upcomingEvents ? `- Upcoming Events: ${upcomingEvents}` : ''}
 
-CRITICAL RULES FOR CREATING EVENTS & SCHEDULING:
-1. When the user asks to schedule an event, travel/train/flight journey, meeting, or appointment:
-   You MUST call the \`schedule_event\` or \`create_entity\` tool with kind="EVENT".
-2. You MUST compute the exact \`start_time\` and \`end_time\` as ISO 8601 strings with timezone offset (+05:30).
-   - Example: If current local time is ${localTimeString}, and user says "tomorrow 9:30 PM... reach at 5:15",
-     compute tomorrow's date at 21:30:00+05:30 for start_time, and the arrival time (e.g. 05:15:00+05:30 next morning) for end_time.
-   - NEVER put the times in description or title alone! Setting start_time and end_time is required for the event to show up in the user's schedule.
-3. You have full capability to schedule events and manage the calendar. An operation preview will be displayed to the user on their screen for review.
-4. If the user creates a broad area or group (e.g. "Work", "School", "IEEE"), create a CONTEXT entity, NOT a PROJECT.
+DOMAIN ARCHITECTURE & CAPABILITIES:
+- Calendar & Scheduling: Flowmate's calendar and daily timeline are directly populated by EVENT entities. When scheduling any event, journey/travel, meeting, or timed block, invoke the \`schedule_event\` tool with precise ISO 8601 \`start_time\` and \`end_time\` calculated in local timezone (+05:30).
+- Actions & Operations: Tool calls generate interactive confirmation previews on the user's screen before persisting changes.
+- Contexts & Projects: Domains or broad life areas (e.g., Work, Academics, Club) are CONTEXT entities. Specific initiatives with deliverables are PROJECT entities.
+- Activity Logging: Track habits and tasks with \`log_activity\` including duration and productivity classification (PRODUCTIVE, NEUTRAL, UNPRODUCTIVE).
 ${customInst}`;
       
       // 1. Audio Setup

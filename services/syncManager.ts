@@ -18,13 +18,18 @@ import {
     unsubscribeFromUserData,
     mergeData,
     mergeMessages,
+    mergeChatSessions,
     saveMessage as saveMessageToFirestore,
     saveFoodLogs,
     saveAttendanceData,
+    saveChatSessions,
+    syncEntities,
+    syncRelationships,
+    saveUserConfig,
     UserData,
 } from './firestoreSync';
 import { isFirebaseConfigured } from './firebase';
-import type { Message, FoodLogEntry, Subject, ClassSchedule, Holiday, AttendanceLog, UserSettings } from '../types';
+import type { Message, FoodLogEntry, Subject, ClassSchedule, Holiday, AttendanceLog, UserSettings, ChatSession } from '../types';
 
 // Sync state
 let syncUserId: string | null = null;
@@ -44,6 +49,7 @@ type OnRemoteDataChange = (data: {
     relationships: any[];
     universalTags: any[];
     messages?: Message[];
+    chatSessions?: ChatSession[];
     settings?: Partial<UserSettings>;
 }) => void;
 
@@ -85,19 +91,26 @@ export const startRealtimeSync = (): (() => void) | null => {
     console.log('[SyncManager] Starting real-time sync listener');
 
     realtimeUnsubscribe = subscribeToUserData(syncUserId, (data) => {
-        // Only process if we're not currently pushing an update
-        if (!isSyncing && onRemoteDataChange) {
+        // Remote updates must never be dropped while syncing or debouncing
+        if (onRemoteDataChange) {
             // Filter out messages we just wrote (echo suppression)
             const filteredMessages = (data.messages || []).filter(
                 (m: Message) => !recentlyWrittenMessageIds.has(m.id)
             );
 
-            console.log('[SyncManager] Received remote update');
+            console.log('[SyncManager] Received remote update:', {
+                entities: data.entities?.length || 0,
+                relationships: data.relationships?.length || 0,
+                messages: filteredMessages.length,
+                chatSessions: data.chatSessions?.length || 0,
+            });
+
             onRemoteDataChange({
                 entities: data.entities || [],
                 relationships: data.relationships || [],
                 universalTags: data.universalTags || [],
                 messages: filteredMessages,
+                chatSessions: data.chatSessions || [],
                 settings: data.settings,
             });
         }
@@ -177,7 +190,6 @@ const performSync = async (
 
     try {
         const data = getData();
-        const { syncEntities, syncRelationships, saveUserConfig } = await import('./firestoreSync');
         const now = new Date().toISOString();
 
         if (lastSyncTimestamp) {
@@ -331,6 +343,24 @@ export const syncAttendanceToCloud = async (data: {
 }): Promise<boolean> => {
     if (!syncUserId || !isFirebaseConfigured()) return false;
     return saveAttendanceData(syncUserId, data);
+};
+
+/**
+ * Sync chat sessions to Firestore
+ */
+export const syncChatSessionsToCloud = async (sessions: ChatSession[]): Promise<boolean> => {
+    if (!syncUserId || !isFirebaseConfigured()) return false;
+    return saveChatSessions(syncUserId, sessions);
+};
+
+/**
+ * Merge remote chat sessions with local chat sessions
+ */
+export const mergeChatSessionsWithLocal = (
+    local: ChatSession[],
+    remote: ChatSession[]
+): ChatSession[] => {
+    return mergeChatSessions(local, remote);
 };
 
 /**

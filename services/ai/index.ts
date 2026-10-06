@@ -10,6 +10,7 @@
  */
 
 export type { ImprovementType } from "./prompts";
+export { generateContextualSuggestions, getInstantContextualSuggestions, type ContextualSuggestion } from "./suggestions";
 
 import { FunctionCallingConfigMode } from "@google/genai";
 import type { Content } from "@google/genai";

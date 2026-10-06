@@ -1,4 +1,4 @@
-// Firestore Sync Service — Granular subcollection-based sync
+// Firestore Sync Service  -  Granular subcollection-based sync
 // Schema:
 //   users/{uid}                    ? config (tags, settings, schemaVersion)
 //   users/{uid}/entities/{id}      ? Entity docs
@@ -33,6 +33,7 @@ import {
     ClassSchedule,
     Holiday,
     AttendanceLog,
+    ChatSession,
 } from '../types';
 
 // --- Collection Paths ---
@@ -110,6 +111,7 @@ export interface UserData {
     relationships: Relationship[];
     universalTags: TagDefinition[];
     messages: Message[];
+    chatSessions?: ChatSession[];
     settings?: Partial<UserSettings>;
     foodLogs: FoodLogEntry[];
     subjects: Subject[];
@@ -126,6 +128,7 @@ interface ActiveListeners {
     relationships: Unsubscribe | null;
     config: Unsubscribe | null;
     messages: Unsubscribe | null;
+    chatSessions: Unsubscribe | null;
 }
 
 const listeners: ActiveListeners = {
@@ -133,6 +136,7 @@ const listeners: ActiveListeners = {
     relationships: null,
     config: null,
     messages: null,
+    chatSessions: null,
 };
 
 /**
@@ -250,6 +254,32 @@ export function subscribeToMessages(
 }
 
 /**
+ * Subscribe to real-time chat sessions changes.
+ */
+export function subscribeToChatSessions(
+    userId: string,
+    onUpdate: (sessions: ChatSession[]) => void,
+): Unsubscribe {
+    if (!isFirebaseConfigured() || !db) return () => {};
+
+    listeners.chatSessions?.();
+
+    const unsub = onSnapshot(metaDoc(userId, 'chat_sessions'), (snap) => {
+        if (snap.exists()) {
+            const data = snap.data();
+            const sessions: ChatSession[] = data.sessions || [];
+            console.log(`[FirestoreSync] Chat sessions snapshot: ${sessions.length} sessions`);
+            onUpdate(sessions);
+        }
+    }, (error) => {
+        console.error('[FirestoreSync] Chat sessions listener error:', error);
+    });
+
+    listeners.chatSessions = unsub;
+    return unsub;
+}
+
+/**
  * Combined subscription for all user data.
  * Fires onDataChange whenever any subcollection changes.
  */
@@ -263,6 +293,7 @@ export const subscribeToUserData = (
     let currentRelationships: Relationship[] = [];
     let currentTags: TagDefinition[] = [];
     let currentMessages: Message[] = [];
+    let currentChatSessions: ChatSession[] = [];
     let currentSettings: Partial<UserSettings> | undefined;
 
     const notify = () => {
@@ -271,6 +302,7 @@ export const subscribeToUserData = (
             relationships: currentRelationships,
             universalTags: currentTags,
             messages: currentMessages,
+            chatSessions: currentChatSessions,
             settings: currentSettings,
             lastSyncedAt: null,
         });
@@ -297,11 +329,17 @@ export const subscribeToUserData = (
         notify();
     });
 
+    const unsub5 = subscribeToChatSessions(userId, (sessions) => {
+        currentChatSessions = sessions;
+        notify();
+    });
+
     return () => {
         unsub1();
         unsub2();
         unsub3();
         unsub4();
+        unsub5();
     };
 };
 
@@ -310,10 +348,12 @@ export const unsubscribeFromUserData = () => {
     listeners.relationships?.();
     listeners.config?.();
     listeners.messages?.();
+    listeners.chatSessions?.();
     listeners.entities = null;
     listeners.relationships = null;
     listeners.config = null;
     listeners.messages = null;
+    listeners.chatSessions = null;
 };
 
 // --- Read Operations ---
@@ -377,7 +417,18 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
             console.warn('[FirestoreSync] Attendance data load failed:', e);
         }
 
-        console.log(`[FirestoreSync] Loaded: ${entities.length} entities, ${relationships.length} rels, ${messages.length} msgs`);
+        // Load chat sessions
+        let chatSessions: ChatSession[] = [];
+        try {
+            const chatSnap = await getDoc(metaDoc(userId, 'chat_sessions'));
+            if (chatSnap.exists()) {
+                chatSessions = chatSnap.data().sessions || [];
+            }
+        } catch (e) {
+            console.warn('[FirestoreSync] Chat sessions load failed:', e);
+        }
+
+        console.log(`[FirestoreSync] Loaded: ${entities.length} entities, ${relationships.length} rels, ${messages.length} msgs, ${chatSessions.length} sessions`);
 
         return {
             entities,
@@ -385,6 +436,7 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
             universalTags: configData?.universalTags || [],
             settings: configData?.settings || undefined,
             messages,
+            chatSessions,
             foodLogs,
             subjects,
             classSchedule,
@@ -586,7 +638,22 @@ export async function saveAttendanceData(
 }
 
 /**
- * Full save — writes all entities, relationships, and messages to subcollections.
+ * Save chat sessions to meta/chat_sessions document.
+ */
+export async function saveChatSessions(userId: string, sessions: ChatSession[]): Promise<boolean> {
+    if (!isFirebaseConfigured() || !db) return false;
+
+    try {
+        await setDoc(metaDoc(userId, 'chat_sessions'), { sessions: sanitizeForFirestore(sessions), updatedAt: serverTimestamp() });
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Chat sessions save failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Full save  -  writes all entities, relationships, and messages to subcollections.
  * Used for initial migration or full sync.
  */
 export const saveUserData = async (
@@ -596,6 +663,7 @@ export const saveUserData = async (
         relationships: Relationship[];
         universalTags?: TagDefinition[];
         messages?: Message[];
+        chatSessions?: ChatSession[];
         settings?: Partial<UserSettings>;
         foodLogs?: FoodLogEntry[];
         subjects?: Subject[];
@@ -665,7 +733,12 @@ export const saveUserData = async (
             });
         }
 
-        console.log(`[FirestoreSync] Full save: ${data.entities.length} entities, ${data.relationships.length} rels, ${data.messages?.length || 0} msgs`);
+        // Write chat sessions
+        if (data.chatSessions && data.chatSessions.length > 0) {
+            await saveChatSessions(userId, data.chatSessions);
+        }
+
+        console.log(`[FirestoreSync] Full save: ${data.entities.length} entities, ${data.relationships.length} rels, ${data.messages?.length || 0} msgs, ${data.chatSessions?.length || 0} sessions`);
         return true;
     } catch (error) {
         console.error('[FirestoreSync] Full save failed:', error);
@@ -676,7 +749,7 @@ export const saveUserData = async (
 // --- Incremental Sync ---
 
 /**
- * Incremental sync — writes only the changed entities/relationships.
+ * Incremental sync  -  writes only the changed entities/relationships.
  * Falls back to granular batch writes, NOT a full save.
  */
 export const syncOperation = async (
@@ -779,8 +852,8 @@ export const mergeData = (
 };
 
 /**
- * Merge messages — union by ID, sorted by created_at.
- * Never drops messages — additive merge.
+ * Merge messages  -  union by ID, sorted by created_at.
+ * Never drops messages  -  additive merge.
  */
 export const mergeMessages = (
     local: Message[],
@@ -801,6 +874,38 @@ export const mergeMessages = (
     // Sort chronologically
     return Array.from(merged.values()).sort((a, b) =>
         new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+};
+
+/**
+ * Merge chat sessions - union by ID, newer updated_at wins.
+ */
+export const mergeChatSessions = (
+    local: ChatSession[],
+    remote: ChatSession[],
+): ChatSession[] => {
+    const merged = new Map<string, ChatSession>();
+
+    // Remote first
+    remote.forEach(s => merged.set(s.id, s));
+
+    // Local fills in or overrides if newer
+    local.forEach(localSession => {
+        const remoteSession = merged.get(localSession.id);
+        if (!remoteSession) {
+            merged.set(localSession.id, localSession);
+        } else {
+            const localTime = new Date(localSession.updated_at || localSession.created_at).getTime();
+            const remoteTime = new Date(remoteSession.updated_at || remoteSession.created_at).getTime();
+            if (localTime >= remoteTime) {
+                merged.set(localSession.id, localSession);
+            }
+        }
+    });
+
+    // Sort by updated_at descending (most recent first)
+    return Array.from(merged.values()).sort((a, b) =>
+        new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime()
     );
 };
 

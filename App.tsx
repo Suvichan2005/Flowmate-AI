@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react';
 import { useStore } from './store';
-import { orchestrateMessage } from './services/ai';
+import { orchestrateMessage, generateContextualSuggestions, getInstantContextualSuggestions, type ContextualSuggestion } from './services/ai';
 import { processFileAttachment } from './utils/imageProcessing';
 import { onAuthChange, signOut } from './services/firebase';
-import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
-import { mergeData, mergeMessages } from './services/firestoreSync';
+import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud, syncChatSessionsToCloud } from './services/syncManager';
+import { mergeData, mergeMessages, mergeChatSessions } from './services/firestoreSync';
 import { preventDoubleClick } from './utils/debounce';
 import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers, Sparkles, LayoutDashboard } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -67,10 +67,14 @@ const App: React.FC = () => {
     setPendingOrchestration,
     chatSessions,
     activeSessionId,
-    setActiveSessionId
+    setActiveSessionId,
+    foodLogs,
+    subjects
   } = useStore();
 
   const [input, setInput] = useState('');
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  const [contextualSuggestions, setContextualSuggestions] = useState<ContextualSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -84,6 +88,22 @@ const App: React.FC = () => {
   const [isResizing, setIsResizing] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+  // Dynamic context-aware suggestions (time of day, events, tasks, meals)
+  useEffect(() => {
+    const ctx = { entities, foodLogs, subjects };
+    setContextualSuggestions(getInstantContextualSuggestions(ctx));
+    generateContextualSuggestions(ctx).then(res => {
+      if (res && res.length > 0) setContextualSuggestions(res);
+    }).catch(err => console.warn('[App] Suggestions generation failed:', err));
+  }, [entities.length, foodLogs?.length, subjects?.length]);
+
+  const handleSelectSuggestion = (suggestion: ContextualSuggestion) => {
+    setInput(suggestion.prompt);
+    setTimeout(() => {
+      chatInputRef.current?.focus();
+    }, 50);
+  };
 
   // Rate limiting: track last API call time to prevent abuse
   const lastApiCallRef = useRef<number>(0);
@@ -176,11 +196,32 @@ const App: React.FC = () => {
             const mergedMsgs = remoteData.messages
               ? mergeMessages(state.messages || [], remoteData.messages)
               : state.messages;
+
+            const mergedChatSessions = remoteData.chatSessions
+              ? mergeChatSessions(state.chatSessions || [], remoteData.chatSessions)
+              : (state.chatSessions || []);
+
+            const existingSessionIds = new Set(mergedChatSessions.map(s => s.id));
+            const missingSessions = (mergedMsgs || [])
+              .filter(m => m.channelId && !existingSessionIds.has(m.channelId))
+              .map(m => {
+                existingSessionIds.add(m.channelId!);
+                return {
+                  id: m.channelId!,
+                  title: 'Chat ' + m.channelId!.slice(0, 8),
+                  created_at: m.created_at,
+                  updated_at: m.created_at,
+                };
+              });
+
+            const finalChatSessions = [...mergedChatSessions, ...missingSessions];
+
             useStore.setState({
               entities: merged.entities,
               relationships: merged.relationships,
               universalTags: remoteData.universalTags || state.universalTags,
               messages: mergedMsgs,
+              chatSessions: finalChatSessions,
               ...(remoteData.settings ? { settings: { ...state.settings, ...remoteData.settings } } : {}),
             });
           }
@@ -196,11 +237,32 @@ const App: React.FC = () => {
               { entities: data.entities, relationships: data.relationships }
             );
             const mergedMsgs = mergeMessages(state.messages || [], data.messages || []);
+
+            const mergedChatSessions = data.chatSessions?.length
+              ? mergeChatSessions(state.chatSessions || [], data.chatSessions)
+              : (state.chatSessions || []);
+
+            const existingSessionIds = new Set(mergedChatSessions.map(s => s.id));
+            const missingSessions = (mergedMsgs || [])
+              .filter(m => m.channelId && !existingSessionIds.has(m.channelId))
+              .map(m => {
+                existingSessionIds.add(m.channelId!);
+                return {
+                  id: m.channelId!,
+                  title: 'Chat ' + m.channelId!.slice(0, 8),
+                  created_at: m.created_at,
+                  updated_at: m.created_at,
+                };
+              });
+
+            const finalChatSessions = [...mergedChatSessions, ...missingSessions];
+
             useStore.setState({
               entities: merged.entities,
               relationships: merged.relationships,
               universalTags: data.universalTags || state.universalTags,
               messages: mergedMsgs,
+              chatSessions: finalChatSessions,
               ...(data.settings ? { settings: { ...state.settings, ...data.settings } } : {}),
               ...(data.foodLogs?.length ? { foodLogs: data.foodLogs } : {}),
               ...(data.subjects?.length ? { subjects: data.subjects } : {}),
@@ -237,6 +299,7 @@ const App: React.FC = () => {
   useEffect(() => {
     let foodDebounce: ReturnType<typeof setTimeout> | null = null;
     let attDebounce: ReturnType<typeof setTimeout> | null = null;
+    let chatDebounce: ReturnType<typeof setTimeout> | null = null;
     let prevFood = useStore.getState().foodLogs;
     let prevSubjects = useStore.getState().subjects;
     let prevSchedule = useStore.getState().classSchedule;
@@ -246,6 +309,7 @@ const App: React.FC = () => {
     let prevRelationships = useStore.getState().relationships;
     let prevTags = useStore.getState().universalTags;
     let prevSettings = useStore.getState().settings;
+    let prevChatSessions = useStore.getState().chatSessions;
 
     const unsub = useStore.subscribe((state) => {
       if (!state.currentUser) return;
@@ -267,6 +331,15 @@ const App: React.FC = () => {
           universalTags: state.universalTags,
           settings: state.settings,
         }));
+      }
+
+      // Chat sessions changed
+      if (state.chatSessions !== prevChatSessions) {
+        prevChatSessions = state.chatSessions;
+        if (chatDebounce) clearTimeout(chatDebounce);
+        chatDebounce = setTimeout(() => {
+          syncChatSessionsToCloud(state.chatSessions);
+        }, 1500);
       }
 
       // Food logs changed
@@ -301,6 +374,7 @@ const App: React.FC = () => {
       unsub();
       if (foodDebounce) clearTimeout(foodDebounce);
       if (attDebounce) clearTimeout(attDebounce);
+      if (chatDebounce) clearTimeout(chatDebounce);
     };
   }, []);
 
@@ -807,7 +881,7 @@ const App: React.FC = () => {
 
   return (
     <div
-      className={`flex h-screen w-full bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500/30 ${isMobile ? 'flex-col' : 'flex-row'}`}
+      className={`flex h-[100dvh] w-full bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500/30 overflow-hidden ${isMobile ? 'flex-col' : 'flex-row'}`}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
@@ -999,20 +1073,17 @@ const App: React.FC = () => {
                           Schedule events, manage tasks, track meals, or talk in real-time.
                         </p>
                         <div className="grid grid-cols-1 gap-2 w-full max-w-sm">
-                          {[
-                            { icon: '🚄', label: 'Schedule travel / train', prompt: 'Create an event for my train to Kolkata tomorrow at 9:30 PM reaching at 5:15 AM' },
-                            { icon: '🎯', label: 'Add goal or project', prompt: 'Create a new project named "AI Workspace" with milestones' },
-                            { icon: '🥗', label: 'Log food & nutrition', prompt: 'Log lunch: 2 rotis, paneer curry, and salad (~450 kcal)' },
-                            { icon: '📅', label: 'Check schedule', prompt: 'What tasks and events are scheduled for today?' },
-                          ].map((item, i) => (
+                          {contextualSuggestions.map((item, i) => (
                             <button
                               key={i}
-                              onClick={() => sendDirectMessage(item.prompt)}
-                              className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/30 text-left transition-all text-xs group"
+                              onClick={() => handleSelectSuggestion(item)}
+                              className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-800 hover:border-indigo-500/30 text-left transition-all text-xs group active:scale-[0.98]"
+                              title="Click to pre-fill prompt"
                             >
-                              <span className="text-sm shrink-0">{item.icon}</span>
+                              <span className="text-base shrink-0 p-1.5 rounded-lg bg-slate-700/50 group-hover:bg-indigo-500/20 transition-colors">{item.icon}</span>
                               <div className="min-w-0 flex-1">
                                 <div className="font-medium text-slate-300 group-hover:text-indigo-300 transition-colors truncate">{item.label}</div>
+                                <div className="text-[11px] text-slate-500 truncate mt-0.5">{item.prompt}</div>
                               </div>
                             </button>
                           ))}
@@ -1062,6 +1133,9 @@ const App: React.FC = () => {
                   </Suspense>
                 ) : (
                   <UnifiedChatInput
+                    value={input}
+                    onChange={setInput}
+                    textareaRef={chatInputRef}
                     onSend={(msg) => sendDirectMessage(msg, selectedAttachment)}
                     onAttach={(file) => processFile(file)}
                     onLiveVoice={() => setIsLiveMode(true)}
@@ -1099,160 +1173,162 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Mobile Layout: Full Content + Bottom Chat Bar */}
+      {/* Mobile Layout: Full Content + Persistent Bottom Navigation */}
       {isMobile && (
-        <>
-          {/* Mobile Full-Screen Chat when Chat view is selected */}
-          {currentView === 'chat' ? (
-            <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
-              <ChatSessionBar />
+        <div className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] overflow-hidden relative">
+          {/* Main content or full screen chat */}
+          <div className="flex-1 flex flex-col overflow-hidden pb-14">
+            {currentView === 'chat' ? (
+              <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
+                <ChatSessionBar />
 
-              <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={!isMobile ? undefined : scrollRef}>
-                {(() => {
-                  const currentChannel = activeSessionId || 'general';
-                  const activeMsgs = (messages || []).filter(msg => (msg.channelId || 'general') === currentChannel);
+                <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={!isMobile ? undefined : scrollRef}>
+                  {(() => {
+                    const currentChannel = activeSessionId || 'general';
+                    const activeMsgs = (messages || []).filter(msg => (msg.channelId || 'general') === currentChannel);
 
-                  if (activeMsgs.length === 0) {
-                    return (
-                      <div className="h-full flex flex-col items-center justify-center p-6 text-center my-auto min-h-[300px]">
-                        <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-3 text-indigo-400 shadow-inner">
-                          <Sparkles size={22} />
+                    if (activeMsgs.length === 0) {
+                      return (
+                        <div className="h-full flex flex-col items-center justify-center p-6 text-center my-auto min-h-[300px]">
+                          <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-3 text-indigo-400 shadow-inner">
+                            <Sparkles size={22} />
+                          </div>
+                          <h3 className="text-sm font-semibold text-slate-200 mb-1">Flowmate AI Assistant</h3>
+                          <p className="text-xs text-slate-400 max-w-xs mb-4">
+                            Schedule events, manage tasks, track meals, or talk in real-time.
+                          </p>
+                          <div className="grid grid-cols-1 gap-2 w-full max-w-sm">
+                            {contextualSuggestions.map((item, i) => (
+                              <button
+                                key={i}
+                                onClick={() => handleSelectSuggestion(item)}
+                                className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-800 text-left transition-all text-xs active:scale-[0.98]"
+                                title="Tap to pre-fill prompt"
+                              >
+                                <span className="text-base shrink-0 p-1 rounded-lg bg-slate-700/50">{item.icon}</span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="font-medium text-slate-300 truncate">{item.label}</div>
+                                  <div className="text-[10px] text-slate-500 truncate mt-0.5">{item.prompt}</div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                        <h3 className="text-sm font-semibold text-slate-200 mb-1">Flowmate AI Assistant</h3>
-                        <p className="text-xs text-slate-400 max-w-xs mb-4">
-                          Schedule events, manage tasks, track meals, or talk in real-time.
-                        </p>
-                        <div className="grid grid-cols-1 gap-2 w-full max-w-sm">
-                          {[
-                            { icon: '🚄', label: 'Schedule travel / train', prompt: 'Create an event for my train to Kolkata tomorrow at 9:30 PM reaching at 5:15 AM' },
-                            { icon: '🎯', label: 'Add goal or project', prompt: 'Create a new project named "AI Workspace" with milestones' },
-                            { icon: '🥗', label: 'Log food & nutrition', prompt: 'Log lunch: 2 rotis, paneer curry, and salad (~450 kcal)' },
-                            { icon: '📅', label: 'Check schedule', prompt: 'What tasks and events are scheduled for today?' },
-                          ].map((item, i) => (
-                            <button
-                              key={i}
-                              onClick={() => sendDirectMessage(item.prompt)}
-                              className="flex items-center gap-2.5 p-2 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-800 text-left transition-all text-xs"
-                            >
-                              <span className="text-sm shrink-0">{item.icon}</span>
-                              <div className="min-w-0 flex-1">
-                                <div className="font-medium text-slate-300 truncate">{item.label}</div>
-                              </div>
-                            </button>
-                          ))}
+                      );
+                    }
+
+                    return activeMsgs.map((msg) => (
+                      <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
+                          {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
+                        </div>
+                        <div className={`flex flex-col max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                          {renderAttachmentPreview(msg)}
+                          <div className={`px-3 py-2 rounded-xl text-sm ${msg.role === 'user' ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20' : 'bg-slate-800 border border-slate-700 text-slate-200'}`}>
+                            {msg.text ? <MarkdownText content={msg.text} /> : <em className="text-slate-400">Attachment</em>}
+                            {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
+                          </div>
+                          <span className="text-[9px] text-slate-600 mt-1">{new Date(msg.created_at).toLocaleTimeString()}</span>
                         </div>
                       </div>
-                    );
-                  }
-
-                  return activeMsgs.map((msg) => (
-                    <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
-                        {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
-                      </div>
-                      <div className={`flex flex-col max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                        {renderAttachmentPreview(msg)}
-                        <div className={`px-3 py-2 rounded-xl text-sm ${msg.role === 'user' ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20' : 'bg-slate-800 border border-slate-700 text-slate-200'}`}>
-                          {msg.text ? <MarkdownText content={msg.text} /> : <em className="text-slate-400">Attachment</em>}
-                          {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
+                    ));
+                  })()}
+                  {loading && (
+                    <div className="flex gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-slate-700 flex items-center justify-center"><Bot size={16} /></div>
+                      <div className="bg-slate-800/50 px-3 py-2 rounded-xl border border-slate-800">
+                        <div className="flex gap-1">
+                          <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" />
+                          <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                         </div>
-                        <span className="text-[9px] text-slate-600 mt-1">{new Date(msg.created_at).toLocaleTimeString()}</span>
                       </div>
                     </div>
-                  ));
-                })()}
-                {loading && (
-                  <div className="flex gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-slate-700 flex items-center justify-center"><Bot size={16} /></div>
-                    <div className="bg-slate-800/50 px-3 py-2 rounded-xl border border-slate-800">
-                      <div className="flex gap-1">
-                        <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" />
-                        <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
 
-              {/* Mobile Chat Input - In-chat Live Voice or UnifiedChatInput */}
-              <div className="p-3 bg-slate-900 border-t border-slate-800 shrink-0">
-                {isLiveMode ? (
-                  <Suspense fallback={<div className="p-3 text-center text-xs text-slate-400">Loading Gemini Live...</div>}>
-                    <LiveVoiceModal onClose={() => setIsLiveMode(false)} />
+                {/* Mobile Chat Input - In-chat Live Voice or UnifiedChatInput */}
+                <div className="p-2.5 bg-slate-900 border-t border-slate-800 shrink-0">
+                  {isLiveMode ? (
+                    <Suspense fallback={<div className="p-3 text-center text-xs text-slate-400">Loading Gemini Live...</div>}>
+                      <LiveVoiceModal onClose={() => setIsLiveMode(false)} />
+                    </Suspense>
+                  ) : (
+                    <UnifiedChatInput
+                      value={input}
+                      onChange={setInput}
+                      textareaRef={chatInputRef}
+                      onSend={(msg) => sendDirectMessage(msg, selectedAttachment)}
+                      onAttach={(file) => processFile(file)}
+                      onLiveVoice={() => setIsLiveMode(true)}
+                      loading={loading}
+                      placeholder="Message..."
+                      attachment={selectedAttachment}
+                      onRemoveAttachment={handleRemoveAttachment}
+                      isMobile={true}
+                    />
+                  )}
+                </div>
+              </main>
+            ) : (
+              /* Mobile Main Content - Show regular views */
+              <main className="flex-1 flex flex-col h-full overflow-hidden relative">
+                <div className="flex-1 overflow-auto">
+                  <Suspense fallback={<LazyLoadFallback />}>
+                    {renderMainContent()}
                   </Suspense>
-                ) : (
-                  <UnifiedChatInput
-                    onSend={(msg) => sendDirectMessage(msg, selectedAttachment)}
-                    onAttach={(file) => processFile(file)}
-                    onLiveVoice={() => setIsLiveMode(true)}
-                    loading={loading}
-                    placeholder="Message..."
-                    attachment={selectedAttachment}
-                    onRemoveAttachment={handleRemoveAttachment}
-                    isMobile={true}
-                  />
-                )}
-              </div>
-            </main>
-          ) : (
-            /* Mobile Main Content - Show regular views */
-            <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-              <div className="flex-1 overflow-auto pb-16">
-                <Suspense fallback={<LazyLoadFallback />}>
-                  {renderMainContent()}
-                </Suspense>
-              </div>
+                </div>
+              </main>
+            )}
+          </div>
 
-              {/* Mobile Bottom Navigation Bar */}
-              <nav className="fixed bottom-0 left-0 right-0 h-14 bg-slate-900/95 backdrop-blur-lg border-t border-slate-800 flex items-center justify-around px-2 z-30 shadow-lg" aria-label="Mobile Navigation">
-                <button
-                  onClick={() => setView('dashboard')}
-                  className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg text-[10px] font-medium transition-colors ${
-                    currentView === 'dashboard' ? 'text-indigo-400' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <LayoutDashboard size={18} />
-                  <span className="mt-0.5">Home</span>
-                </button>
-                <button
-                  onClick={() => setView('chat')}
-                  className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg text-[10px] font-medium transition-colors ${
-                    currentView === 'chat' ? 'text-indigo-400' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <MessageSquare size={18} />
-                  <span className="mt-0.5">Chat</span>
-                </button>
-                <button
-                  onClick={() => setView('chat_graph')}
-                  className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg text-[10px] font-medium transition-colors ${
-                    currentView === 'chat_graph' ? 'text-indigo-400' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <Layers size={18} />
-                  <span className="mt-0.5">Graph</span>
-                </button>
-                <button
-                  onClick={() => setView('calendar')}
-                  className={`flex flex-col items-center justify-center py-1 px-3 rounded-lg text-[10px] font-medium transition-colors ${
-                    currentView === 'calendar' ? 'text-indigo-400' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <Calendar size={18} />
-                  <span className="mt-0.5">Calendar</span>
-                </button>
-                <button
-                  onClick={() => setIsMobileSidebarOpen(true)}
-                  className="flex flex-col items-center justify-center py-1 px-3 rounded-lg text-[10px] font-medium text-slate-400 hover:text-slate-200 transition-colors"
-                >
-                  <Menu size={18} />
-                  <span className="mt-0.5">More</span>
-                </button>
-              </nav>
-            </main>
-          )}
-        </>
+          {/* Persistent Mobile Bottom Navigation Bar with tactile animations */}
+          <nav className="fixed bottom-0 left-0 right-0 h-14 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800/80 flex items-center justify-around px-2 z-30 shadow-2xl safe-area-bottom" aria-label="Mobile Navigation">
+            <button
+              onClick={() => setView('dashboard')}
+              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
+                currentView === 'dashboard' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <LayoutDashboard size={18} className={currentView === 'dashboard' ? 'stroke-[2.5]' : ''} />
+              <span className="mt-0.5">Home</span>
+            </button>
+            <button
+              onClick={() => setView('chat')}
+              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
+                currentView === 'chat' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <MessageSquare size={18} className={currentView === 'chat' ? 'stroke-[2.5]' : ''} />
+              <span className="mt-0.5">Chat</span>
+            </button>
+            <button
+              onClick={() => setView('chat_graph')}
+              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
+                currentView === 'chat_graph' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Layers size={18} className={currentView === 'chat_graph' ? 'stroke-[2.5]' : ''} />
+              <span className="mt-0.5">Graph</span>
+            </button>
+            <button
+              onClick={() => setView('calendar')}
+              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
+                currentView === 'calendar' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Calendar size={18} className={currentView === 'calendar' ? 'stroke-[2.5]' : ''} />
+              <span className="mt-0.5">Calendar</span>
+            </button>
+            <button
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium text-slate-400 hover:text-slate-200 transition-all active:scale-95"
+            >
+              <Menu size={18} />
+              <span className="mt-0.5">More</span>
+            </button>
+          </nav>
+        </div>
       )}
 
       {/* Overlays and Modals */}

@@ -38,11 +38,31 @@ export const normalizePayload = (type: ToonOperationType, payload: any): any => 
     if (p.details && !p.description) p.description = p.details;
     if (p.notes && !p.description) p.description = p.notes;
 
-    // Date aliases
+    // Date and time aliases (handles varied LLM output formats)
+    if (p.startTime && !p.start_time) p.start_time = p.startTime;
+    if (p.endTime && !p.end_time) p.end_time = p.endTime;
+    if (p.start_date && !p.start_time) p.start_time = p.start_date;
+    if (p.end_date && !p.end_time) p.end_time = p.end_date;
     if (p.due_date && !p.deadline) p.deadline = p.due_date;
     if (p.target_date && !p.deadline) p.deadline = p.target_date;
     if (p.date && !p.start_time) p.start_time = p.date;
     if (p.start && !p.start_time) p.start_time = p.start;
+
+    // ISO timestamp normalization with IST (+05:30) guarantee
+    if (p.start_time && typeof p.start_time === 'string') {
+        if (!p.start_time.includes('T')) {
+            p.start_time = `${p.start_time}T00:00:00+05:30`;
+        } else if (!p.start_time.includes('+') && !p.start_time.endsWith('Z')) {
+            p.start_time = `${p.start_time}+05:30`;
+        }
+    }
+    if (p.end_time && typeof p.end_time === 'string') {
+        if (!p.end_time.includes('T')) {
+            p.end_time = `${p.end_time}T23:59:59+05:30`;
+        } else if (!p.end_time.includes('+') && !p.end_time.endsWith('Z')) {
+            p.end_time = `${p.end_time}+05:30`;
+        }
+    }
 
     // log_activity specific
     if (type === 'log_activity') {

@@ -4,8 +4,8 @@ import { asyncStorage } from './services/storage';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleCalendarAdapter } from './services/googleSync';
 import { generateBriefing } from './services/ai';
-import { saveUserData, loadUserData } from './services/firestoreSync';
-import { scheduleSync, syncMessage, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
+import { saveUserData, loadUserData, mergeData, mergeMessages } from './services/firestoreSync';
+import { scheduleSync, syncMessage, syncFoodLogsToCloud, syncAttendanceToCloud, syncChatSessionsToCloud } from './services/syncManager';
 import { onAuthChange, User } from './services/firebase';
 import { validatePersistedState, validateOperations } from './utils/validation';
 import {
@@ -303,7 +303,6 @@ export const useStore = create<FlowmateState>()(
                 if (!currentUser) return;
 
                 try {
-                    const { mergeData, mergeMessages } = await import('./services/firestoreSync');
                     const data = await loadUserData(currentUser.uid);
                     if (data) {
                         // Merge entities and relationships (newer wins)
@@ -500,16 +499,24 @@ export const useStore = create<FlowmateState>()(
                         );
                     }
                 }
+                const titleChanged = updatedSessions !== (state.chatSessions || []);
 
                 set((state) => ({
                     messages: [...(state.messages || []), newMessage],
                     chatSessions: updatedSessions
                 }));
 
-                // Write-through to Firestore (fire and forget — no debounce)
+                // Write-through message to Firestore (fire and forget — no debounce)
                 syncMessage(newMessage).catch((err) =>
                     console.warn('[Store] Message sync failed:', err)
                 );
+
+                // If session title was updated from initial prompt, sync sessions to cloud
+                if (titleChanged) {
+                    syncChatSessionsToCloud(updatedSessions).catch((err) =>
+                        console.warn('[Store] Chat sessions sync failed:', err)
+                    );
+                }
 
                 return id;
             },
@@ -523,10 +530,14 @@ export const useStore = create<FlowmateState>()(
                     created_at: now,
                     updated_at: now
                 };
-                set((state) => ({
-                    chatSessions: [newSession, ...(state.chatSessions || [])],
+                const updatedSessions = [newSession, ...(get().chatSessions || [])];
+                set({
+                    chatSessions: updatedSessions,
                     activeSessionId: id
-                }));
+                });
+                syncChatSessionsToCloud(updatedSessions).catch(err =>
+                    console.warn('[Store] Chat sessions sync failed:', err)
+                );
                 return id;
             },
 
@@ -535,30 +546,35 @@ export const useStore = create<FlowmateState>()(
             },
 
             deleteChatSession: (id: string) => {
-                set((state) => {
-                    const remainingSessions = (state.chatSessions || []).filter(s => s.id !== id);
-                    const finalSessions = remainingSessions.length > 0 ? remainingSessions : [{
-                        id: 'general',
-                        title: 'General Chat',
-                        created_at: new Date().toISOString(),
-                        updated_at: new Date().toISOString()
-                    }];
-                    const nextActive = state.activeSessionId === id ? finalSessions[0].id : state.activeSessionId;
-                    const remainingMessages = (state.messages || []).filter(m => (m.channelId || 'general') !== id);
-                    return {
-                        chatSessions: finalSessions,
-                        activeSessionId: nextActive,
-                        messages: remainingMessages
-                    };
+                const state = get();
+                const remainingSessions = (state.chatSessions || []).filter(s => s.id !== id);
+                const finalSessions = remainingSessions.length > 0 ? remainingSessions : [{
+                    id: 'general',
+                    title: 'General Chat',
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                }];
+                const nextActive = state.activeSessionId === id ? finalSessions[0].id : state.activeSessionId;
+                const remainingMessages = (state.messages || []).filter(m => (m.channelId || 'general') !== id);
+                set({
+                    chatSessions: finalSessions,
+                    activeSessionId: nextActive,
+                    messages: remainingMessages
                 });
+                syncChatSessionsToCloud(finalSessions).catch(err =>
+                    console.warn('[Store] Chat sessions sync failed:', err)
+                );
             },
 
             renameChatSession: (id: string, newTitle: string) => {
-                set((state) => ({
-                    chatSessions: (state.chatSessions || []).map(s =>
-                        s.id === id ? { ...s, title: newTitle.trim() || s.title, updated_at: new Date().toISOString() } : s
-                    )
-                }));
+                const state = get();
+                const updatedSessions = (state.chatSessions || []).map(s =>
+                    s.id === id ? { ...s, title: newTitle.trim() || s.title, updated_at: new Date().toISOString() } : s
+                );
+                set({ chatSessions: updatedSessions });
+                syncChatSessionsToCloud(updatedSessions).catch(err =>
+                    console.warn('[Store] Chat sessions sync failed:', err)
+                );
             },
 
             clearChatSession: (id: string) => {
