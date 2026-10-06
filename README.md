@@ -2,12 +2,15 @@
 
 > **A local-first, graph-native productivity system with agentic Gemini function calling, subcollection Firestore sync, and multi-view state visualization.**
 
+[![Live App](https://img.shields.io/badge/Live_App-flowmate--1ffb0.web.app-brightgreen.svg)](https://flowmate-1ffb0.web.app)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![React 19](https://img.shields.io/badge/React-19.2.1-61dafb.svg)](https://react.dev/)
 [![TypeScript 5.8](https://img.shields.io/badge/TypeScript-5.8.2-3178c6.svg)](https://www.typescriptlang.org/)
 [![Vite 6](https://img.shields.io/badge/Vite-6.2.0-646cff.svg)](https://vitejs.dev/)
 [![Zustand 5](https://img.shields.io/badge/Zustand-5.0.9-brown.svg)](https://github.com/pmndrs/zustand)
-[![Tests: Vitest](https://img.shields.io/badge/Tests-60%20passing-brightgreen.svg)](./vitest.config.ts)
+[![Tests: Vitest](https://img.shields.io/badge/Tests-72%20passing-brightgreen.svg)](./vitest.config.ts)
+
+**Live Demo**: [https://flowmate-1ffb0.web.app](https://flowmate-1ffb0.web.app)
 
 ---
 
