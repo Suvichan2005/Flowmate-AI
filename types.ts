@@ -394,6 +394,7 @@ export interface ToonAssistant {
 export interface ToonResponse {
   ops: ToonOperation[];
   assistant: ToonAssistant;
+  provider?: 'managed' | 'byok' | 'unavailable' | 'managed-limited';
 }
 
 export interface SyncQueueItem {

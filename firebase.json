@@ -1,4 +1,16 @@
 {
+  "emulators": {
+    "auth": { "port": 9099 },
+    "firestore": { "port": 18080 },
+    "functions": { "port": 5001 },
+    "ui": { "enabled": false }
+  },
+  "functions": {
+    "source": "functions",
+    "codebase": "default",
+    "ignore": ["node_modules", ".git", "firebase-debug.log", "firebase-debug.*.log", "*.local"],
+    "predeploy": ["npm --prefix functions run build"]
+  },
   "hosting": {
     "public": "dist",
     "ignore": [

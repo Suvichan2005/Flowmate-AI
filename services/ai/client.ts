@@ -9,6 +9,7 @@
 
 import { GoogleGenAI } from "@google/genai";
 import type { RetryConfig } from "../../utils/apiRetry";
+import { hasManagedAiIdentity } from "./managedClient";
 
 // ---------------------------------------------------------------------------
 // Client (ephemeral browser key; local rules remain available without Gemini)
@@ -41,6 +42,9 @@ export const hasAiApiKey = (): boolean => {
   const key = getEphemeralApiKey();
   return Boolean(key && key.trim() !== '');
 };
+
+/** Managed AI is available to an authenticated Firebase user; BYOK remains optional. */
+export const hasAiProviderAvailable = (): boolean => hasAiApiKey() || hasManagedAiIdentity();
 
 /** Returns a fresh GoogleGenAI instance using the ephemeral runtime API key. */
 export const getAiClient = (): GoogleGenAI => {

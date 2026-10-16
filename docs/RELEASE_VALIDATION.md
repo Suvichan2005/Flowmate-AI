@@ -1,4 +1,4 @@
-﻿# Release validation
+# Release validation
 
 Run from an isolated checkout pinned to the complete candidate commit, using a fresh lockfile install. These checks do not publish or deploy.
 
@@ -7,9 +7,9 @@ npm ci --no-audit --no-fund
 npm run check:types
 npm run test:release
 npm run check:invariants
-$env:VITE_GEMINI_API_KEY='SYNTHETIC_BUILD_MARKER_ONLY'
+$env:VITE_SECRET_CANARY='SYNTHETIC_BUILD_MARKER_ONLY'
 npm run build
-$env:RELEASE_SENTINEL=$env:VITE_GEMINI_API_KEY
+$env:RELEASE_SENTINEL=$env:VITE_SECRET_CANARY
 npm run release:scan -- --directory dist --base <full-public-baseline-sha> --candidate <full-candidate-sha> --sentinel-env RELEASE_SENTINEL
 ```
 

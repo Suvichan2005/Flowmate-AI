@@ -17,6 +17,7 @@ import {
 } from '../services/context';
 import { UserSettings, FeatureToggles } from '../types';
 import { getEphemeralApiKey, setEphemeralApiKey, hasAiApiKey } from '../services/ai/client';
+import { hasManagedAiIdentity } from '../services/ai/managedClient';
 
 const DEFAULT_FEATURE_TOGGLES: FeatureToggles = {
   food_tracking: true,
@@ -28,6 +29,7 @@ const DEFAULT_FEATURE_TOGGLES: FeatureToggles = {
 
 const SettingsView: React.FC = () => {
   const { settings, updateSettings, entities, relationships, messages, importData, kernelEntities, applyOperations, deleteEntity } = useStore();
+  const currentUser = useStore(state => state.currentUser);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [liveReading, setLiveReading] = useState<DeviceLocationWithFreshness | null>(() => liveContext.getLastReading());
@@ -244,7 +246,7 @@ const SettingsView: React.FC = () => {
           <h2 className="text-lg font-semibold text-slate-200 mb-4">AI Model & Runtime Access</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
             <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Preferred Model</label>
+              <label className="block text-sm font-medium text-slate-400 mb-2">Preferred Model for your own Gemini key</label>
               <select
                 value={settings.preferred_model}
                 onChange={(e) => handleChange('preferred_model', e.target.value)}
@@ -255,21 +257,21 @@ const SettingsView: React.FC = () => {
                 <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Advanced)</option>
               </select>
               <p className="text-xs text-slate-500 mt-2">
-                This model will be used by the orchestrator for all reasoning tasks.
+                Managed access uses Gemini 3.8 Flash. This preference applies only when you use your own Gemini API key.
               </p>
             </div>
 
             <div className="pt-4 border-t border-slate-800/80">
               <div className="flex items-center justify-between mb-2">
                 <label className="block text-sm font-medium text-slate-200">
-                  Gemini API Key (Optional Ephemeral Access)
+                  Your Gemini API Key (Optional BYOK)
                 </label>
                 <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
                   hasAiApiKey()
                     ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                     : 'bg-slate-800 text-slate-400 border border-slate-700'
                 }`}>
-                  {hasAiApiKey() ? 'Key stored in this tab' : 'Gemini not configured'}
+                  {hasAiApiKey() ? 'Your key active' : hasManagedAiIdentity() ? 'Included access available' : currentUser ? 'Managed access unavailable here' : 'Sign in for included access'}
                 </span>
               </div>
               <div className="flex gap-2">
@@ -277,7 +279,7 @@ const SettingsView: React.FC = () => {
                   type="password"
                   value={apiKeyInput}
                   onChange={(e) => setApiKeyInput(e.target.value)}
-                  placeholder="AIzaSy... (Paste key for live AI reasoning)"
+                  placeholder="Paste your Gemini API key to use BYOK"
                   className="flex-1 bg-slate-950 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500/50 outline-none"
                 />
                 <button
@@ -308,10 +310,10 @@ const SettingsView: React.FC = () => {
               <div className="mt-3 p-3 bg-slate-950/60 rounded-lg border border-slate-800/80 text-xs text-slate-400 space-y-1">
                 <p className="font-semibold text-slate-300">Security & Privacy Disclosures:</p>
                 <ul className="list-disc list-inside space-y-0.5 text-slate-400">
-                  <li>Your key is held <strong>strictly in-memory for this browser session</strong>.</li>
+                  <li>Your key is held <strong>in memory for this browser session only</strong>.</li>
                   <li>It is <strong>never</strong> written to disk, localStorage, or git.</li>
                   <li>It is sent directly from your browser only to Google's official Gemini endpoint.</li>
-                  <li>Without a key, chat reports that no AI response was generated and points you here to configure a provider. Graph, calendar, and workspace operations remain available locally; generated AI responses require a Gemini key and network access.</li>
+                  <li>Signed-in users receive 10 successful AI turns with Flowmate managed Gemini access for the lifetime of the account. After that, add your own key here to continue. BYOK keys remain browser-session-only.</li>
                 </ul>
               </div>
             </div>

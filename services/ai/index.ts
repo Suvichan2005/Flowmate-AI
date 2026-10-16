@@ -39,6 +39,18 @@ import {
   formatLiveLocationForContext,
 } from "./context";
 import { liveContext, privacyManager, contextResolver } from "../context";
+import { auth } from "../firebase";
+import { generateManagedContent, ManagedAiError } from "./managedClient";
+import { v4 as uuidv4 } from "uuid";
+
+// These legacy tools directly mutate local state. Managed AI receives only
+// read-only tools and apply_changes, which remains behind the existing review UI.
+const MANAGED_BLOCKED_MUTATION_TOOLS = new Set(['configure_commitment', 'record_commitment_evidence']);
+const MANAGED_AI_TOOLS = ACTIVE_AI_TOOLS.map(tool => ({
+  ...tool,
+  functionDeclarations: tool.functionDeclarations?.filter(declaration => !MANAGED_BLOCKED_MUTATION_TOOLS.has(declaration.name)),
+})).filter(tool => tool.functionDeclarations?.length);
+const MANAGED_AI_TOOL_NAMES = new Set(MANAGED_AI_TOOLS.flatMap(tool => tool.functionDeclarations?.map(declaration => declaration.name) || []));
 
 // ---------------------------------------------------------------------------
 // Orchestration Callbacks & orchestrateMessage
@@ -46,6 +58,7 @@ import { liveContext, privacyManager, contextResolver } from "../context";
 
 export interface OrchestrationCallbacks {
   onChunk?: (chunk: string) => void;
+  onManagedAiLimit?: (code: 'TURN_ALLOWANCE_EXHAUSTED' | 'GLOBAL_LIMIT_REACHED') => void;
   onThinking?: (thinkingText: string) => void;
   onToolCall?: (tool: { name: string; latency_ms: number; success: boolean }) => void;
   onMetrics?: (metrics: {
@@ -70,7 +83,8 @@ export const orchestrateMessage = async (
   const customInstructions = settings?.custom_instructions || '';
 
   // Never present deterministic local rules as generated AI output.
-  if (!hasAiApiKey()) {
+  const useManagedAi = !hasAiApiKey() && Boolean(auth?.currentUser);
+  if (!hasAiApiKey() && !useManagedAi) {
     const unavailableMessage = 'Gemini is not configured, so Flowmate did not generate an AI response. Your message is saved in this conversation. Configure an authorized provider in Settings to use AI assistance; your local workspace remains available.';
     callbacks?.onChunk?.(unavailableMessage);
     return {
@@ -80,10 +94,12 @@ export const orchestrateMessage = async (
         tone: 'neutral',
         follow_up: ['Open Settings'],
       },
+      provider: 'unavailable',
     };
   }
 
-  const ai = getAiClient();
+  const ai = useManagedAi ? null : getAiClient();
+  const managedTurnId = useManagedAi ? uuidv4() : '';
 
   // --- System Instruction ---
   const featureToggles = settings?.feature_toggles || {
@@ -184,7 +200,7 @@ export const orchestrateMessage = async (
       let candidateContent: Content | null = null;
 
       const aiConfig = {
-        tools: ACTIVE_AI_TOOLS,
+        tools: useManagedAi ? MANAGED_AI_TOOLS : ACTIVE_AI_TOOLS,
         toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
         systemInstruction,
         temperature: 0.2,
@@ -193,7 +209,29 @@ export const orchestrateMessage = async (
           : { thinkingLevel: ThinkingLevel.LOW },
       };
 
-      if (typeof ai.models.generateContentStream === 'function') {
+      if (useManagedAi) {
+        const response = await withRetry(
+          () => generateManagedContent(contents, aiConfig, managedTurnId, uuidv4(), callbacks?.signal),
+          GEMINI_RETRY_CONFIG,
+          (attempt, error, delay) => {
+            console.warn(`[Managed Gemini] Retry ${attempt} after ${delay}ms:`, error?.message);
+          },
+        );
+        if (response.functionCalls.some(call => !MANAGED_AI_TOOL_NAMES.has(call.name))) {
+          throw new ManagedAiError('UNSUPPORTED_TOOL_CALL', 502);
+        }
+        candidateContent = response.candidates[0]?.content as Content | null;
+        functionCalls.push(...response.functionCalls.map(fc => ({ name: fc.name, args: fc.args })));
+        responseText = response.text || '';
+        if (responseText) {
+          if (firstTokenTime === null) {
+            firstTokenTime = performance.now();
+            callbacks?.onMetrics?.({ ttft_ms: Math.round(firstTokenTime - turnStartTime) });
+          }
+          accumulatedStreamingText += responseText;
+          callbacks?.onChunk?.(responseText);
+        }
+      } else if (ai && typeof ai.models.generateContentStream === 'function') {
         const stream = await withRetry(
           () =>
             ai.models.generateContentStream({
@@ -235,6 +273,7 @@ export const orchestrateMessage = async (
           }
         }
       } else {
+        if (!ai) throw new Error('AI provider unavailable');
         const response = await withRetry(
           () =>
             ai.models.generateContent({
@@ -314,6 +353,7 @@ export const orchestrateMessage = async (
             tone: 'neutral',
             follow_up: [],
           },
+          provider: useManagedAi ? 'managed' : 'byok',
         };
       }
 
@@ -398,6 +438,7 @@ export const orchestrateMessage = async (
           tone: 'neutral',
           follow_up: [],
         },
+        provider: useManagedAi ? 'managed' : 'byok',
       };
     }
 
@@ -414,6 +455,30 @@ export const orchestrateMessage = async (
       };
     }
 
+    if (error instanceof ManagedAiError && (error.code === 'TURN_ALLOWANCE_EXHAUSTED' || error.code === 'GLOBAL_LIMIT_REACHED')) {
+      const message = error.code === 'TURN_ALLOWANCE_EXHAUSTED'
+        ? 'Your 10 lifetime included Flowmate AI turns have been used. Add your own Gemini API key in Settings to continue with AI.'
+        : 'Flowmate’s included AI capacity is temporarily exhausted. Add your own Gemini API key in Settings to continue with AI.';
+      callbacks?.onManagedAiLimit?.(error.code);
+      callbacks?.onChunk?.(message);
+      return { ops: [], assistant: { message, tone: 'neutral', follow_up: ['Open Gemini settings'] }, provider: 'managed-limited' };
+    }
+
+    if (error instanceof ManagedAiError) {
+      const managedErrors: Record<string, string> = {
+        AUTH_REQUIRED: 'Sign in with your Flowmate account to use included AI. Your message is saved.',
+        APP_CHECK_REQUIRED: 'Flowmate could not verify this app for managed AI. Your message is saved; try again later or use your own Gemini key in Settings.',
+        RATE_LIMITED: 'Managed AI is receiving requests too quickly. Wait a moment and try again; your message is saved.',
+        INPUT_TOKEN_LIMIT: 'This request is too long for managed AI. Shorten the conversation or use your own Gemini key; your message is saved.',
+        MANAGED_AI_DISABLED: 'Flowmate managed AI is temporarily unavailable. Your message is saved; you can use your own Gemini key in Settings.',
+        MANAGED_AI_NOT_CONFIGURED: 'Flowmate managed AI is not configured here. Your message is saved; you can use your own Gemini key in Settings.',
+        USER_CALL_IN_PROGRESS: 'Another Flowmate AI request is still running for this account. Wait a moment and try again; your message is saved.',
+        UNSUPPORTED_TOOL_CALL: 'Flowmate stopped an unsupported AI action before changing your workspace. Your message is saved.',
+      };
+      const message = managedErrors[error.code] || 'Flowmate could not reach Gemini. No local AI fallback was used; your message is saved. Please retry later or add your own Gemini key in Settings.';
+      callbacks?.onChunk?.(message);
+      return { ops: [], assistant: { message, tone: 'error', follow_up: [] }, provider: 'unavailable' };
+    }
     console.error('Orchestrator failed:', error);
 
     const errObj = error as { message?: string } | null;

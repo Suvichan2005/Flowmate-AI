@@ -71,3 +71,6 @@ qa-evidence/
 browser-results/
 test-results/
 playwright-report/
+
+# Compiled Firebase Functions output
+functions/lib/

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from 
 import { useStore } from './store';
 import { getActiveEntities, getActiveChatSessions, isChatSessionActive } from './store/helpers';
 import { orchestrateMessage, generateContextualSuggestions, getInstantContextualSuggestions, type ContextualSuggestion } from './services/ai';
-import { hasAiApiKey } from './services/ai/client';
+import { hasAiApiKey, hasAiProviderAvailable } from './services/ai/client';
 import { processFileAttachment } from './utils/imageProcessing';
 import { onAuthChange, signOut } from './services/firebase';
 import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
@@ -160,6 +160,8 @@ const App: React.FC = () => {
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [managedAiLimit, setManagedAiLimit] = useState<'TURN_ALLOWANCE_EXHAUSTED' | 'GLOBAL_LIMIT_REACHED' | null>(null);
+  const managedAiDialogRef = useRef<HTMLElement | null>(null);
   const [chatWidth, setChatWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -229,6 +231,36 @@ const App: React.FC = () => {
   const API_COOLDOWN_MS = 1000; // Minimum 1 second between API calls
 
   const { currentUser, setCurrentUser, loadFromCloud, syncToCloud } = useStore();
+
+  useEffect(() => {
+    if (!managedAiLimit) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = managedAiDialogRef.current;
+    const actions = dialog?.querySelectorAll<HTMLElement>('button');
+    actions?.[1]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setManagedAiLimit(null);
+      } else if (event.key === 'Tab' && actions?.length) {
+        const first = actions[0];
+        const last = actions[actions.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      previousFocus?.focus();
+    };
+  }, [managedAiLimit]);
+
 
   // Detect mobile viewport
   useEffect(() => {
@@ -859,6 +891,7 @@ const App: React.FC = () => {
           userMessage.attachment || undefined,
           {
             signal: signal || abortControllerRef.current?.signal,
+            onManagedAiLimit: (code) => setManagedAiLimit(code),
             onChunk: (chunk) => {
               accumulatedText += chunk;
               if (onChunk) onChunk(chunk);
@@ -893,8 +926,8 @@ const App: React.FC = () => {
 
         updateMessageTurnMetadata(assistantMessageId, {
           ...collectedMetrics,
-          model: hasAiApiKey() ? settings?.preferred_model : undefined,
-          response_source: hasAiApiKey() ? 'gemini' : 'unavailable',
+          model: toon.provider === 'managed' ? 'gemini-3.8-flash' : toon.provider === 'byok' ? settings?.preferred_model : undefined,
+          response_source: toon.provider === 'managed' || toon.provider === 'byok' ? 'gemini' : 'unavailable',
         });
       } finally {
         setLoading(false);
@@ -928,7 +961,7 @@ const App: React.FC = () => {
 
     // Rate limiting: prevent rapid-fire API calls within cooldown
     const now = Date.now();
-    if (hasAiApiKey() && now - lastApiCallRef.current < API_COOLDOWN_MS) {
+    if (hasAiProviderAvailable() && now - lastApiCallRef.current < API_COOLDOWN_MS) {
       addToast('Please wait a moment before sending again; your draft is retained', 'info');
       return false;
     }
@@ -1030,18 +1063,18 @@ const App: React.FC = () => {
                   </button>
                   <button
                     onClick={() => {
-                      if (!hasAiApiKey()) {
-                        addToast('Gemini API key required for AI generation. Configure in Settings or create manually.', 'info');
+                      if (!hasAiProviderAvailable()) {
+                        addToast('Sign in for included AI access or configure your own Gemini key in Settings.', 'info');
                         return;
                       }
                       if (!isChatOpen) setIsChatOpen(true);
                       sendDirectMessage("Create 3 starter goals and tasks for my productivity system");
                     }}
                     className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700/60 text-slate-300 text-xs font-medium transition-all active:scale-95"
-                    title={hasAiApiKey() ? "Generate starter goals and tasks with Gemini" : "Gemini is not configured"}
+                    title={hasAiProviderAvailable() ? "Generate starter goals and tasks with Gemini" : "Sign in for included AI or configure a Gemini key"}
                   >
-                    <Sparkles size={14} className={hasAiApiKey() ? "text-indigo-400" : "text-slate-500"} />
-                    <span>{hasAiApiKey() ? "Generate with AI" : "Generate with AI (Requires Key)"}</span>
+                    <Sparkles size={14} className={hasAiProviderAvailable() ? "text-indigo-400" : "text-slate-500"} />
+                    <span>{hasAiProviderAvailable() ? "Generate with AI" : "Generate with AI (Sign in or add a key)"}</span>
                   </button>
                 </div>
               </div>
@@ -1091,18 +1124,18 @@ const App: React.FC = () => {
                   </button>
                   <button
                     onClick={() => {
-                      if (!hasAiApiKey()) {
-                        addToast('Gemini API key required for AI generation. Configure in Settings or create manually.', 'info');
+                      if (!hasAiProviderAvailable()) {
+                        addToast('Sign in for included AI access or configure your own Gemini key in Settings.', 'info');
                         return;
                       }
                       if (!isChatOpen) setIsChatOpen(true);
                       sendDirectMessage("Create 3 starter goals and tasks for my productivity system");
                     }}
                     className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700/60 text-slate-300 text-xs font-medium transition-all active:scale-95"
-                    title={hasAiApiKey() ? "Generate starter goals and tasks with Gemini" : "Gemini is not configured"}
+                    title={hasAiProviderAvailable() ? "Generate starter goals and tasks with Gemini" : "Sign in for included AI or configure a Gemini key"}
                   >
-                    <Sparkles size={14} className={hasAiApiKey() ? "text-indigo-400" : "text-slate-500"} />
-                    <span>{hasAiApiKey() ? "Generate with AI" : "Generate with AI (Requires Key)"}</span>
+                    <Sparkles size={14} className={hasAiProviderAvailable() ? "text-indigo-400" : "text-slate-500"} />
+                    <span>{hasAiProviderAvailable() ? "Generate with AI" : "Generate with AI (Sign in or add a key)"}</span>
                   </button>
                 </div>
               </div>
@@ -1791,6 +1824,26 @@ const App: React.FC = () => {
           onClose={() => setShowAuthModal(false)}
           onSuccess={() => setShowAuthModal(false)}
         />
+      )}
+
+      {managedAiLimit && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/70 p-4">
+          <section ref={managedAiDialogRef} role="dialog" aria-modal="true" aria-labelledby="managed-ai-limit-title" className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">Gemini access</p>
+            <h2 id="managed-ai-limit-title" className="mt-2 text-xl font-semibold text-slate-100">
+              {managedAiLimit === 'TURN_ALLOWANCE_EXHAUSTED' ? 'Your included AI turns are used' : 'Included AI capacity is temporarily full'}
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-slate-300">
+              {managedAiLimit === 'TURN_ALLOWANCE_EXHAUSTED'
+                ? 'Your account has used its 10 lifetime included AI turns. Your conversation and workspace are still here. Add your own Gemini API key to continue.'
+                : 'The owner-funded Gemini limit has been reached for this month. Your conversation and workspace are preserved. You can continue with your own Gemini API key.'}
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={() => setManagedAiLimit(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Later</button>
+              <button type="button" onClick={() => { setManagedAiLimit(null); setView('settings'); }} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">Open Gemini settings</button>
+            </div>
+          </section>
+        </div>
       )}
 
       <CommandPalette onSendToChat={text => { const draft = useStore.getState().getUnsentDraft(useStore.getState().activeBranchId); setInput(draft ? draft + '\n' + text : text); setView('chat'); requestAnimationFrame(() => chatInputRef.current?.focus()); }} />

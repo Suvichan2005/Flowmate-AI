@@ -13,6 +13,7 @@
 // VITE_FIREBASE_MEASUREMENT_ID=your_measurement_id
 
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
+import { getToken as getAppCheckToken, initializeAppCheck, ReCaptchaV3Provider, type AppCheck } from 'firebase/app-check';
 import {
     getAuth,
     signInWithEmailAndPassword,
@@ -64,12 +65,26 @@ let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let db: Firestore | null = null;
 let googleProvider: GoogleAuthProvider | null = null;
+let appCheck: AppCheck | null = null;
 
 if (hasValidConfig) {
     if (getApps().length === 0) {
         app = initializeApp(firebaseConfig);
     } else {
         app = getApps()[0];
+    }
+
+    // Initialize App Check before accessing Firebase services when configured.
+    const appCheckSiteKey = import.meta.env.VITE_FIREBASE_APPCHECK_SITE_KEY;
+    if (appCheckSiteKey && typeof window !== 'undefined') {
+        try {
+            appCheck = initializeAppCheck(app, {
+                provider: new ReCaptchaV3Provider(appCheckSiteKey),
+                isTokenAutoRefreshEnabled: true,
+            });
+        } catch {
+            appCheck = null;
+        }
     }
 
     // Export services
@@ -91,11 +106,19 @@ if (hasValidConfig) {
     // Request Google Calendar access scope
     googleProvider.addScope('https://www.googleapis.com/auth/calendar');
     googleProvider.addScope('https://www.googleapis.com/auth/calendar.events');
+
 } else {
     console.warn('[Firebase] Configuration incomplete - Firebase features disabled');
 }
 
 export { auth, db };
+
+/** Returns a short-lived App Check token when this app has been configured. */
+export const getFirebaseAppCheckToken = async (): Promise<string | null> => {
+    if (!appCheck) return null;
+    try { return (await getAppCheckToken(appCheck, false)).token; }
+    catch { return null; }
+};
 
 // Store the access token for Calendar API (with localStorage persistence + expiry)
 const GOOGLE_TOKEN_KEY = 'flowmate_google_calendar_token';
