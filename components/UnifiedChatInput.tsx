@@ -1,13 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Paperclip, Mic, MicOff, Send, X, Image, Loader2 } from 'lucide-react';
+import { Paperclip, Mic, MicOff, Send, X, Image, Loader2, Square } from 'lucide-react';
 import { sanitizeUserInput } from '../utils/validation';
+import { hasAiApiKey } from '../services/ai/client';
 
 interface UnifiedChatInputProps {
     value?: string;
     onChange?: (value: string) => void;
-    onSend: (message: string, attachment?: string | null) => void;
+    onSend: (message: string, attachment?: string | null) => boolean | void;
     onAttach?: (file: File) => void;
     onLiveVoice?: () => void;
+    onStop?: () => void;
+    isStreaming?: boolean;
+    queueCount?: number;
     loading?: boolean;
     placeholder?: string;
     attachment?: string | null;
@@ -19,16 +23,52 @@ interface UnifiedChatInputProps {
 /**
  * Unified Chat Input - ChatGPT-style input with:
  * - Attachment button on left
- * - Auto-expanding textarea in center
+ * - Auto-expanding textarea in center (non-blocking composer)
  * - Mic button (starts Gemini Live session or fallback STT)
- * - Send button on right (always visible on desktop, shown when has content on mobile)
+ * - Stop / Send / Queue button on right
  */
+interface SpeechRecognitionEventLike {
+    resultIndex: number;
+    results: {
+        length: number;
+        [index: number]: {
+            isFinal: boolean;
+            [index: number]: {
+                transcript: string;
+            };
+        };
+    };
+}
+
+interface SpeechRecognitionErrorEventLike {
+    error: string;
+}
+
+interface SpeechRecognitionLike {
+    continuous: boolean;
+    interimResults: boolean;
+    lang: string;
+    onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+    onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+    onend: (() => void) | null;
+    start: () => void;
+    stop: () => void;
+}
+
+type WindowWithSpeech = Window & typeof globalThis & {
+    SpeechRecognition?: new () => SpeechRecognitionLike;
+    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+};
+
 const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
     value,
     onChange,
     onSend,
     onAttach,
     onLiveVoice,
+    onStop,
+    isStreaming = false,
+    queueCount = 0,
     loading = false,
     placeholder = "Message...",
     attachment = null,
@@ -42,7 +82,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
     const [speechSupported, setSpeechSupported] = useState(false);
     const localTextareaRef = useRef<HTMLTextAreaElement>(null);
     const textareaRef = externalTextareaRef || localTextareaRef;
-    const recognitionRef = useRef<any>(null);
+    const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const updateInput = (newVal: string) => {
@@ -54,7 +94,8 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
 
     // Check for Web Speech API support
     useEffect(() => {
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        const win = window as unknown as WindowWithSpeech;
+        const SpeechRecognition = win.SpeechRecognition || win.webkitSpeechRecognition;
         setSpeechSupported(!!SpeechRecognition);
 
         if (SpeechRecognition) {
@@ -63,7 +104,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
             recognitionRef.current.interimResults = true;
             recognitionRef.current.lang = 'en-US';
 
-            recognitionRef.current.onresult = (event: any) => {
+            recognitionRef.current.onresult = (event: SpeechRecognitionEventLike) => {
                 let interimTranscript = '';
                 let finalTranscript = '';
 
@@ -81,7 +122,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                 }
             };
 
-            recognitionRef.current.onerror = (event: any) => {
+            recognitionRef.current.onerror = (event: SpeechRecognitionErrorEventLike) => {
                 console.error('Speech recognition error:', event.error);
                 setIsListening(false);
             };
@@ -114,7 +155,8 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
         // Sanitize user input before sending to AI
         const sanitizedInput = sanitizeUserInput(trimmedInput);
         
-        onSend(sanitizedInput, attachment);
+        const admitted = onSend(sanitizedInput, attachment);
+        if (admitted === false) return;
         updateInput('');
 
         if (textareaRef.current) {
@@ -218,6 +260,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
 
                 {/* Textarea - Properly aligned */}
                 <textarea
+                    aria-label="Message Flowmate"
                     ref={textareaRef}
                     value={input}
                     onChange={(e) => updateInput(e.target.value)}
@@ -238,7 +281,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                         leading-relaxed
                         self-center
                     `}
-                    disabled={loading}
+                    disabled={false}
                     style={{ lineHeight: '1.5' }}
                 />
 
@@ -254,14 +297,16 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                                 rounded-xl
                                 transition-all duration-150
                                 active:scale-95
-                                text-indigo-400 hover:text-indigo-300 hover:bg-indigo-600/20
+                                ${hasAiApiKey()
+                                    ? 'text-indigo-400 hover:text-indigo-300 hover:bg-indigo-600/20'
+                                    : 'text-slate-500 hover:text-slate-400 hover:bg-slate-800/40'}
                                 relative group
                             `}
-                            title="Start Gemini Live Voice Session"
-                            aria-label="Start Gemini Live Voice Session"
+                            title={hasAiApiKey() ? "Start Gemini Live Voice Session" : "Gemini voice requires configuration in Settings"}
+                            aria-label={hasAiApiKey() ? "Start Gemini Live Voice Session" : "Gemini Live Voice unavailable without API key"}
                         >
                             <Mic size={isMobile ? 18 : 20} />
-                            <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                            {hasAiApiKey() && <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />}
                         </button>
                     )}
 
@@ -286,25 +331,56 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                         </button>
                     )}
 
-                    {/* Send Button - Always visible, styled nicely */}
-                    {(!isMobile || hasContent) && (
+                    {/* Stop / Send / Queue Button */}
+                    {(loading || isStreaming) && !hasContent && onStop ? (
                         <button
-                            type="submit"
-                            disabled={!hasContent || loading}
+                            type="button"
+                            onClick={onStop}
                             className={`
                                 ${isMobile ? 'p-2' : 'p-2.5'}
                                 rounded-xl
                                 transition-all duration-150
                                 active:scale-95
-                                ${hasContent && !loading
-                                    ? 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/30'
-                                    : 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
-                                }
+                                bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 hover:text-rose-300
+                                border border-rose-500/40
+                                shadow-lg shadow-rose-500/10
                             `}
-                            title="Send message"
+                            title="Stop generating"
+                            aria-label="Stop generating"
                         >
-                            {loading ? <Loader2 size={isMobile ? 18 : 20} className="animate-spin" /> : <Send size={isMobile ? 18 : 20} />}
+                            <Square size={isMobile ? 16 : 18} className="fill-current" />
                         </button>
+                    ) : (
+                        (!isMobile || hasContent) && (
+                            <button
+                                type="submit"
+                                disabled={!hasContent}
+                                className={`
+                                    ${isMobile ? 'p-2' : 'p-2.5'}
+                                    rounded-xl
+                                    transition-all duration-150
+                                    active:scale-95
+                                    relative
+                                    ${hasContent
+                                        ? 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/30'
+                                        : 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
+                                    }
+                                `}
+                                title={(loading || isStreaming) ? "Queue message" : "Send message"}
+                                aria-label={(loading || isStreaming) ? "Queue message" : "Send message"}
+                            >
+                                {(loading || isStreaming) && !hasContent ? (
+                                    <Loader2 size={isMobile ? 18 : 20} className="animate-spin" />
+                                ) : (
+                                    <Send size={isMobile ? 18 : 20} />
+                                )}
+                                {queueCount > 0 && (
+                                    <span className="absolute -top-1 -right-1 bg-amber-500 text-slate-950 font-bold rounded-full w-4 h-4 flex items-center justify-center text-[10px]">
+                                        {queueCount}
+                                    </span>
+                                )}
+                            </button>
+                        )
                     )}
                 </div>
             </div>

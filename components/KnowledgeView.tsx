@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useStore } from '../store';
+import { getActiveEntities } from '../store/helpers';
 import { EntityKind, EntityStatus } from '../types';
 import { queryKnowledgeBase } from '../services/ai';
 import { Library, Search, Plus, Sparkles, X, ArrowRight, Loader2, Filter, FileText, BookOpen, Folder, Target, Calendar, CheckSquare, Square, Eye, EyeOff, User } from 'lucide-react';
@@ -8,7 +9,8 @@ import MarkdownText from './MarkdownText';
 type FilterKind = 'all' | EntityKind.PERSON | EntityKind.TASK | EntityKind.PROJECT | EntityKind.GOAL | EntityKind.EVENT;
 
 const KnowledgeView: React.FC = () => {
-    const { entities = [], relationships = [], universalTags = [], selectEntity, applyOperations, selectedEntityId, knowledgeInitialFilters } = useStore();
+    const { entities: rawEntities = [], relationships = [], universalTags = [], selectEntity, applyOperations, selectedEntityId, knowledgeInitialFilters } = useStore();
+    const entities = useMemo(() => getActiveEntities(rawEntities), [rawEntities]);
     const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
 
     // UI State
@@ -29,8 +31,10 @@ const KnowledgeView: React.FC = () => {
     // Apply initial filters from navigation
     useEffect(() => {
         if (knowledgeInitialFilters && knowledgeInitialFilters.length > 0) {
-            setKindFilters(new Set(knowledgeInitialFilters as FilterKind[]));
-            // Clear the initial filters after applying
+            const supportedFilters = knowledgeInitialFilters.filter(
+                (filter): filter is FilterKind => filter === 'all' || [EntityKind.PERSON, EntityKind.TASK, EntityKind.PROJECT, EntityKind.GOAL, EntityKind.EVENT].includes(filter as EntityKind)
+            );
+            if (supportedFilters.length > 0) setKindFilters(new Set(supportedFilters));
             useStore.setState({ knowledgeInitialFilters: null });
         }
     }, [knowledgeInitialFilters]);
@@ -253,7 +257,6 @@ const KnowledgeView: React.FC = () => {
             default: return 'text-slate-400 border-slate-700 bg-slate-800';
         }
     };
-
     return (
         <div className="flex-1 overflow-hidden bg-slate-950 flex flex-col h-full relative">
 
@@ -268,6 +271,7 @@ const KnowledgeView: React.FC = () => {
                                 <Library size={18} />
                             </div>
                             <h1 className="text-xl font-bold text-slate-100 hidden md:block">Library</h1>
+
                         </div>
 
                         {/* Search Bar */}

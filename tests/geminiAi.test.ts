@@ -10,8 +10,10 @@
  * 6. Multi-modal and rolling history context creation
  */
 
-import { describe, it, expect } from 'vitest';
-import { DEFAULT_MODEL, GEMINI_RETRY_CONFIG } from '../services/ai/client';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { useStore } from '../store';
+import { User } from '../services/firebase';
+import { DEFAULT_MODEL, AI_MODELS, GEMINI_RETRY_CONFIG } from '../services/ai/client';
 import { FLOWMATE_TOOLS } from '../services/ai/tools';
 import { dispatchToolCall, calculateRelevance } from '../services/ai/executors';
 import { buildBriefingPrompt, IMPROVEMENT_INSTRUCTIONS } from '../services/ai/prompts';
@@ -21,6 +23,14 @@ import { EntityKind, EntityStatus, Entity, Message } from '../types';
 describe('Gemini AI Model Configurations', () => {
     it('uses gemini-3.8-flash as the default text and tool orchestration model', () => {
         expect(DEFAULT_MODEL).toBe('gemini-3.8-flash');
+        expect(AI_MODELS.BALANCED).toBe('gemini-3.8-flash');
+    });
+
+    it('defines authoritative model IDs for all tiers', () => {
+        expect(AI_MODELS.FAST_LITE).toBe('gemini-3.5-flash-lite');
+        expect(AI_MODELS.BALANCED).toBe('gemini-3.8-flash');
+        expect(AI_MODELS.REASONING).toBe('gemini-3.1-pro-preview');
+        expect(AI_MODELS.LIVE).toBe('gemini-3.8-live');
     });
 
     it('has standard retry configuration with jitter and exponential backoff', () => {
@@ -31,19 +41,25 @@ describe('Gemini AI Model Configurations', () => {
 });
 
 describe('Gemini Tool Declarations (FLOWMATE_TOOLS)', () => {
-    it('bundles all 7 registered function declarations', () => {
+    it('bundles all 13 registered function declarations including greenfield query & reflect tools', () => {
         expect(FLOWMATE_TOOLS).toHaveLength(1);
         const decls = FLOWMATE_TOOLS[0].functionDeclarations;
         expect(decls).toBeDefined();
-        expect(decls?.length).toBe(7);
+        expect(decls?.length).toBe(13);
 
         const names = decls?.map(d => d.name);
+        expect(names).toContain('query_entities');
+        expect(names).toContain('reflect_schemas');
+        expect(names).toContain('query_commitment');
+        expect(names).toContain('configure_commitment');
+        expect(names).toContain('record_commitment_evidence');
         expect(names).toContain('read_calendar');
         expect(names).toContain('search_entities');
         expect(names).toContain('lookup_food_history');
         expect(names).toContain('get_productivity_stats');
         expect(names).toContain('lookup_goals');
         expect(names).toContain('lookup_habits');
+        expect(names).toContain('lookup_travel_route');
         expect(names).toContain('apply_changes');
     });
 
@@ -94,31 +110,62 @@ describe('Tool Executors Dispatch', () => {
         },
     ];
 
-    it('dispatches lookup_goals correctly against in-memory snapshot', () => {
-        const result = dispatchToolCall({ name: 'lookup_goals', args: { status: 'ACTIVE' } }, mockEntities);
+    beforeEach(() => {
+        useStore.setState({
+            currentUser: {
+                uid: 'gemini-test-user',
+                email: 'test@flowmate.ai',
+                displayName: 'Gemini Tester',
+            } as unknown as User,
+        });
+    });
+
+    it('dispatches lookup_goals correctly against in-memory snapshot', async () => {
+        const result = await dispatchToolCall({ name: 'lookup_goals', args: { status: 'ACTIVE' } }, mockEntities);
         expect(result.name).toBe('lookup_goals');
         expect(result.response.result).toHaveLength(1);
         expect(result.response.result[0].title).toBe('Learn AI Engineering');
         expect(result.response.result[0].progress).toBe(45);
     });
 
-    it('dispatches lookup_habits correctly with streaks', () => {
-        const result = dispatchToolCall({ name: 'lookup_habits', args: { include_streaks: true } }, mockEntities);
+    it('dispatches lookup_habits correctly with streaks', async () => {
+        const result = await dispatchToolCall({ name: 'lookup_habits', args: { include_streaks: true } }, mockEntities);
         expect(result.name).toBe('lookup_habits');
         expect(result.response.result).toHaveLength(1);
         expect(result.response.result[0].title).toBe('Daily Code Practice');
         expect(result.response.result[0].streak).toBe(14);
     });
 
-    it('dispatches search_entities by query term', () => {
-        const result = dispatchToolCall({ name: 'search_entities', args: { query: 'Engineering' } }, mockEntities);
+    it('dispatches search_entities by query term', async () => {
+        const result = await dispatchToolCall({ name: 'search_entities', args: { query: 'Engineering' } }, mockEntities);
         expect(result.name).toBe('search_entities');
         expect(result.response.result).toHaveLength(1);
         expect(result.response.result[0].id).toBe('g-1');
     });
 
-    it('returns error response for unregistered tools', () => {
-        const result = dispatchToolCall({ name: 'unknown_tool', args: {} }, mockEntities);
+    it('dispatches reflect_schemas correctly', async () => {
+        const result = await dispatchToolCall({ name: 'reflect_schemas', args: { scope: 'system' } }, mockEntities);
+        expect(result.name).toBe('reflect_schemas');
+        expect(result.response.result).toBeDefined();
+        const schemas = result.response.result?.schemas;
+        expect(Array.isArray(schemas)).toBe(true);
+        expect(schemas!.length).toBeGreaterThan(0);
+        expect(schemas!.some((s: { id?: string }) => s.id === 'system/task')).toBe(true);
+    });
+
+    it('dispatches query_entities with query and schema filter', async () => {
+        const result = await dispatchToolCall({ name: 'query_entities', args: { query: 'Engineering', schema_id: 'system/goal' } }, mockEntities);
+        expect(result.name).toBe('query_entities');
+        expect(result.response.result).toBeDefined();
+        expect(result.response.result?.total_matched).toBe(1);
+        const entities = result.response.result?.entities;
+        expect(entities).toBeDefined();
+        expect(entities![0].id).toBe('g-1');
+        expect(entities![0].schema_id).toBe('system/goal');
+    });
+
+    it('returns error response for unregistered tools', async () => {
+        const result = await dispatchToolCall({ name: 'unknown_tool', args: {} }, mockEntities);
         expect(result.name).toBe('unknown_tool');
         expect(result.response.error).toBeDefined();
     });

@@ -26,7 +26,7 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ entities }) => {
   const grouped = useMemo(() => {
     const groups: Record<string, Entity[]> = {};
     columns.forEach(c => groups[c.id] = []);
-    entities.forEach(e => {
+    entities.filter(e => !e.metadata?.deleted).forEach(e => {
         if (groups[e.status]) {
             groups[e.status].push(e);
         } else if (e.status !== EntityStatus.CANCELED && e.status !== EntityStatus.ARCHIVED) {

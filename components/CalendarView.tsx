@@ -1,89 +1,25 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../store';
+import { getActiveEntities } from '../store/helpers';
 import { EntityKind, EntityStatus, Entity, RecurrenceType } from '../types';
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, CheckSquare, Clock, Plus, Grid3X3, List, CalendarDays, LayoutGrid, Repeat, RefreshCw, Cloud, Activity } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, CheckSquare, Clock, Plus, Grid3X3, List, CalendarDays, LayoutGrid, Repeat, RefreshCw, Cloud, Activity, AlertTriangle } from 'lucide-react';
 import CreateEntityModal from './CreateEntityModal';
 import { GoogleCalendarAdapter, GoogleAuthError } from '../services/googleSync';
 import { refreshGoogleCalendarToken } from '../services/firebase';
 import { v4 as uuidv4 } from 'uuid';
 import { SkeletonCalendar } from './Skeleton';
 import EmptyState from './EmptyState';
+import { parseCalendarDate } from '../utils/calendarDates';
+import { getNormalizedEventInterval, findCollidingEventIds, matchesRecurrence } from '../utils/calendarConflicts';
 
 type ViewMode = 'month' | 'week' | 'day' | 'agenda' | 'history';
 
 const PIXELS_PER_HOUR = 60; // 1px per minute usually works well
 const GRID_HEIGHT = 24 * PIXELS_PER_HOUR;
 
-// Check if a target date matches a recurring pattern from original date
-// Supports both simple recurrence (DAILY/WEEKLY/MONTHLY/YEARLY) and RRULE-style patterns
-const matchesRecurrence = (originalDate: Date, targetDate: Date, recurrence: RecurrenceType, rrule?: string): boolean => {
-    if (!recurrence && !rrule) return false;
-
-    // Compare dates only (not timestamps)
-    const origDateOnly = new Date(originalDate.getFullYear(), originalDate.getMonth(), originalDate.getDate());
-    const targetDateOnly = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
-
-    const origDay = originalDate.getDate();
-    const origMonth = originalDate.getMonth();
-    const origDayOfWeek = originalDate.getDay();
-
-    // If we have RRULE metadata, parse it for complex patterns
-    if (rrule) {
-        // Parse BYDAY for patterns like "2SA" (2nd Saturday), "1MO" (1st Monday)
-        const bydayMatch = rrule.match(/BYDAY=(-?\d)?(\w{2})/);
-        if (bydayMatch) {
-            const weekNum = parseInt(bydayMatch[1] || '0');
-            const dayCode = bydayMatch[2];
-            const dayMap: Record<string, number> = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
-            const targetDayOfWeek = dayMap[dayCode];
-            const targetWeekOfMonth = Math.ceil(targetDate.getDate() / 7);
-
-            if (targetDayOfWeek !== undefined && targetDate.getDay() === targetDayOfWeek) {
-                if (weekNum !== 0) {
-                    // Nth weekday of month (e.g., 2nd Saturday)
-                    if (weekNum > 0 && targetWeekOfMonth === weekNum) {
-                        return true;
-                    }
-                    // Negative means from end (-1 = last)
-                    if (weekNum < 0) {
-                        const lastDayOfMonth = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0).getDate();
-                        const weeksFromEnd = Math.ceil((lastDayOfMonth - targetDate.getDate() + 1) / 7);
-                        if (weeksFromEnd === Math.abs(weekNum)) return true;
-                    }
-                } else {
-                    // Every occurrence of this weekday
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        // Parse INTERVAL for "every N weeks/months"
-        const intervalMatch = rrule.match(/INTERVAL=(\d+)/);
-        if (intervalMatch && recurrence === 'WEEKLY') {
-            const interval = parseInt(intervalMatch[1]);
-            const weeksDiff = Math.floor((targetDateOnly.getTime() - origDateOnly.getTime()) / (7 * 24 * 60 * 60 * 1000));
-            return weeksDiff >= 0 && weeksDiff % interval === 0 && targetDate.getDay() === origDayOfWeek;
-        }
-    }
-
-    // Simple recurrence patterns
-    switch (recurrence) {
-        case 'DAILY':
-            return targetDateOnly >= origDateOnly;
-        case 'WEEKLY':
-            return targetDateOnly >= origDateOnly && targetDate.getDay() === origDayOfWeek;
-        case 'MONTHLY':
-            return targetDate.getDate() === origDay;
-        case 'YEARLY':
-            return targetDate.getDate() === origDay && targetDate.getMonth() === origMonth;
-        default:
-            return false;
-    }
-};
-
 const CalendarView: React.FC = () => {
-    const { entities, selectEntity, applyOperations, addToast, calendarInitialView } = useStore();
+    const { entities: rawEntities, selectEntity, applyOperations, addToast, calendarInitialView } = useStore();
+    const entities = useMemo(() => getActiveEntities(rawEntities), [rawEntities]);
     const [currentDate, setCurrentDate] = useState(new Date());
     const [createModalDate, setCreateModalDate] = useState<string | null>(null);
     const [createModalStartTime, setCreateModalStartTime] = useState<string | null>(null);
@@ -94,6 +30,7 @@ const CalendarView: React.FC = () => {
     const [showLogs, setShowLogs] = useState(true);
     const [isSyncing, setIsSyncing] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
+    const collidingEventIds = useMemo(() => findCollidingEventIds(entities), [entities]);
 
     // Initial scroll to 8 AM
     useEffect(() => {
@@ -174,19 +111,24 @@ const CalendarView: React.FC = () => {
 
             // Extract metadata.activity_log entries as pseudo-ACTIVITY entities
             if (showLogs && e.metadata?.activity_log && Array.isArray(e.metadata.activity_log)) {
-                e.metadata.activity_log.forEach((log: any, idx: number) => {
-                    if (log.timestamp) {
+                e.metadata.activity_log.forEach((rawLog: unknown, idx: number) => {
+                    const log = typeof rawLog === 'object' && rawLog !== null ? (rawLog as Record<string, unknown>) : {};
+                    const timestamp = typeof log.timestamp === 'string' ? log.timestamp : undefined;
+                    if (timestamp) {
+                        const title = typeof log.title === 'string' ? log.title : (typeof log.note === 'string' ? log.note : `Log: ${e.title}`);
+                        const desc = typeof log.note === 'string' ? log.note : (typeof log.description === 'string' ? log.description : null);
+                        const dur = typeof log.duration_minutes === 'number' ? log.duration_minutes : null;
                         items.push({
                             id: `${e.id}-log-${idx}`,
                             kind: EntityKind.ACTIVITY,
-                            title: log.title || log.note || `Log: ${e.title}`,
-                            description: log.note || log.description || null,
+                            title,
+                            description: desc,
                             status: EntityStatus.COMPLETED,
                             priority: 1,
-                            start_time: log.timestamp,
+                            start_time: timestamp,
                             end_time: null,
                             deadline: null,
-                            duration_minutes: log.duration_minutes || null,
+                            duration_minutes: dur,
                             recurrence: null,
                             metadata: {
                                 parent_title: e.title,
@@ -194,8 +136,8 @@ const CalendarView: React.FC = () => {
                                 productivity: log.productivity || e.metadata?.productivity,
                                 color_hex: log.color_hex || e.metadata?.color_hex
                             },
-                            created_at: log.timestamp,
-                            updated_at: log.timestamp,
+                            created_at: timestamp,
+                            updated_at: timestamp,
                             canonical_tags: [],
                             parent_id: e.id
                         });
@@ -232,6 +174,10 @@ const CalendarView: React.FC = () => {
 
     // Google Calendar Sync (2-WAY: Import from GCal + Export to GCal)
     const handleGoogleSync = async () => {
+        if (useStore.getState().isDemoMode) {
+            addToast('Google Calendar sync is blocked while the isolated sample workspace is open.', 'info');
+            return;
+        }
         setIsSyncing(true);
         const settings = useStore.getState().settings;
         let importCount = 0;
@@ -389,13 +335,13 @@ const CalendarView: React.FC = () => {
             // Get date for this item
             let itemDate: Date | null = null;
             if (e.kind === EntityKind.EVENT && e.start_time) {
-                itemDate = new Date(e.start_time);
+                itemDate = parseCalendarDate(e.start_time);
             } else if (e.kind === EntityKind.TASK) {
                 // Tasks can use start_time (for rrule tasks) or deadline
                 if (e.start_time) {
-                    itemDate = new Date(e.start_time);
+                    itemDate = parseCalendarDate(e.start_time);
                 } else if (e.deadline) {
-                    itemDate = new Date(e.deadline);
+                    itemDate = parseCalendarDate(e.deadline);
                 }
             } else if (e.kind === EntityKind.ACTIVITY) {
                 // Activities use start_time or fall back to created_at
@@ -413,18 +359,12 @@ const CalendarView: React.FC = () => {
             // Check for multi-day events: date is between start and end (exclusive of start, inclusive of end)
             // Only check if event actually spans multiple days
             else if (e.kind === EntityKind.EVENT && e.start_time && e.end_time) {
-                const startDate = new Date(e.start_time);
-                const endDate = new Date(e.end_time);
+                const interval = getNormalizedEventInterval(e);
+                const targetEnd = new Date(targetDateOnly);
+                targetEnd.setDate(targetEnd.getDate() + 1);
 
-                // Convert to date-only for comparison (ignore time)
-                const eventStartDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-                const eventEndDateOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
-
-                // Only process as multi-day if it actually spans multiple days
-                const isMultiDay = eventEndDateOnly > eventStartDateOnly;
-
-                // Check if target date is after start date and on or before end date
-                if (isMultiDay && targetDateOnly > eventStartDateOnly && targetDateOnly <= eventEndDateOnly) {
+                // An exclusive midnight end must not add an extra occupied day.
+                if (interval && interval.startMs < targetEnd.getTime() && interval.endMs > targetDateOnly.getTime()) {
                     results.push({ entity: e, isRecurring: false, isSpanning: true });
                 }
                 // If not a multi-day match, check for recurrence
@@ -468,35 +408,61 @@ const CalendarView: React.FC = () => {
         }
     };
 
-    const renderEventPill = (item: Entity, isRecurring: boolean = false, compact: boolean = false) => {
+    const renderEventPill = (item: Entity, isRecurring: boolean = false, compact: boolean = false, isSpanning: boolean = false) => {
         const customColor = item.metadata?.color_hex;
         const isEvent = item.kind === EntityKind.EVENT;
+        const hasConflict = isEvent && collidingEventIds.has(item.id);
+        const isAllDay = isEvent && Boolean(item.metadata?.is_all_day);
 
         // Use custom color if available, otherwise default colors
         const colorStyle = customColor ? {
             backgroundColor: `${customColor}20`,
-            borderColor: customColor,
+            borderColor: hasConflict ? '#f59e0b' : customColor,
             color: customColor
         } : undefined;
 
+        const conflictClasses = hasConflict
+            ? 'ring-1 ring-amber-500/80 bg-amber-500/15 text-amber-200 border-amber-500 hover:bg-amber-500/25'
+            : '';
+
+        const spanningClasses = isSpanning
+            ? 'border-dashed opacity-85'
+            : '';
+
+        const titleText = `${item.title}${hasConflict ? ' ⚠️ [Schedule Conflict]' : ''}${isSpanning ? ' (continues)' : ''}${isRecurring ? ' (recurring)' : ''}${isAllDay ? ' (all-day)' : ''}`;
+
         return (
             <div
-                key={`${item.id}-${isRecurring ? 'r' : 'o'}`}
-                draggable={!isRecurring}
-                onDragStart={!isRecurring ? (e) => handleDragStart(e, item.id) : undefined}
+                key={`${item.id}-${isRecurring ? 'r' : 'o'}${isSpanning ? '-span' : ''}`}
+                draggable={!isRecurring && !isSpanning}
+                onDragStart={!isRecurring && !isSpanning ? (e) => handleDragStart(e, item.id) : undefined}
                 onClick={(e) => { e.stopPropagation(); selectEntity(item.parent_id || item.id); }}
-                className={`text-[10px] px-1.5 py-0.5 rounded border-l-2 truncate cursor-pointer transition-colors flex items-center gap-1 ${!customColor ? (isEvent
-                    ? 'bg-indigo-600/20 text-indigo-200 border-indigo-500 hover:bg-indigo-600/40'
-                    : item.kind === EntityKind.ACTIVITY
-                        ? 'bg-purple-600/20 text-purple-200 border-purple-500 hover:bg-purple-600/40'
-                        : 'bg-emerald-600/20 text-emerald-200 border-emerald-500 hover:bg-emerald-600/40')
-                    : 'hover:opacity-80'
-                    } ${draggedId === item.id ? 'opacity-50' : ''} ${isRecurring ? 'opacity-75' : ''} ${!isRecurring ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                className={`text-[10px] px-1.5 py-0.5 rounded border-l-2 truncate cursor-pointer transition-colors flex items-center gap-1 ${
+                    hasConflict
+                        ? conflictClasses
+                        : !customColor ? (isEvent
+                            ? 'bg-indigo-600/20 text-indigo-200 border-indigo-500 hover:bg-indigo-600/40'
+                            : item.kind === EntityKind.ACTIVITY
+                                ? 'bg-purple-600/20 text-purple-200 border-purple-500 hover:bg-purple-600/40'
+                                : 'bg-emerald-600/20 text-emerald-200 border-emerald-500 hover:bg-emerald-600/40')
+                        : 'hover:opacity-80'
+                } ${spanningClasses} ${draggedId === item.id ? 'opacity-50' : ''} ${isRecurring ? 'opacity-75' : ''} ${!isRecurring && !isSpanning ? 'cursor-grab active:cursor-grabbing' : ''}`}
                 style={colorStyle}
-                title={`${item.title}${isRecurring ? ' (recurring)' : ''}`}
+                title={titleText}
+                data-testid={`month-event-pill-${item.id}`}
             >
-                {isEvent ? <Clock size={8} /> : item.kind === EntityKind.ACTIVITY ? <Activity size={8} /> : <CheckSquare size={8} />}
-                {isRecurring && <Repeat size={7} className="text-amber-400" />}
+                {hasConflict ? (
+                    <AlertTriangle size={8} className="text-amber-400 shrink-0" data-testid={`month-conflict-icon-${item.id}`} />
+                ) : isAllDay ? (
+                    <CalendarIcon size={8} className="shrink-0" />
+                ) : isEvent ? (
+                    <Clock size={8} className="shrink-0" />
+                ) : item.kind === EntityKind.ACTIVITY ? (
+                    <Activity size={8} className="shrink-0" />
+                ) : (
+                    <CheckSquare size={8} className="shrink-0" />
+                )}
+                {isRecurring && <Repeat size={7} className="text-amber-400 shrink-0" />}
                 {!compact && <span className="truncate">{item.title}</span>}
                 {compact && <span className="truncate max-w-[50px]">{item.title}</span>}
             </div>
@@ -554,11 +520,14 @@ const CalendarView: React.FC = () => {
         // Min height 30px for visibility, max 24 hours (1440 min)
         const height = Math.min(1440, Math.max(30, durationMin));
 
+        // Read-only calendar collision detection using unified interval contract
+        const hasConflict = item.kind === EntityKind.EVENT && collidingEventIds.has(item.id);
+
         // Custom color support
         const customColor = item.metadata?.color_hex;
         const colorStyle = customColor ? {
             backgroundColor: `${customColor}30`,
-            borderColor: customColor,
+            borderColor: hasConflict ? '#f59e0b' : customColor,
         } : undefined;
 
         return (
@@ -575,17 +544,24 @@ const CalendarView: React.FC = () => {
                     ...colorStyle
                 }}
                 className={`absolute rounded border-l-2 cursor-pointer transition-all flex flex-col p-1 overflow-hidden z-10 ${!customColor ? (item.kind === EntityKind.EVENT
-                    ? 'bg-indigo-600/30 text-indigo-100 border-indigo-500 hover:bg-indigo-600/50 hover:z-20 shadow-sm'
+                    ? (hasConflict ? 'bg-indigo-600/35 text-indigo-100 border-amber-400 hover:bg-indigo-600/50 hover:z-20 shadow-md ring-1 ring-amber-400/40' : 'bg-indigo-600/30 text-indigo-100 border-indigo-500 hover:bg-indigo-600/50 hover:z-20 shadow-sm')
                     : item.kind === EntityKind.ACTIVITY
                         ? 'bg-purple-600/30 text-purple-100 border-purple-500 hover:bg-purple-600/50 hover:z-20 shadow-sm'
                         : 'bg-emerald-600/30 text-emerald-100 border-emerald-500 hover:bg-emerald-600/50 hover:z-20 shadow-sm')
                     : 'text-white hover:opacity-80 hover:z-20 shadow-sm'
                     } ${draggedId === item.id ? 'opacity-50' : ''} ${isSpanning ? 'opacity-75 border-dashed' : ''}`}
-                title={`${item.title}${isSpanning ? ' (continues)' : ''}\n${displayStartTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${displayEndTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                title={`${hasConflict ? '⚠️ [Schedule Conflict] ' : ''}${item.title}${isSpanning ? ' (continues)' : ''}\n${displayStartTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${displayEndTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+                data-testid={`calendar-event-${item.id}`}
             >
                 <div className="flex items-center gap-1 font-semibold text-[10px] leading-tight">
                     {item.kind === EntityKind.EVENT ? <Clock size={8} /> : item.kind === EntityKind.ACTIVITY ? <Activity size={8} /> : <CheckSquare size={8} />}
                     <span className="truncate">{item.title}{isSpanning ? ' ⋯' : ''}</span>
+                    {hasConflict && (
+                        <span className="text-[7px] bg-amber-500/30 border border-amber-500/50 text-amber-300 px-0.5 rounded font-bold shrink-0" title="Schedule Collision">⚠️</span>
+                    )}
+                    {(item.scheduling_certainty === 'tentative' || item.metadata?.scheduling_certainty === 'tentative') && (
+                        <span className="text-[7px] bg-amber-500/30 text-amber-300 px-0.5 rounded font-normal shrink-0" title="Tentative">?</span>
+                    )}
                 </div>
                 {height > 40 && (
                     <div className="text-[9px] opacity-80 truncate mt-0.5">
@@ -719,6 +695,7 @@ const CalendarView: React.FC = () => {
                         const date = new Date(year, month, day);
                         const isToday = isCurrentMonth && day === now.getDate();
                         const dayItems = getItemsForDate(date);
+                        const hasDayConflict = dayItems.some(({ entity }) => entity.kind === EntityKind.EVENT && collidingEventIds.has(entity.id));
 
                         return (
                             <div
@@ -732,11 +709,21 @@ const CalendarView: React.FC = () => {
                                 onDrop={(e) => handleDrop(e, date)}
                                 className={`bg-slate-950 border-r border-b border-slate-800 p-1.5 min-h-[80px] md:min-h-[100px] relative hover:bg-slate-900 transition-colors group flex flex-col cursor-pointer ${isToday ? 'bg-slate-900/80' : ''
                                     } ${draggedId ? 'hover:bg-indigo-500/10' : ''}`}
+                                data-testid={`month-day-cell-${day}`}
                             >
                                 <div className="flex justify-between items-start">
-                                    <span className={`text-xs font-medium ${isToday ? 'text-indigo-400 bg-indigo-500/10 w-6 h-6 flex items-center justify-center rounded-full' : 'text-slate-500'}`}>
-                                        {day}
-                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                        <span className={`text-xs font-medium ${isToday ? 'text-indigo-400 bg-indigo-500/10 w-6 h-6 flex items-center justify-center rounded-full' : 'text-slate-500'}`}>
+                                            {day}
+                                        </span>
+                                        {hasDayConflict && (
+                                            <span
+                                                data-testid={`month-day-conflict-dot-${day}`}
+                                                className="w-1.5 h-1.5 rounded-full bg-amber-400 ring-2 ring-amber-500/30 animate-pulse"
+                                                title="Schedule conflict on this day"
+                                            />
+                                        )}
+                                    </div>
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation(); // Don't trigger day view
@@ -749,7 +736,7 @@ const CalendarView: React.FC = () => {
                                     </button>
                                 </div>
                                 <div className="space-y-0.5 overflow-hidden flex-1 mt-1">
-                                    {dayItems.slice(0, 3).map(({ entity, isRecurring }) => renderEventPill(entity, isRecurring, true))}
+                                    {dayItems.slice(0, 3).map(({ entity, isRecurring, isSpanning }) => renderEventPill(entity, isRecurring, true, Boolean(isSpanning)))}
                                     {dayItems.length > 3 && <div className="text-[9px] text-slate-500">+{dayItems.length - 3} more</div>}
                                 </div>
                             </div>
@@ -930,36 +917,49 @@ const CalendarView: React.FC = () => {
                                 </span>
                             </div>
                             <div className="divide-y divide-slate-800/50">
-                                {items.map(({ entity, isRecurring }) => (
-                                    <div
-                                        key={`${entity.id}-${isRecurring ? 'r' : 'o'}`}
-                                        onClick={() => selectEntity(entity.id)}
-                                        className="px-4 py-3 hover:bg-slate-900/50 cursor-pointer flex items-center gap-3 group"
-                                    >
-                                        <div className={`w-1 h-8 rounded ${entity.kind === EntityKind.EVENT ? 'bg-indigo-500' : 'bg-emerald-500'}`} />
-                                        <div className="flex-1 min-w-0">
-                                            <div className="font-medium text-slate-200 truncate flex items-center gap-1">
-                                                {entity.title}
-                                                {isRecurring && <Repeat size={10} className="text-amber-400" />}
-                                                <span className="opacity-0 group-hover:opacity-100 transition-opacity ml-auto text-xs text-indigo-400">Edit</span>
-                                            </div>
-                                            {(entity.start_time || entity.deadline) && (
-                                                <div className="text-xs text-slate-500 flex gap-2">
-                                                    <span>{new Date(entity.start_time || entity.deadline!).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' })}</span>
-                                                    {entity.end_time && (
-                                                        <>
-                                                            <span>→</span>
-                                                            <span>{new Date(entity.end_time).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' })}</span>
-                                                        </>
+                                {items.map(({ entity, isRecurring }) => {
+                                    // Check for schedule collisions in agenda view using unified interval contract
+                                    const isColliding = entity.kind === EntityKind.EVENT && collidingEventIds.has(entity.id);
+
+                                    return (
+                                        <div
+                                            key={`${entity.id}-${isRecurring ? 'r' : 'o'}`}
+                                            onClick={() => selectEntity(entity.id)}
+                                            className={`px-4 py-3 hover:bg-slate-900/50 cursor-pointer flex items-center gap-3 group ${isColliding ? 'bg-amber-950/20' : ''}`}
+                                            data-testid={`calendar-agenda-item-${entity.id}`}
+                                            title={isColliding ? `⚠️ [Schedule Conflict] ${entity.title}` : entity.title}
+                                        >
+                                            <div className={`w-1 h-8 rounded ${entity.kind === EntityKind.EVENT ? (isColliding ? 'bg-amber-500' : 'bg-indigo-500') : 'bg-emerald-500'}`} />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="font-medium text-slate-200 truncate flex items-center gap-1.5">
+                                                    <span>{entity.title}</span>
+                                                    {isColliding && (
+                                                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-0.5 font-semibold shrink-0" data-testid={`agenda-conflict-${entity.id}`}>
+                                                            <AlertTriangle size={10} className="text-amber-400" />
+                                                            Conflict
+                                                        </span>
                                                     )}
+                                                    {isRecurring && <Repeat size={10} className="text-amber-400" />}
+                                                    <span className="opacity-0 group-hover:opacity-100 transition-opacity ml-auto text-xs text-indigo-400">Edit</span>
                                                 </div>
-                                            )}
+                                                {(entity.start_time || entity.deadline) && (
+                                                    <div className="text-xs text-slate-500 flex gap-2">
+                                                        <span>{new Date(entity.start_time || entity.deadline!).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' })}</span>
+                                                        {entity.end_time && (
+                                                            <>
+                                                                <span>→</span>
+                                                                <span>{new Date(entity.end_time).toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit' })}</span>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <span className={`text-[10px] px-2 py-0.5 rounded ${entity.kind === EntityKind.EVENT ? 'bg-indigo-500/20 text-indigo-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
+                                                {entity.kind}
+                                            </span>
                                         </div>
-                                        <span className={`text-[10px] px-2 py-0.5 rounded ${entity.kind === EntityKind.EVENT ? 'bg-indigo-500/20 text-indigo-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
-                                            {entity.kind}
-                                        </span>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         </div>
                     ))

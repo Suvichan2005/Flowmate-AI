@@ -1,7 +1,8 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Entity, EntityKind, EntityStatus } from '../types';
 import { useStore } from '../store';
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, AlertTriangle } from 'lucide-react';
+import { findCollidingEventIds } from '../utils/calendarConflicts';
 
 interface TimelineViewProps {
   entities: Entity[];
@@ -16,12 +17,13 @@ const TimelineView: React.FC<TimelineViewProps> = ({ entities }) => {
   const [zoomLevel, setZoomLevel] = useState(1); // 0.5 to 2
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
+  const collidingEventIds = useMemo(() => findCollidingEventIds(entities), [entities]);
 
   // 1. Prepare Data
   const { processedEntities, startDate, totalDays } = useMemo(() => {
-    const validItems = entities.map(e => {
-        let start = e.start_time ? new Date(e.start_time) : new Date(e.created_at);
-        let end = e.deadline ? new Date(e.deadline) : e.end_time ? new Date(e.end_time) : null;
+    const validItems = entities.filter(e => e.start_time || e.end_time || e.deadline).map(e => {
+        let start = new Date((e.start_time || e.deadline || e.end_time)!);
+        let end = new Date((e.end_time || e.deadline || e.start_time)!);
         
         // If no end, assume 1 day duration
         if (!end) {
@@ -33,7 +35,8 @@ const TimelineView: React.FC<TimelineViewProps> = ({ entities }) => {
         if (end < start) end = start;
 
         return { ...e, _start: start, _end: end };
-    }).sort((a, b) => a._start.getTime() - b._start.getTime());
+    }).filter(e => Number.isFinite(e._start.getTime()) && Number.isFinite(e._end.getTime()))
+      .sort((a, b) => a._start.getTime() - b._start.getTime());
 
     if (validItems.length === 0) {
         return { processedEntities: [], startDate: new Date(), totalDays: 14 };
@@ -99,7 +102,7 @@ const TimelineView: React.FC<TimelineViewProps> = ({ entities }) => {
 
   if (processedEntities.length === 0) {
       return (
-          <div className="flex items-center justify-center h-full text-slate-500 border border-dashed border-slate-800 rounded-xl">
+          <div className="flex items-center justify-center h-full bg-ideapad-base text-slate-400 border border-dashed border-slate-800 rounded-xl">
               No timeline data available. Add dates to your entities.
           </div>
       );
@@ -180,12 +183,15 @@ const TimelineView: React.FC<TimelineViewProps> = ({ entities }) => {
                         const x = getX(e._start);
                         const width = Math.max(currentCellWidth, getX(e._end) - x);
                         
+                        // Check for calendar collisions using unified interval contract
+                        const isColliding = e.kind === EntityKind.EVENT && collidingEventIds.has(e.id);
+
                         // Color based on kind
                         let bgClass = 'bg-slate-600';
                         if (e.kind === EntityKind.PROJECT) bgClass = 'bg-orange-600';
                         if (e.kind === EntityKind.GOAL) bgClass = 'bg-red-600';
                         if (e.kind === EntityKind.TASK) bgClass = 'bg-indigo-600';
-                        if (e.kind === EntityKind.EVENT) bgClass = 'bg-purple-600';
+                        if (e.kind === EntityKind.EVENT) bgClass = isColliding ? 'bg-purple-700 border-amber-400' : 'bg-purple-600';
                         
                         // Status opacity
                         const opacity = e.status === EntityStatus.COMPLETED ? 'opacity-50 grayscale' : 'opacity-100';
@@ -197,11 +203,15 @@ const TimelineView: React.FC<TimelineViewProps> = ({ entities }) => {
                             >
                                 <div 
                                     onClick={() => selectEntity(e.id)}
-                                    className={`absolute top-1 h-6 rounded px-2 flex items-center text-xs text-white cursor-pointer shadow-sm border border-white/10 overflow-hidden whitespace-nowrap transition-all hover:scale-105 hover:z-10 ${bgClass} ${opacity}`}
+                                    className={`absolute top-1 h-6 rounded px-2 flex items-center gap-1 text-xs text-white cursor-pointer shadow-sm border border-white/10 overflow-hidden whitespace-nowrap transition-all hover:scale-105 hover:z-10 ${bgClass} ${opacity}`}
                                     style={{ left: x, width: width }}
-                                    title={`${e.title} (${e._start.toLocaleDateString()} - ${e._end.toLocaleDateString()})`}
+                                    title={`${isColliding ? '⚠️ [Schedule Conflict] ' : ''}${e.title} (${e._start.toLocaleDateString()} - ${e._end.toLocaleDateString()})`}
+                                    data-testid={`timeline-entity-${e.id}`}
                                 >
-                                    {e.title}
+                                    {isColliding && (
+                                        <AlertTriangle size={11} className="text-amber-300 shrink-0 animate-pulse" />
+                                    )}
+                                    <span className="truncate">{e.title}</span>
                                 </div>
                             </div>
                         );

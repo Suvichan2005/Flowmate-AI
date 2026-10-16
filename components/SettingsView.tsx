@@ -1,14 +1,162 @@
-import React, { useRef } from 'react';
+import WorkspaceStatus from './WorkspaceStatus';
+import AppearanceSettings from './AppearanceSettings';
+import React, { useRef, useState, useEffect } from 'react';
 import { useStore } from '../store';
-import { AlertTriangle, Download, Upload, FileText, Trash2, Bot, EyeOff } from 'lucide-react';
+import { AlertTriangle, Download, Upload, FileText, Trash2, Bot, EyeOff, MapPin, Navigation, RefreshCw, Shield, Activity, Brain, Clock, Plus } from 'lucide-react';
 import { exportToMarkdown, downloadMarkdown } from '../utils/exportMarkdown';
+import {
+  liveContext,
+  privacyManager,
+  DeviceLocationWithFreshness,
+  GeolocationPermissionState,
+  SensitiveAccessLogEntry,
+  DEFAULT_PRIVACY_POLICY,
+  extractMemoryItem,
+  extractSituationalItem,
+  MemoryCategory,
+} from '../services/context';
+import { UserSettings, FeatureToggles } from '../types';
+import { getEphemeralApiKey, setEphemeralApiKey, hasAiApiKey } from '../services/ai/client';
+
+const DEFAULT_FEATURE_TOGGLES: FeatureToggles = {
+  food_tracking: true,
+  attendance_tracking: true,
+  people_tracking: true,
+  gamification: true,
+  quick_streaks: true,
+};
 
 const SettingsView: React.FC = () => {
-  const { settings, updateSettings, entities, relationships, messages, importData } = useStore();
+  const { settings, updateSettings, entities, relationships, messages, importData, kernelEntities, applyOperations, deleteEntity } = useStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleChange = (key: keyof typeof settings, value: any) => {
+  const [liveReading, setLiveReading] = useState<DeviceLocationWithFreshness | null>(() => liveContext.getLastReading());
+  const [permission, setPermission] = useState<GeolocationPermissionState>('prompt');
+  const [isAcquiring, setIsAcquiring] = useState(false);
+  const [reverseGeoAddress, setReverseGeoAddress] = useState<string | null>(null);
+  const [auditLogs, setAuditLogs] = useState<SensitiveAccessLogEntry[]>(() => privacyManager.getAccessLogs());
+
+  // Memory UI State (P1-07)
+  const [newMemoryContent, setNewMemoryContent] = useState('');
+  const [newMemoryCategory, setNewMemoryCategory] = useState<MemoryCategory>('preference');
+
+  // Ephemeral Gemini API Key State
+  const [apiKeyInput, setApiKeyInput] = useState<string>(() => getEphemeralApiKey() || '');
+  const [keySavedToast, setKeySavedToast] = useState(false);
+
+  const memoryEntities = Object.values(kernelEntities || {})
+    .filter(e => e.schema_id === 'system/memory_item' && e.lifecycle.deleted_at === null)
+    .map(extractMemoryItem);
+
+  const situationalEntities = Object.values(kernelEntities || {})
+    .filter(e => e.schema_id === 'system/situational_state' && e.lifecycle.deleted_at === null)
+    .map(extractSituationalItem);
+
+  useEffect(() => {
+    liveContext.checkPermission().then(p => setPermission(p));
+    const r = liveContext.getLastReading();
+    if (r) {
+      setLiveReading(r);
+    }
+    setAuditLogs(privacyManager.getAccessLogs());
+  }, []);
+
+  const currentPrivacyPolicy = settings.privacy_preferences || DEFAULT_PRIVACY_POLICY;
+
+  const handleUpdateCapabilityMode = (capability: 'device_location', mode: 'allow' | 'ask' | 'deny') => {
+    const updated = {
+      ...currentPrivacyPolicy,
+      capabilities: {
+        ...currentPrivacyPolicy.capabilities,
+        [capability]: {
+          ...currentPrivacyPolicy.capabilities[capability],
+          read: mode,
+        },
+      },
+    };
+    handleChange('privacy_preferences', updated);
+  };
+
+  const handleAcquireLocation = async () => {
+    setIsAcquiring(true);
+    try {
+      const reading = await liveContext.acquireLocation({
+        forceFresh: true,
+        reason: 'User manual location check in Settings',
+      });
+      setLiveReading(reading);
+      const perm = await liveContext.checkPermission();
+      setPermission(perm);
+      if (reading) {
+        privacyManager.recordAccess(
+          'device_location',
+          'read',
+          'User manual location check in Settings',
+          settings.privacy_preferences,
+        );
+        const address = await liveContext.reverseGeocode(reading.lat, reading.lon);
+        setReverseGeoAddress(address);
+      }
+      setAuditLogs(privacyManager.getAccessLogs());
+    } finally {
+      setIsAcquiring(false);
+    }
+  };
+
+  const handleSetAsHome = () => {
+    if (!liveReading) return;
+    const locText = reverseGeoAddress || `${liveReading.lat.toFixed(4)}, ${liveReading.lon.toFixed(4)}`;
+    handleChange('home_location', locText);
+  };
+
+  const handleClearLocationCache = () => {
+    liveContext.clearCache();
+    setLiveReading(null);
+    setReverseGeoAddress(null);
+  };
+
+  const handleClearAudit = () => {
+    privacyManager.clearAccessLogs();
+    setAuditLogs([]);
+  };
+
+  const handleChange = <K extends keyof UserSettings>(key: K, value: UserSettings[K]) => {
     updateSettings({ [key]: value });
+  };
+
+  const handleAddMemory = () => {
+    if (!newMemoryContent.trim()) return;
+    const nowIso = new Date().toISOString();
+    applyOperations([
+      {
+        type: 'create_entity',
+        payload: {
+          schema_id: 'system/memory_item',
+          title: newMemoryContent.trim().slice(0, 60),
+          lifecycle: { status: 'active' },
+          attributes: {
+            content: newMemoryContent.trim(),
+            category: newMemoryCategory,
+            source_type: 'user_explicit',
+            confidence: 1.0,
+            status: 'active',
+            privacy_tier: 'internal',
+          },
+          provenance: {
+            source_type: 'user',
+            observed_at: nowIso,
+            confidence: 1.0,
+            is_inferred: false,
+            user_confirmed: true,
+          },
+        },
+      },
+    ]);
+    setNewMemoryContent('');
+  };
+
+  const handleDeleteMemory = (id: string) => {
+    deleteEntity(id);
   };
 
   const handleExportJSON = () => {
@@ -83,10 +231,18 @@ const SettingsView: React.FC = () => {
 
       <div className="max-w-2xl space-y-8">
 
-        {/* Model Settings */}
+        <WorkspaceStatus detailed />
+        <AppearanceSettings />
+        {import.meta.env.DEV && <section aria-label="Developer and experimental tools" className="p-4 border border-slate-700 rounded-lg space-y-3">
+          <h2 className="text-lg text-slate-100">Developer / Experimental</h2>
+          <p className="text-sm text-slate-400">Development-only prototypes, separate from normal workspace behavior.</p>
+          <button onClick={() => useStore.getState().toggleDeveloperMode()}>Toggle diagnostics</button>
+        </section>}
+
+        {/* Model & API Key Settings */}
         <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-4">Model Configuration</h2>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+          <h2 className="text-lg font-semibold text-slate-200 mb-4">AI Model & Runtime Access</h2>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-2">Preferred Model</label>
               <select
@@ -102,6 +258,63 @@ const SettingsView: React.FC = () => {
                 This model will be used by the orchestrator for all reasoning tasks.
               </p>
             </div>
+
+            <div className="pt-4 border-t border-slate-800/80">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-slate-200">
+                  Gemini API Key (Optional Ephemeral Access)
+                </label>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
+                  hasAiApiKey()
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                }`}>
+                  {hasAiApiKey() ? 'Key stored in this tab' : 'Gemini not configured'}
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  placeholder="AIzaSy... (Paste key for live AI reasoning)"
+                  className="flex-1 bg-slate-950 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                />
+                <button
+                  onClick={() => {
+                    setEphemeralApiKey(apiKeyInput.trim() || null);
+                    setKeySavedToast(true);
+                    setTimeout(() => setKeySavedToast(false), 3000);
+                  }}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors"
+                >
+                  Save Key
+                </button>
+                {hasAiApiKey() && (
+                  <button
+                    onClick={() => {
+                      setApiKeyInput('');
+                      setEphemeralApiKey(null);
+                    }}
+                    className="px-3 py-2 bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 border border-slate-700 rounded-lg text-xs font-medium transition-colors"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              {keySavedToast && (
+                <p className="text-xs text-emerald-400 mt-2 font-medium">✓ Runtime key updated in memory.</p>
+              )}
+              <div className="mt-3 p-3 bg-slate-950/60 rounded-lg border border-slate-800/80 text-xs text-slate-400 space-y-1">
+                <p className="font-semibold text-slate-300">Security & Privacy Disclosures:</p>
+                <ul className="list-disc list-inside space-y-0.5 text-slate-400">
+                  <li>Your key is held <strong>strictly in-memory for this browser session</strong>.</li>
+                  <li>It is <strong>never</strong> written to disk, localStorage, or git.</li>
+                  <li>It is sent directly from your browser only to Google's official Gemini endpoint.</li>
+                  <li>Without a key, chat reports that no AI response was generated and points you here to configure a provider. Graph, calendar, and workspace operations remain available locally; generated AI responses require a Gemini key and network access.</li>
+                </ul>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -113,37 +326,6 @@ const SettingsView: React.FC = () => {
               Enable or disable features to customize your experience.
             </p>
 
-            <div className="flex items-center justify-between py-2 border-b border-slate-800">
-              <div>
-                <label className="block text-sm font-medium text-slate-200">🍕 Food Tracking</label>
-                <p className="text-xs text-slate-500">Track meals, spending, and eating habits</p>
-              </div>
-              <button
-                onClick={() => {
-                  const current = settings.feature_toggles || { food_tracking: true, attendance_tracking: true, people_tracking: true };
-                  handleChange('feature_toggles', { ...current, food_tracking: !current.food_tracking });
-                }}
-                className={`w-12 h-6 rounded-full transition-colors relative ${(settings.feature_toggles?.food_tracking ?? true) ? 'bg-indigo-600' : 'bg-slate-700'}`}
-              >
-                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${(settings.feature_toggles?.food_tracking ?? true) ? 'translate-x-6' : ''}`} />
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between py-2 border-b border-slate-800">
-              <div>
-                <label className="block text-sm font-medium text-slate-200">📚 Attendance Tracking</label>
-                <p className="text-xs text-slate-500">Track class attendance and calculate skip limits</p>
-              </div>
-              <button
-                onClick={() => {
-                  const current = settings.feature_toggles || { food_tracking: true, attendance_tracking: true, people_tracking: true };
-                  handleChange('feature_toggles', { ...current, attendance_tracking: !current.attendance_tracking });
-                }}
-                className={`w-12 h-6 rounded-full transition-colors relative ${(settings.feature_toggles?.attendance_tracking ?? true) ? 'bg-indigo-600' : 'bg-slate-700'}`}
-              >
-                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${(settings.feature_toggles?.attendance_tracking ?? true) ? 'translate-x-6' : ''}`} />
-              </button>
-            </div>
 
             <div className="flex items-center justify-between py-2 border-b border-slate-800">
               <div>
@@ -172,7 +354,7 @@ const SettingsView: React.FC = () => {
               </div>
               <button
                 onClick={() => {
-                  const current = settings.feature_toggles || { food_tracking: true, attendance_tracking: true, people_tracking: true };
+                  const current = settings.feature_toggles || DEFAULT_FEATURE_TOGGLES;
                   handleChange('feature_toggles', { ...current, people_tracking: !current.people_tracking });
                 }}
                 className={`w-12 h-6 rounded-full transition-colors relative ${(settings.feature_toggles?.people_tracking ?? true) ? 'bg-indigo-600' : 'bg-slate-700'}`}
@@ -229,6 +411,392 @@ const SettingsView: React.FC = () => {
               >
                 <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${settings.debug_mode ? 'translate-x-6' : ''}`} />
               </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Privacy & Context (P1-03) */}
+        <section id="privacy-settings-section">
+          <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
+            <Shield size={18} className="text-indigo-400" /> Privacy & Context
+          </h2>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Flowmate is built privacy-first. Every sensitive context source operates under explicit capability permissions.
+              Live context is ephemeral and never silently written to persistent memory.
+            </p>
+
+            {/* Live Context Capabilities */}
+            <div className="space-y-4">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Live Device Capabilities</h3>
+
+              {/* Device Location Capability */}
+              <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <Navigation className="text-indigo-400 w-4 h-4 mt-0.5 shrink-0" />
+                    <div>
+                      <div className="text-sm font-medium text-slate-200">Device Geolocation</div>
+                      <div className="text-xs text-slate-500">
+                        Authoritative request-time GPS coordinates for travel routing and commute planning.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 self-end sm:self-auto">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-slate-500">Hardware:</span>
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                        permission === 'granted'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : permission === 'denied'
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                          : permission === 'unsupported'
+                          ? 'bg-slate-700 text-slate-300'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      }`}>
+                        {permission.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <select
+                      value={currentPrivacyPolicy.capabilities.device_location?.read || 'ask'}
+                      onChange={(e) => handleUpdateCapabilityMode('device_location', e.target.value as any)}
+                      className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                    >
+                      <option value="ask">Ask on Demand</option>
+                      <option value="allow">Allow Always</option>
+                      <option value="deny">Deny Access</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Ephemeral reading monitor */}
+                {liveReading ? (
+                  <div className="bg-slate-900/90 rounded-md p-3 border border-slate-800/80 text-xs space-y-1.5">
+                    <div className="flex items-center justify-between text-slate-300">
+                      <span className="font-mono">
+                        {liveReading.lat.toFixed(5)}°N, {liveReading.lon.toFixed(5)}°E
+                      </span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                        liveReading.freshnessTier === 'fresh'
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : liveReading.freshnessTier === 'recent'
+                          ? 'bg-blue-500/20 text-blue-400'
+                          : 'bg-amber-500/20 text-amber-400'
+                      }`}>
+                        {liveReading.freshnessTier} (±{Math.round(liveReading.accuracy_meters)}m)
+                      </span>
+                    </div>
+                    {reverseGeoAddress && (
+                      <div className="text-slate-400 truncate">
+                        <span className="text-slate-500">Reverse Geocoded:</span> {reverseGeoAddress}
+                      </div>
+                    )}
+                    <div className="text-[11px] text-slate-500">
+                      Acquired {Math.max(0, Math.round((Date.now() - liveReading.timestamp) / 1000))}s ago ({liveReading.source})
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    No active device location reading. Ephemeral live location is requested on-demand when calculating travel routes.
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleAcquireLocation}
+                    disabled={isAcquiring}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-900/50 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isAcquiring ? 'animate-spin' : ''}`} />
+                    {isAcquiring ? 'Acquiring GPS...' : 'Acquire Fresh Location'}
+                  </button>
+
+                  {liveReading && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleSetAsHome}
+                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 border border-slate-700"
+                      >
+                        <MapPin className="w-3.5 h-3.5 text-indigo-400" />
+                        Set as Home Base
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearLocationCache}
+                        className="px-2.5 py-1.5 text-slate-400 hover:text-rose-400 rounded-lg text-xs transition-colors"
+                      >
+                        Clear Cache
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Connected Services (Extensible Architecture Placeholder) */}
+            <div className="space-y-3">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Connected Services (Preview)</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Google Calendar</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">SIMULATED / NOT CONNECTED</span>
+                </div>
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Gmail</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
+                </div>
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Contacts & People</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
+                </div>
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Drive / Files</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500 italic">
+                Flowmate strictly enforces separate Read and Mutation permissions for all future personal data integrations.
+              </p>
+            </div>
+
+            {/* Sensitive Context Access Audit Log */}
+            <div className="space-y-3 pt-2 border-t border-slate-800">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Activity size={15} className="text-indigo-400" />
+                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Sensitive Access Audit History</h3>
+                </div>
+                {auditLogs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAudit}
+                    className="text-[11px] text-slate-400 hover:text-rose-400 transition-colors"
+                  >
+                    Clear History
+                  </button>
+                )}
+              </div>
+
+              {auditLogs.length > 0 ? (
+                <div className="bg-slate-950 border border-slate-800 rounded-lg divide-y divide-slate-800/60 max-h-48 overflow-y-auto">
+                  {auditLogs.map((entry) => (
+                    <div key={entry.id} className="p-2.5 text-xs flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-300">
+                          {entry.capabilityId}
+                        </span>
+                        <span className="text-slate-300 truncate">{entry.reason}</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 shrink-0">
+                        {Math.max(0, Math.round((Date.now() - entry.timestamp) / 1000))}s ago
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 bg-slate-950/40 border border-slate-800/50 rounded-lg p-3">
+                  No sensitive context accessed yet in this session.
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Persistent Memory & Situational State (P1-07) */}
+        <section id="context-memory-section">
+          <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
+            <Brain size={18} className="text-indigo-400" /> Persistent Memory & Situational State
+          </h2>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Flowmate maintains durable knowledge about you, what matters to you, and your active situation.
+              Inferred memories require your confirmation before becoming active.
+            </p>
+
+            {/* Add Explicit Memory Form */}
+            <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-4 space-y-3">
+              <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Add Explicit Memory</h3>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <select
+                  value={newMemoryCategory}
+                  onChange={(e) => setNewMemoryCategory(e.target.value as MemoryCategory)}
+                  className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-2 focus:ring-2 focus:ring-indigo-500/50 outline-none shrink-0"
+                >
+                  <option value="preference">Preference</option>
+                  <option value="fact">Fact</option>
+                  <option value="routine">Routine</option>
+                  <option value="project_context">Project Context</option>
+                  <option value="goal_aspiration">Goal & Aspiration</option>
+                  <option value="relationship">Relationship</option>
+                </select>
+                <input
+                  type="text"
+                  value={newMemoryContent}
+                  onChange={(e) => setNewMemoryContent(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddMemory(); }}
+                  placeholder="e.g. 'I prefer concise bullet points in responses' or 'I work on Flowmate on weekends'"
+                  className="flex-1 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddMemory}
+                  disabled={!newMemoryContent.trim()}
+                  className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-900/50 text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shrink-0"
+                >
+                  <Plus size={14} /> Add Memory
+                </button>
+              </div>
+            </div>
+
+            {/* Active Persistent Memories */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                  Durable Knowledge ({memoryEntities.length})
+                </h3>
+              </div>
+
+              {memoryEntities.length > 0 ? (
+                <div className="bg-slate-950 border border-slate-800 rounded-lg divide-y divide-slate-800/60 max-h-60 overflow-y-auto">
+                  {memoryEntities.map((m) => (
+                    <div key={m.id} className="p-3 text-xs flex items-start justify-between gap-3">
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            {m.category}
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                            m.source_type === 'user_explicit'
+                              ? 'bg-emerald-500/10 text-emerald-400'
+                              : 'bg-amber-500/10 text-amber-400'
+                          }`}>
+                            {m.source_type === 'user_explicit' ? 'explicit (100%)' : `inferred (${Math.round(m.confidence * 100)}%)`}
+                          </span>
+                          {m.status === 'conflicted' && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                              Conflicted
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-slate-200 leading-snug">{m.content}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMemory(m.id)}
+                        className="text-slate-500 hover:text-rose-400 transition-colors p-1 shrink-0"
+                        title="Delete memory"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 bg-slate-950/40 border border-slate-800/50 rounded-lg p-3">
+                  No persistent memories stored yet. Tell Flowmate your preferences or add one above!
+                </p>
+              )}
+            </div>
+
+            {/* Active Situational States */}
+            <div className="space-y-3">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Clock size={13} className="text-amber-400" /> Active Situational States ({situationalEntities.length})
+              </h3>
+              {situationalEntities.length > 0 ? (
+                <div className="bg-slate-950 border border-slate-800 rounded-lg divide-y divide-slate-800/60 max-h-48 overflow-y-auto">
+                  {situationalEntities.map((s) => (
+                    <div key={s.id} className="p-3 text-xs flex items-start justify-between gap-3">
+                      <div className="space-y-1 min-w-0">
+                        <div className="text-slate-200 font-medium">{s.topic}</div>
+                        {s.details && <div className="text-slate-400 text-[11px]">{s.details}</div>}
+                        <div className="text-[10px] text-slate-500">
+                          Active until: {new Date(s.valid_until).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMemory(s.id)}
+                        className="text-slate-500 hover:text-rose-400 transition-colors p-1 shrink-0"
+                        title="Delete situational state"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 bg-slate-950/40 border border-slate-800/50 rounded-lg p-3">
+                  No active temporary situational states (e.g., travel this week, temporary deadlines).
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Location & Travel Preferences */}
+        <section>
+          <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
+            <MapPin size={18} /> Location & Travel
+          </h2>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+            {/* Default Starting Location / Home Base */}
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-2">Default Starting Location / Home Base</label>
+              <input
+                type="text"
+                value={settings.home_location || ''}
+                onChange={(e) => handleChange('home_location', e.target.value)}
+                placeholder="e.g. Campus 25, KIIT University or 123 Main St, New York"
+                className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                Used as fallback origin when live device location is unavailable or denied.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-2">Station Arrival Buffer (minutes)</label>
+                <input
+                  type="number"
+                  min={10}
+                  max={180}
+                  value={settings.travel_preferences?.station_buffer_minutes ?? 45}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10) || 45;
+                    handleChange('travel_preferences', {
+                      ...settings.travel_preferences,
+                      station_buffer_minutes: val,
+                    });
+                  }}
+                  className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm"
+                />
+                <p className="text-xs text-slate-500 mt-1">Buffer time before train departure to reach platform & coach.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-2">Airport Arrival Buffer (minutes)</label>
+                <input
+                  type="number"
+                  min={30}
+                  max={300}
+                  value={settings.travel_preferences?.airport_buffer_minutes ?? 120}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10) || 120;
+                    handleChange('travel_preferences', {
+                      ...settings.travel_preferences,
+                      airport_buffer_minutes: val,
+                    });
+                  }}
+                  className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm"
+                />
+                <p className="text-xs text-slate-500 mt-1">Buffer time before flight departure for check-in & security.</p>
+              </div>
             </div>
           </div>
         </section>

@@ -4,8 +4,9 @@
  * with instant zero-latency fallbacks tailored to current IST schedule, tasks, meals, and context.
  */
 
-import { getAiClient } from './client';
+import { getAiClient, hasAiApiKey, AI_MODELS } from './client';
 import type { Entity, FoodLogEntry, Subject } from '../../types';
+import { EntityKind, EntityStatus } from '../../types';
 
 export interface ContextualSuggestion {
     icon: string;
@@ -49,22 +50,25 @@ export function getInstantContextualSuggestions(context: SuggestionContext): Con
     // 1. Check for upcoming events in entities
     const nowIso = new Date().toISOString();
     const upcomingEvents = (context.entities || [])
-        .filter(e => e.kind === 'event' && (!e.status || e.status === 'pending'))
+        .filter(e => e.kind === EntityKind.EVENT && (!e.status || e.status === EntityStatus.PENDING))
         .filter(e => {
-            const date = (e.metadata as any)?.start_time || (e.metadata as any)?.date || e.created_at;
+            const meta = e.metadata as Record<string, unknown> | undefined;
+            const date = (typeof meta?.start_time === 'string' ? meta.start_time : null) ||
+                         (typeof meta?.date === 'string' ? meta.date : null) ||
+                         e.created_at;
             return date && date >= nowIso.slice(0, 10);
         })
         .slice(0, 2);
 
     // 2. Check for pending tasks
     const pendingTasks = (context.entities || [])
-        .filter(e => e.kind === 'task' && e.status !== 'completed' && e.status !== 'done')
+        .filter(e => e.kind === EntityKind.TASK && e.status !== EntityStatus.COMPLETED && (e.status as unknown) !== 'done')
         .slice(0, 3);
 
     // 3. Check today's food logs
     const todayStr = nowIso.slice(0, 10);
-    const todaysFood = (context.foodLogs || []).filter(f => f.date === todayStr);
-    const loggedMeals = new Set(todaysFood.map(f => f.mealType));
+    const todaysFood = (context.foodLogs || []).filter(f => f.timestamp?.slice(0, 10) === todayStr);
+    const loggedMeals = new Set(todaysFood.map(f => f.meal_type));
 
     // Dynamic suggestions based on time of day (IST)
     if (hour >= 5 && hour < 12) {
@@ -228,7 +232,7 @@ export async function generateContextualSuggestions(context: SuggestionContext):
     const instant = getInstantContextualSuggestions(context);
 
     // If API key is not configured, return instant template suggestions
-    if (!import.meta.env.VITE_GEMINI_API_KEY) {
+    if (!hasAiApiKey()) {
         cachedSuggestions = instant;
         lastGeneratedTimestamp = now;
         return instant;
@@ -239,7 +243,7 @@ export async function generateContextualSuggestions(context: SuggestionContext):
         const { hour, dayName, timeStr } = getIstTimeInfo();
 
         const taskTitles = (context.entities || [])
-            .filter(e => e.kind === 'task' && e.status !== 'completed')
+            .filter(e => e.kind === EntityKind.TASK && e.status !== EntityStatus.COMPLETED)
             .slice(0, 3)
             .map(e => e.title);
 
@@ -257,9 +261,9 @@ Rules:
 3. Return ONLY valid JSON array with 4 items:
 [{"icon":"...","label":"...","prompt":"..."},...]`;
 
-        // Use gemini-2.5-flash-lite for instant, ultra-fast generation
+        // Use gemini-3.5-flash-lite for instant, ultra-fast generation
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-lite',
+            model: AI_MODELS.FAST_LITE,
             contents: prompt,
             config: {
                 temperature: 0.6,

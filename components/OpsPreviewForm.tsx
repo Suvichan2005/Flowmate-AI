@@ -1,14 +1,19 @@
-import React, { useState } from 'react';
-import { ToonOperation } from '../types';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { ToonOperation, Entity } from '../types';
 import {
     Plus, RefreshCw, Link, Activity, X, ChevronDown, ChevronUp,
     Calendar, Clock, CheckCircle2, Edit3, Save, Repeat, Star, FileText,
-    MapPin, Timer
+    MapPin, Timer, ShieldCheck, AlertTriangle
 } from 'lucide-react';
+import { useStore } from '../store';
+import { getActiveEntities } from '../store/helpers';
+import { ConfirmedExecutionPlan } from '../services/kernel';
+import { saveReviewDraft, deleteReviewDraft } from '../services/action-review';
+import { evaluateCandidateSlot, findEarliestFreeSlot } from '../utils/calendarConflicts';
 
 interface OpsPreviewFormProps {
     ops: ToonOperation[];
-    onConfirm: (ops: ToonOperation[]) => void;
+    onConfirm: (confirmedPlan: ConfirmedExecutionPlan) => Promise<boolean>;
     onCancel: () => void;
 }
 
@@ -55,14 +60,238 @@ const fromLocalDatetimeInput = (val: string): string | null => {
     } catch { return null; }
 };
 
+type PayloadFieldChange = (index: number, field: string, value: unknown) => void;
+
+    // Reusable field components
+    const DateTimeField = ({ opIdx, field, label, value, onPayloadFieldChange }: { opIdx: number; field: string; label: string; value: unknown; onPayloadFieldChange: PayloadFieldChange }) => (
+        <div className="flex items-center gap-2 py-1.5">
+            <Calendar size={12} className="text-slate-500 shrink-0" />
+            <label htmlFor={"op-"+opIdx+"-"+field} className="text-xs text-slate-400 w-20 shrink-0">{label}</label>
+            <input id={"op-"+opIdx+"-"+field}
+                type="datetime-local"
+                value={toLocalDatetimeInput(typeof value === 'string' ? value : null)}
+                onChange={(e) => onPayloadFieldChange(opIdx, field, fromLocalDatetimeInput(e.target.value))}
+                className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+            />
+        </div>
+    );
+
+    const TextField = ({ opIdx, field, label, value, placeholder, onPayloadFieldChange }: { opIdx: number; field: string; label: string; value: unknown; onPayloadFieldChange: PayloadFieldChange; placeholder?: string }) => (
+        <div className="flex items-center gap-2 py-1.5">
+            <Edit3 size={12} className="text-slate-500 shrink-0" />
+            <label htmlFor={"op-"+opIdx+"-"+field} className="text-xs text-slate-400 w-20 shrink-0">{label}</label>
+            <input id={"op-"+opIdx+"-"+field}
+                type="text"
+                value={typeof value === 'string' ? value : ''}
+                placeholder={placeholder}
+                onChange={(e) => onPayloadFieldChange(opIdx, field, e.target.value)}
+                className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+            />
+        </div>
+    );
+
+    const NumberField = ({ opIdx, field, label, value, placeholder, onPayloadFieldChange }: { opIdx: number; field: string; label: string; value: unknown; onPayloadFieldChange: PayloadFieldChange; placeholder?: string }) => (
+        <div className="flex items-center gap-2 py-1.5">
+            <Timer size={12} className="text-slate-500 shrink-0" />
+            <label htmlFor={"op-"+opIdx+"-"+field} className="text-xs text-slate-400 w-20 shrink-0">{label}</label>
+            <input id={"op-"+opIdx+"-"+field}
+                type="number"
+                value={typeof value === 'number' ? value : (typeof value === 'string' ? value : '')}
+                placeholder={placeholder}
+                onChange={(e) => onPayloadFieldChange(opIdx, field, e.target.value ? parseInt(e.target.value) : null)}
+                className="w-24 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+            />
+        </div>
+    );
+
+    const SelectField = ({ opIdx, field, label, value, options, onPayloadFieldChange }: { opIdx: number; field: string; label: string; value: unknown; onPayloadFieldChange: PayloadFieldChange; options: { value: string; label: string }[] }) => (
+        <div className="flex items-center gap-2 py-1.5">
+            <ChevronDown size={12} className="text-slate-500 shrink-0" />
+            <label htmlFor={"op-"+opIdx+"-"+field} className="text-xs text-slate-400 w-20 shrink-0">{label}</label>
+            <select id={"op-"+opIdx+"-"+field}
+                value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
+                onChange={(e) => onPayloadFieldChange(opIdx, field, e.target.value || null)}
+                className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+            >
+                <option value="">None</option>
+                {options.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+            </select>
+        </div>
+    );
+
+    interface EventConflictFeedbackProps {
+        startTimeIso?: string | null;
+        endTimeIso?: string | null;
+        candidateId?: string;
+        isAllDay?: boolean;
+        entities: Entity[];
+        onApplyAlternativeSlot?: (startIso: string, endIso: string) => void;
+    }
+
+    const EventConflictFeedback: React.FC<EventConflictFeedbackProps> = ({
+        startTimeIso,
+        endTimeIso,
+        candidateId,
+        isAllDay,
+        entities,
+        onApplyAlternativeSlot
+    }) => {
+        if (!startTimeIso || !endTimeIso) return null;
+
+        const evaluation = evaluateCandidateSlot(
+            {
+                startTimeIso,
+                endTimeIso,
+                candidateId,
+                isAllDay: Boolean(isAllDay)
+            },
+            entities
+        );
+
+        if (evaluation.status === 'invalid_interval') {
+            return (
+                <div
+                    className="mt-2 p-2 rounded-lg bg-amber-950/40 border border-amber-500/40 flex items-center gap-2 text-xs text-amber-300"
+                    data-testid="review-invalid-interval"
+                >
+                    <AlertTriangle size={13} className="text-amber-400 shrink-0" />
+                    <span>Invalid Time Interval ({evaluation.validationError || 'End time must be after start time'})</span>
+                </div>
+            );
+        }
+
+        if (evaluation.status === 'conflict') {
+            const altSlot = findEarliestFreeSlot(
+                {
+                    startTimeIso,
+                    endTimeIso,
+                    candidateId,
+                    isAllDay: Boolean(isAllDay)
+                },
+                entities
+            );
+
+            return (
+                <div
+                    className="mt-2 p-2.5 rounded-lg bg-amber-950/40 border border-amber-500/40 space-y-2 text-xs"
+                    data-testid="review-calendar-conflict"
+                >
+                    <div className="flex items-center gap-1.5 font-semibold text-amber-300">
+                        <AlertTriangle size={14} className="text-amber-400 shrink-0" />
+                        <span>
+                            Schedule Conflict Detected ({evaluation.conflicts.length} collision{evaluation.conflicts.length > 1 ? 's' : ''})
+                        </span>
+                    </div>
+                    <div className="space-y-1.5">
+                        {evaluation.conflicts.map(conf => (
+                            <div
+                                key={conf.collidingEventId}
+                                className="flex items-center justify-between gap-2 p-1.5 rounded bg-slate-900/60 border border-amber-500/20 text-slate-300"
+                            >
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                    <Clock size={12} className="text-amber-400 shrink-0" />
+                                    <span className="font-medium truncate text-white">{conf.collidingEventTitle}</span>
+                                    <span className="text-slate-400 text-[11px] shrink-0">({conf.formattedTimeSpan})</span>
+                                </div>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono shrink-0">
+                                    {conf.overlapMinutes}m overlap
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                    {altSlot && onApplyAlternativeSlot && (
+                        <div className="pt-1.5 flex items-center justify-between gap-2 border-t border-amber-500/20">
+                            <span className="text-[11px] text-indigo-300">
+                                Next available slot: +{altSlot.displacementMinutes}m
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => onApplyAlternativeSlot(altSlot.startTimeIso, altSlot.endTimeIso)}
+                                className="px-2 py-1 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/30 text-[11px] font-medium transition-colors cursor-pointer"
+                                data-testid="shift-to-alternative-slot"
+                            >
+                                Shift to Free Slot
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        return (
+            <div
+                className="mt-2 px-2.5 py-1.5 rounded-lg bg-emerald-950/30 border border-emerald-500/30 flex items-center gap-1.5 text-xs text-emerald-300"
+                data-testid="review-slot-clear"
+            >
+                <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                <span>Time slot is clear (no collisions)</span>
+            </div>
+        );
+    };
+
 const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCancel }) => {
+    const planOperations = useStore(state => state.planOperations);
+    const confirmPlan = useStore(state => state.confirmPlan);
+    const kernelEntities = useStore(state => state.kernelEntities);
+    const pendingOps = useStore(state => state.pendingOps);
+    const rawEntities = useStore(state => state.entities);
+    const entities = useMemo(() => getActiveEntities(rawEntities), [rawEntities]);
+
     const [editableOps, setEditableOps] = useState<ToonOperation[]>(() =>
         ops.map(op => JSON.parse(JSON.stringify(op)))
     );
+    const executionInFlight = useRef(false);
+    const [submitting, setSubmitting] = useState(false);
+    const [executionError, setExecutionError] = useState<string | null>(null);
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const closeRef = useRef<HTMLButtonElement>(null);
+    const draftIdRef = useRef<string | null>(null);
+
+    // Persist unconfirmed draft whenever editableOps changes
+    useEffect(() => {
+        if (editableOps.length === 0) return;
+        let isCurrent = true;
+        saveReviewDraft(
+            'component_form',
+            'Pending action review',
+            editableOps,
+            kernelEntities || {},
+            {
+                proposalId: pendingOps?.reviewId,
+                originalMessageId: pendingOps?.originalMessageId
+            }
+        ).then(draft => {
+            if (isCurrent) {
+                draftIdRef.current = draft.id;
+            }
+        }).catch(() => {});
+
+        return () => {
+            isCurrent = false;
+        };
+    }, [editableOps, kernelEntities, pendingOps?.reviewId, pendingOps?.originalMessageId]);
+
+    useEffect(() => {
+        const previous = document.activeElement as HTMLElement | null;
+        closeRef.current?.focus();
+        return () => previous?.focus();
+    }, []);
+    useEffect(() => { if (submitting) dialogRef.current?.focus(); }, [submitting]);
     const [expandedIdx, setExpandedIdx] = useState<number | null>(0);
     const [selectedOps, setSelectedOps] = useState<Set<number>>(() => new Set(ops.map((_, i) => i)));
 
-    const updatePayloadField = (opIdx: number, field: string, value: any) => {
+    const selectedOpsList = useMemo(() => {
+        return editableOps.filter((_, i) => selectedOps.has(i));
+    }, [editableOps, selectedOps]);
+
+    const planResult = useMemo(() => {
+        if (selectedOpsList.length === 0) return null;
+        return planOperations(selectedOpsList, 'ai_agent');
+    }, [selectedOpsList, planOperations, kernelEntities]);
+
+    const updatePayloadField = (opIdx: number, field: string, value: unknown) => {
         setEditableOps(prev => prev.map((op, i) => {
             if (i !== opIdx) return op;
             return {
@@ -72,10 +301,12 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
         }));
     };
 
-    const updateMetadataField = (opIdx: number, field: string, value: any) => {
+    const updateMetadataField = (opIdx: number, field: string, value: unknown) => {
         setEditableOps(prev => prev.map((op, i) => {
             if (i !== opIdx) return op;
-            const currentMeta = op.payload?.metadata || {};
+            const currentMeta = (typeof op.payload?.metadata === 'object' && op.payload?.metadata !== null)
+                ? (op.payload.metadata as Record<string, unknown>)
+                : {};
             return {
                 ...op,
                 payload: {
@@ -95,9 +326,43 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
         });
     };
 
-    const handleConfirm = () => {
-        const selected = editableOps.filter((_, i) => selectedOps.has(i));
-        onConfirm(selected);
+    const handleConfirm = async () => {
+        if (executionInFlight.current || !planResult?.success || !planResult.plan || planResult.plan.validated_mutations.length === 0) return;
+        executionInFlight.current = true;
+        setSubmitting(true);
+        setExecutionError(null);
+        try {
+            const committed = await onConfirm(confirmPlan(planResult.plan));
+            if (committed) {
+                if (draftIdRef.current) {
+                    deleteReviewDraft(draftIdRef.current).catch(() => {});
+                }
+            } else {
+                setExecutionError('Changes could not be saved. Your proposal is still here; review it before trying again.');
+            }
+        } catch {
+            setExecutionError('Changes could not be saved. Your proposal is still here; review it before trying again.');
+        } finally {
+            executionInFlight.current = false;
+            setSubmitting(false);
+        }
+    };
+
+    const handleCancel = () => {
+        if (draftIdRef.current) {
+            deleteReviewDraft(draftIdRef.current).catch(() => {});
+        }
+        onCancel();
+    };
+
+    const handleDialogKeyDown = (event: React.KeyboardEvent) => {
+        if (event.key === 'Escape' && !submitting) { event.preventDefault(); handleCancel(); }
+        if (event.key !== 'Tab') return;
+        const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]') || []);
+        if (controls.length === 0) { event.preventDefault(); dialogRef.current?.focus(); return; }
+        const first = controls[0], last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     };
 
     const getOpInfo = (op: ToonOperation) => {
@@ -112,9 +377,19 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
 
         switch (type) {
             case 'create_entity':
-                icon = <Plus size={14} className="text-emerald-400" />;
-                label = `Create ${kind}`;
-                description = title;
+                if (p.schema_id === 'system/memory_item' || kind === 'MEMORY') {
+                    icon = <Star size={14} className="text-amber-400" />;
+                    label = 'Create Memory Item';
+                    description = p.content || (p.attributes as Record<string, unknown> | undefined)?.content as string || title;
+                } else if (p.schema_id === 'system/situational_state') {
+                    icon = <Activity size={14} className="text-purple-400" />;
+                    label = 'Create Situational State';
+                    description = p.details || (p.attributes as Record<string, unknown> | undefined)?.details as string || title;
+                } else {
+                    icon = <Plus size={14} className="text-emerald-400" />;
+                    label = `Create ${kind}`;
+                    description = title;
+                }
                 break;
             case 'update_entity':
                 icon = <RefreshCw size={14} className="text-indigo-400" />;
@@ -151,65 +426,6 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
         return { icon, label, description, type, kind };
     };
 
-    // Reusable field components
-    const DateTimeField = ({ opIdx, field, label, value }: { opIdx: number; field: string; label: string; value: any }) => (
-        <div className="flex items-center gap-2 py-1.5">
-            <Calendar size={12} className="text-slate-500 shrink-0" />
-            <label className="text-xs text-slate-400 w-20 shrink-0">{label}</label>
-            <input
-                type="datetime-local"
-                value={toLocalDatetimeInput(value)}
-                onChange={(e) => updatePayloadField(opIdx, field, fromLocalDatetimeInput(e.target.value))}
-                className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-            />
-        </div>
-    );
-
-    const TextField = ({ opIdx, field, label, value, placeholder }: { opIdx: number; field: string; label: string; value: any; placeholder?: string }) => (
-        <div className="flex items-center gap-2 py-1.5">
-            <Edit3 size={12} className="text-slate-500 shrink-0" />
-            <label className="text-xs text-slate-400 w-20 shrink-0">{label}</label>
-            <input
-                type="text"
-                value={value || ''}
-                placeholder={placeholder}
-                onChange={(e) => updatePayloadField(opIdx, field, e.target.value)}
-                className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-            />
-        </div>
-    );
-
-    const NumberField = ({ opIdx, field, label, value, placeholder }: { opIdx: number; field: string; label: string; value: any; placeholder?: string }) => (
-        <div className="flex items-center gap-2 py-1.5">
-            <Timer size={12} className="text-slate-500 shrink-0" />
-            <label className="text-xs text-slate-400 w-20 shrink-0">{label}</label>
-            <input
-                type="number"
-                value={value || ''}
-                placeholder={placeholder}
-                onChange={(e) => updatePayloadField(opIdx, field, e.target.value ? parseInt(e.target.value) : null)}
-                className="w-24 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-            />
-        </div>
-    );
-
-    const SelectField = ({ opIdx, field, label, value, options }: { opIdx: number; field: string; label: string; value: any; options: { value: string; label: string }[] }) => (
-        <div className="flex items-center gap-2 py-1.5">
-            <ChevronDown size={12} className="text-slate-500 shrink-0" />
-            <label className="text-xs text-slate-400 w-20 shrink-0">{label}</label>
-            <select
-                value={value || ''}
-                onChange={(e) => updatePayloadField(opIdx, field, e.target.value || null)}
-                className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
-            >
-                <option value="">None</option>
-                {options.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-            </select>
-        </div>
-    );
-
     const renderOpEditor = (op: ToonOperation, idx: number) => {
         const { type, kind } = getOpInfo(op);
         const p = op.payload || {};
@@ -220,9 +436,9 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
             return (
                 <div className="space-y-0.5 px-3 pb-3 pt-2">
                     {/* Core Fields */}
-                    <TextField opIdx={idx} field="title" label="Title" value={p.title || p.t} placeholder="Enter title..." />
+                    <TextField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="title" label="Title" value={p.title || p.t} placeholder="Enter title..." />
 
-                    <SelectField opIdx={idx} field="kind" label="Type" value={currentKind} options={[
+                    <SelectField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="kind" label="Type" value={currentKind} options={[
                         { value: 'TASK', label: '📋 Task' },
                         { value: 'EVENT', label: '📅 Event' },
                         { value: 'PROJECT', label: '📁 Project' },
@@ -231,7 +447,7 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
                         { value: 'NOTE', label: '📝 Note' }
                     ]} />
 
-                    <SelectField opIdx={idx} field="priority" label="Priority" value={p.priority?.toString()} options={[
+                    <SelectField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="priority" label="Priority" value={p.priority?.toString()} options={[
                         { value: '1', label: '🔴 High (1)' },
                         { value: '2', label: '🟠 Medium (2)' },
                         { value: '3', label: '🟡 Normal (3)' },
@@ -254,20 +470,71 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
                         </div>
                     </div>
 
-                    {/* Event-specific: Start/End Time */}
+                    {/* Event-specific: Start/End Time and Certainty */}
                     {currentKind === 'EVENT' && (
                         <>
-                            <DateTimeField opIdx={idx} field="start_time" label="Start" value={p.start_time || p.start} />
-                            <DateTimeField opIdx={idx} field="end_time" label="End" value={p.end_time || p.end} />
-                            <TextField opIdx={idx} field="location" label="Location" value={meta.location} placeholder="Add location..." />
+                            <DateTimeField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="start_time" label="Start" value={p.start_time || p.start} />
+                            <DateTimeField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="end_time" label="End" value={p.end_time || p.end} />
+                            <EventConflictFeedback
+                                startTimeIso={typeof (p.start_time || p.start) === 'string' ? (p.start_time || p.start) : null}
+                                endTimeIso={typeof (p.end_time || p.end) === 'string' ? (p.end_time || p.end) : null}
+                                candidateId={p.id}
+                                isAllDay={Boolean(p.all_day || p.is_all_day || meta.all_day || meta.is_all_day)}
+                                entities={entities}
+                                onApplyAlternativeSlot={(startIso, endIso) => {
+                                    if ('start' in p) updatePayloadField(idx, 'start', startIso);
+                                    updatePayloadField(idx, 'start_time', startIso);
+                                    if ('end' in p) updatePayloadField(idx, 'end', endIso);
+                                    updatePayloadField(idx, 'end_time', endIso);
+                                }}
+                            />
+                            <SelectField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="scheduling_certainty" label="Certainty" value={p.scheduling_certainty || meta.scheduling_certainty || 'unknown'} options={[
+                                { value: 'confirmed', label: '✅ Confirmed' },
+                                { value: 'tentative', label: '❓ Tentative' },
+                                { value: 'cancelled', label: '❌ Cancelled' },
+                                { value: 'unknown', label: '❔ Unknown' }
+                            ]} />
+                            <TextField
+                                onPayloadFieldChange={(opIdx, field, value) => updateMetadataField(opIdx, field,
+                                    typeof meta.location === 'object' && meta.location !== null && !Array.isArray(meta.location)
+                                        ? { ...meta.location, address: value }
+                                        : value)}
+                                opIdx={idx} field="location" label="Location"
+                                value={typeof meta.location === 'object' && meta.location !== null
+                                    ? (meta.location as Record<string, unknown>).address : meta.location}
+                                placeholder="Add location..." />
                         </>
+                    )}
+
+                    {/* Memory-specific: Content and Category */}
+                    {(p.schema_id === 'system/memory_item' || currentKind === 'MEMORY') && (
+                        <div className="border-t border-slate-800 mt-2 pt-2 space-y-1">
+                            <div className="py-1">
+                                <label className="text-xs text-slate-400 block mb-1">Memory Content</label>
+                                <textarea
+                                    value={p.content || (p.attributes as Record<string, unknown> | undefined)?.content as string || ''}
+                                    onChange={(e) => updatePayloadField(idx, 'content', e.target.value)}
+                                    placeholder="Enter learned memory fact or preference..."
+                                    rows={2}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none resize-none"
+                                />
+                            </div>
+                            <SelectField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="category" label="Category" value={p.category || (p.attributes as Record<string, unknown> | undefined)?.category as string || 'fact'} options={[
+                                { value: 'preference', label: '⭐ Preference' },
+                                { value: 'fact', label: '📌 Fact' },
+                                { value: 'project_context', label: '📁 Project Context' },
+                                { value: 'relationship', label: '👥 Relationship' },
+                                { value: 'goal_aspiration', label: '🎯 Goal Aspiration' },
+                                { value: 'routine', label: '🔄 Routine' }
+                            ]} />
+                        </div>
                     )}
 
                     {/* Task-specific: Deadline and Duration */}
                     {(currentKind === 'TASK' || currentKind === 'PROJECT' || currentKind === 'GOAL') && (
                         <>
-                            <DateTimeField opIdx={idx} field="deadline" label="Deadline" value={p.deadline || p.due} />
-                            <NumberField opIdx={idx} field="duration_minutes" label="Duration" value={p.duration_minutes || p.dur} placeholder="mins" />
+                            <DateTimeField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="deadline" label="Deadline" value={p.deadline || p.due} />
+                            <NumberField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="duration_minutes" label="Duration" value={p.duration_minutes || p.dur} placeholder="mins" />
                         </>
                     )}
 
@@ -278,7 +545,7 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
                             <span className="text-xs text-slate-300 font-medium">Recurrence</span>
                         </div>
 
-                        <SelectField opIdx={idx} field="recurrence" label="Repeat" value={p.recurrence} options={[
+                        <SelectField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="recurrence" label="Repeat" value={p.recurrence} options={[
                             { value: 'DAILY', label: '📆 Daily' },
                             { value: 'WEEKLY', label: '📅 Weekly' },
                             { value: 'MONTHLY', label: '🗓️ Monthly' },
@@ -340,24 +607,44 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
         if (type === 'update_entity') {
             return (
                 <div className="space-y-0.5 px-3 pb-3 pt-2">
-                    <TextField opIdx={idx} field="title" label="Title" value={p.title} placeholder="New title..." />
+                    <TextField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="title" label="Title" value={p.title} placeholder="New title..." />
 
-                    <SelectField opIdx={idx} field="status" label="Status" value={p.status} options={[
+                    <SelectField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="status" label="Status" value={p.status} options={[
                         { value: 'ACTIVE', label: '⏳ Active' },
                         { value: 'COMPLETED', label: '✅ Completed' },
                         { value: 'ARCHIVED', label: '📦 Archived' }
                     ]} />
 
-                    <SelectField opIdx={idx} field="priority" label="Priority" value={p.priority?.toString()} options={[
+                    <SelectField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="priority" label="Priority" value={p.priority?.toString()} options={[
                         { value: '1', label: '🔴 High (1)' },
                         { value: '2', label: '🟠 Medium (2)' },
                         { value: '3', label: '🟡 Normal (3)' },
                         { value: '4', label: '🟢 Low (4)' }
                     ]} />
 
-                    <DateTimeField opIdx={idx} field="deadline" label="Deadline" value={p.deadline} />
-                    <DateTimeField opIdx={idx} field="start_time" label="Start" value={p.start_time} />
-                    <DateTimeField opIdx={idx} field="end_time" label="End" value={p.end_time} />
+                    <DateTimeField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="deadline" label="Deadline" value={p.deadline} />
+                    <DateTimeField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="start_time" label="Start" value={p.start_time} />
+                    <DateTimeField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="end_time" label="End" value={p.end_time} />
+                    {(p.start_time && p.end_time) && (
+                        <EventConflictFeedback
+                            startTimeIso={typeof p.start_time === 'string' ? p.start_time : null}
+                            endTimeIso={typeof p.end_time === 'string' ? p.end_time : null}
+                            candidateId={p.id}
+                            isAllDay={Boolean(p.all_day || p.is_all_day || meta.all_day || meta.is_all_day)}
+                            entities={entities}
+                            onApplyAlternativeSlot={(startIso, endIso) => {
+                                updatePayloadField(idx, 'start_time', startIso);
+                                updatePayloadField(idx, 'end_time', endIso);
+                            }}
+                        />
+                    )}
+
+                    <SelectField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="scheduling_certainty" label="Certainty" value={p.scheduling_certainty || meta.scheduling_certainty} options={[
+                        { value: 'confirmed', label: '✅ Confirmed' },
+                        { value: 'tentative', label: '❓ Tentative' },
+                        { value: 'cancelled', label: '❌ Cancelled' },
+                        { value: 'unknown', label: '❔ Unknown' }
+                    ]} />
 
                     <div className="text-[10px] text-slate-600 mt-2 font-mono border-t border-slate-800 pt-2">
                         Target ID: {p.id?.slice(-16) || 'auto-resolve'}
@@ -369,8 +656,8 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
         if (type === 'log_to_entity') {
             return (
                 <div className="space-y-0.5 px-3 pb-3 pt-2">
-                    <TextField opIdx={idx} field="title" label="Activity" value={p.title || p.t} placeholder="What did you do?" />
-                    <NumberField opIdx={idx} field="duration_minutes" label="Duration" value={p.dur || p.duration_minutes} placeholder="mins" />
+                    <TextField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="title" label="Activity" value={p.title || p.t} placeholder="What did you do?" />
+                    <NumberField onPayloadFieldChange={updatePayloadField} opIdx={idx} field="duration_minutes" label="Duration" value={p.dur || p.duration_minutes} placeholder="mins" />
                     <div className="text-[10px] text-slate-600 mt-2 font-mono">
                         Entity: {p.entity_id?.slice(-8) || 'unknown'}
                     </div>
@@ -390,20 +677,42 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
+            <div ref={dialogRef} role="dialog" tabIndex={-1} aria-modal="true" aria-labelledby="operation-review-title" aria-busy={submitting} onKeyDown={handleDialogKeyDown} className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg max-h-[85vh] overflow-hidden shadow-2xl flex flex-col">
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-slate-800 shrink-0">
-                    <h3 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
+                    <h3 id="operation-review-title" className="text-lg font-semibold text-slate-100 flex items-center gap-2">
                         <CheckCircle2 size={18} className="text-emerald-400" />
                         Review & Edit Operations
                     </h3>
-                    <button onClick={onCancel} className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors">
+                    <button ref={closeRef} aria-label="Close action review" disabled={submitting} onClick={handleCancel} className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors">
                         <X size={18} />
                     </button>
                 </div>
 
+                {/* Greenfield Kernel Fingerprint & Validation Badge */}
+                {ops.some(op => op.type === 'delete_entity') && <p role="note" className="mx-4 mt-3 text-xs text-amber-300">
+                    Entity deletion cannot currently be undone. Cancel before applying if you want to retain it.
+                </p>}
+                {planResult?.plan && (
+                    <div className="mx-3 mt-3 p-2.5 rounded-xl bg-slate-950/80 border border-indigo-500/30 flex items-center justify-between text-xs shrink-0">
+                        <div className="flex items-center gap-2 text-indigo-300">
+                            <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
+                            <span className="font-medium text-slate-400">Plan Fingerprint:</span>
+                            <span className="font-mono text-[11px] text-slate-200 bg-slate-900 px-2 py-0.5 rounded border border-slate-800" title={planResult.plan.plan_fingerprint}>
+                                {planResult.plan.plan_fingerprint.slice(0, 16)}...
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-medium">
+                            <CheckCircle2 size={12} />
+                            Schema Validated
+                        </div>
+                    </div>
+                )}
+
+                {!planResult?.success && selectedOps.size > 0 && <p role="alert" className="mx-3 mt-3 text-sm text-amber-300">This proposal cannot be applied: {planResult?.error || 'No valid changes were found.'}</p>}
+                {executionError && <p role="alert" className="mx-3 mt-3 text-sm text-amber-300">{executionError}</p>}
                 {/* Operations List */}
-                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                <fieldset disabled={submitting} className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
                     {editableOps.map((op, idx) => {
                         const { icon, label, description } = getOpInfo(op);
                         const isExpanded = expandedIdx === idx;
@@ -419,10 +728,12 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
                             >
                                 <div
                                     className="flex items-center gap-3 p-3 cursor-pointer hover:bg-slate-800/30 transition-colors"
-                                    onClick={() => setExpandedIdx(isExpanded ? null : idx)}
+                                    role="button" tabIndex={submitting ? -1 : 0} aria-label={"Edit action "+(idx+1)} aria-expanded={isExpanded}
+                                    onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && event.target === event.currentTarget && !submitting) { event.preventDefault(); setExpandedIdx(isExpanded ? null : idx); } }}
+                                    onClick={() => !submitting && setExpandedIdx(isExpanded ? null : idx)}
                                 >
                                     <button
-                                        onClick={(e) => { e.stopPropagation(); toggleOpSelection(idx); }}
+                                        aria-label={"Include action "+(idx+1)+": "+(description || label)} aria-pressed={isSelected} onClick={(e) => { e.stopPropagation(); toggleOpSelection(idx); }}
                                         className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors shrink-0 ${isSelected
                                                 ? 'border-emerald-500 bg-emerald-500 text-white'
                                                 : 'border-slate-600 hover:border-slate-500'
@@ -452,7 +763,7 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
                             </div>
                         );
                     })}
-                </div>
+                </fieldset>
 
                 {/* Footer */}
                 <div className="p-4 border-t border-slate-800 flex items-center justify-between gap-3 shrink-0 bg-slate-900">
@@ -461,18 +772,19 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
                     </div>
                     <div className="flex gap-2">
                         <button
-                            onClick={onCancel}
+                            onClick={handleCancel}
+                            disabled={submitting}
                             className="px-4 py-2 rounded-lg text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
                         >
                             Cancel
                         </button>
                         <button
                             onClick={handleConfirm}
-                            disabled={selectedOps.size === 0}
+                            disabled={submitting || !planResult?.success || !planResult.plan || planResult.plan.validated_mutations.length === 0}
                             className="px-4 py-2 rounded-lg text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                         >
                             <Save size={14} />
-                            Apply ({selectedOps.size})
+                            {submitting ? 'Applying...' : 'Apply ('+selectedOps.size+')'}
                         </button>
                     </div>
                 </div>

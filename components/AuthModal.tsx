@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { useFocusTrap } from '../utils/accessibility';
 import { Mail, Lock, User, LogIn, UserPlus, X, Loader2, AlertCircle } from 'lucide-react';
 import { signInWithEmail, signUpWithEmail, signInWithGoogle, isFirebaseConfigured } from '../services/firebase';
 
@@ -8,6 +9,25 @@ interface AuthModalProps {
 }
 
 const AuthModal: React.FC<AuthModalProps> = ({ onClose, onSuccess }) => {
+    const dialogRef = useRef<HTMLDivElement>(null);
+    const onCloseRef = useRef(onClose);
+    onCloseRef.current = onClose;
+    useEffect(() => {
+        const trigger = document.activeElement as HTMLElement | null;
+        const dismiss = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                onCloseRef.current();
+            }
+        };
+        document.addEventListener('keydown', dismiss);
+        return () => {
+            document.removeEventListener('keydown', dismiss);
+            if (trigger?.isConnected) trigger.focus();
+        };
+    }, []);
+    useFocusTrap(dialogRef, true);
     const [mode, setMode] = useState<'signin' | 'signup'>('signin');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -54,10 +74,10 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose, onSuccess }) => {
     if (!isConfigured) {
         return (
             <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl">
+                <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl">
                     <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-xl font-bold text-slate-100">Firebase Not Configured</h2>
-                        <button onClick={onClose} className="text-slate-500 hover:text-white">
+                        <h2 id="auth-modal-title" className="text-xl font-bold text-slate-100">Firebase Not Configured</h2>
+                        <button type="button" aria-label="Close authentication dialog" onClick={onClose} className="text-slate-500 hover:text-white">
                             <X size={20} />
                         </button>
                     </div>
@@ -96,13 +116,13 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose, onSuccess }) => {
 
     return (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl">
+            <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl">
                 {/* Header */}
                 <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-xl font-bold text-slate-100">
+                    <h2 id="auth-modal-title" className="text-xl font-bold text-slate-100">
                         {mode === 'signin' ? 'Welcome Back' : 'Create Account'}
                     </h2>
-                    <button onClick={onClose} className="text-slate-500 hover:text-white">
+                    <button type="button" aria-label="Close authentication dialog" onClick={onClose} className="text-slate-500 hover:text-white">
                         <X size={20} />
                     </button>
                 </div>

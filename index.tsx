@@ -1,7 +1,10 @@
+import { applyTheme, getTheme } from './services/theme';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
+
+applyTheme(getTheme(), false);
 
 // Auto-recover from chunk loading mismatches caused by fresh deployments
 window.addEventListener('vite:preloadError', (event) => {

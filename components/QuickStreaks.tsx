@@ -32,7 +32,7 @@ const QuickStreaks: React.FC = () => {
     const [newStreakCount, setNewStreakCount] = useState('0');
 
     const miniStreaks = useMemo(() => {
-        return entities.filter(e => e.kind === EntityKind.MINI_STREAK && e.status !== 'ARCHIVED');
+        return entities.filter(e => !e.metadata?.deleted && e.kind === EntityKind.MINI_STREAK && e.status !== 'ARCHIVED');
     }, [entities]);
 
     const handleIncrement = (streak: typeof miniStreaks[0]) => {

@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
+import { getActiveEntities } from '../store/helpers';
 import { EntityKind } from '../types';
 import HabitCard from './HabitCard';
 import ContributionHeatmap from './ContributionHeatmap';
@@ -14,7 +15,23 @@ import { SkeletonDashboard } from './Skeleton';
 import EmptyState from './EmptyState';
 
 const AnalyticsView: React.FC = () => {
-    const { entities, relationships, isHydrated } = useStore();
+    const { entities: rawEntities, relationships, isHydrated, selectEntity } = useStore();
+    const entities = useMemo(() => getActiveEntities(rawEntities), [rawEntities]);
+    const layoutRef = useRef<HTMLDivElement>(null);
+    const [layoutWidth, setLayoutWidth] = useState(0);
+
+    useEffect(() => {
+        const element = layoutRef.current;
+        if (!element) return;
+        const observer = new ResizeObserver(() => setLayoutWidth(element.clientWidth));
+        setLayoutWidth(element.clientWidth);
+        observer.observe(element);
+        return () => observer.disconnect();
+    }, []);
+
+    // The analytics route can render beside the chat panel. Viewport breakpoints
+    // misread that available width, so choose columns from the route's own size.
+    const compactLayout = layoutWidth < 1120;
 
     // Show skeleton while loading
     if (!isHydrated) {
@@ -29,7 +46,7 @@ const AnalyticsView: React.FC = () => {
     const totalCompletions = habits.reduce((acc, h) => acc + (h.metadata.total_completions || 0), 0);
 
     return (
-        <div className="h-full flex flex-col bg-gray-900 text-gray-100 overflow-y-auto p-6 md:p-8">
+        <div ref={layoutRef} data-testid="analytics-layout" className="h-full min-w-0 flex flex-col bg-gray-900 text-gray-100 overflow-y-auto p-6 md:p-8">
 
             {/* Header Section */}
             <div className="flex items-center justify-between mb-6 pl-4 md:pl-14">
@@ -48,7 +65,7 @@ const AnalyticsView: React.FC = () => {
             <BadHabitAlert entities={entities} />
 
             {/* Productivity Breakdown & Weekly Summary Grid */}
-            <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div data-testid="analytics-summary-grid" className={`mt-6 grid gap-6 ${compactLayout ? 'grid-cols-1' : 'grid-cols-2'}`}>
                 <WeeklySummary entities={entities} relationships={relationships} />
                 <ProductivityChart entities={entities} />
             </div>
@@ -62,7 +79,7 @@ const AnalyticsView: React.FC = () => {
 
             {/* Goal Progress */}
             <div className="mt-4">
-                <GoalProgressChart entities={entities} />
+                <GoalProgressChart entities={entities} onSelectGoal={selectEntity} />
             </div>
 
             {/* Contribution Heatmap */}
@@ -71,12 +88,12 @@ const AnalyticsView: React.FC = () => {
             </div>
 
             {/* Two-Column Layout: Habits + Leaderboard */}
-            <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className={`mt-6 grid gap-6 ${compactLayout ? 'grid-cols-1' : 'grid-cols-3'}`}>
                 {/* Habits Grid (2/3 width) */}
-                <div className="lg:col-span-2">
+                <div className={compactLayout ? '' : 'col-span-2'}>
                     <h3 className="text-sm font-medium text-gray-400 mb-3">Your Habits</h3>
                     {habits.length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className={`grid gap-4 ${compactLayout ? 'grid-cols-1' : 'grid-cols-2'}`}>
                             {habits.map(habit => (
                                 <HabitCard
                                     key={habit.id}

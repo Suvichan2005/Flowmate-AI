@@ -55,29 +55,34 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
     // Simulation Ref to access nodes for auto-center
     const simulationRef = useRef<d3.Simulation<any, undefined> | null>(null);
     const zoomBehaviorRef = useRef<d3.ZoomBehavior<Element, unknown> | null>(null);
+    const resizeObserverRef = useRef<ResizeObserver | null>(null);
+    const hasFittedCameraRef = useRef(false);
     const performanceMonitorRef = useRef<GraphPerformanceMonitor>(new GraphPerformanceMonitor());
 
     // Performance warnings
     const [showPerformanceWarning, setShowPerformanceWarning] = useState(false);
 
-    const safeEntities = Array.isArray(entities) ? entities : [];
-    const safeRelationships = Array.isArray(relationships) ? relationships : [];
+    const safeEntities = useMemo(() => Array.isArray(entities) ? entities.filter(e => !e.metadata?.deleted) : [], [entities]);
+    const safeRelationships = useMemo(() => Array.isArray(relationships) ? relationships : [], [relationships]);
 
     // Relationship Colors
     const relColors: Record<string, string> = {
-        [RelationshipType.DEPENDS_ON]: '#ef4444', // red-500
-        [RelationshipType.PART_OF]: '#475569', // slate-600
-        [RelationshipType.FULFILLS]: '#10b981', // emerald-500
-        [RelationshipType.PRECEDES]: '#3b82f6', // blue-500
-        [RelationshipType.SCHEDULED_FOR]: '#a855f7', // purple-500
-        [RelationshipType.TAGGED_WITH]: '#6366f1', // indigo-500 (distinct for context)
-        'DEFAULT': '#475569'
+        [RelationshipType.DEPENDS_ON]: 'var(--graph-node-secondary)', // red-500
+        [RelationshipType.PART_OF]: 'var(--graph-edge-muted)', // slate-600
+        [RelationshipType.FULFILLS]: 'var(--status-success)', // emerald-500
+        [RelationshipType.PRECEDES]: 'var(--accent-primary)', // blue-500
+        [RelationshipType.SCHEDULED_FOR]: 'var(--graph-edge-primary)', // purple-500
+        [RelationshipType.TAGGED_WITH]: 'var(--accent-primary)', // indigo-500 (distinct for context)
+        [RelationshipType.ASSIGNED_TO]: 'var(--graph-node-muted)',
+        [RelationshipType.RELATED_TO]: 'var(--graph-edge-muted)',
+        'DEFAULT': 'var(--graph-edge-muted)'
     };
 
     const getLinkColor = (type: string) => relColors[type] || relColors['DEFAULT'];
 
     // Filter Data based on visibility
     const { nodes, links, stats } = useMemo(() => {
+        const priorNodes = new Map<string, any>((simulationRef.current?.nodes() || []).map(node => [node.id, node]));
         // Defensive Filter: Ensure basic properties exist
         // Apply smart visibility rules AND kind filter
         const activeNodes = safeEntities
@@ -88,12 +93,16 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
                 showPastEvents,
                 showOrphans
             }))
-            .map(e => ({
-                ...e,
-                id: e.id,
-                kind: e.kind || EntityKind.NOTE,
-                title: e.title || 'Untitled'
-            }));
+            .map(e => {
+                const previous = priorNodes.get(e.id);
+                return {
+                    ...e,
+                    id: e.id,
+                    kind: e.kind || EntityKind.NOTE,
+                    title: e.title || 'Untitled',
+                    ...(previous ? { x: previous.x, y: previous.y, vx: previous.vx, vy: previous.vy, fx: previous.fx, fy: previous.fy } : {}),
+                };
+            });
 
         const activeNodeIds = new Set(activeNodes.map(n => n.id));
 
@@ -127,8 +136,8 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
     // Prioritize links for large graphs
     const optimizedLinks = useMemo(() => {
         if (links.length <= perfConfig.maxLinks) return links;
-        return prioritizeLinks(links, perfConfig.maxLinks, selectedEntityId);
-    }, [links, perfConfig.maxLinks, selectedEntityId]);
+        return prioritizeLinks(links, perfConfig.maxLinks);
+    }, [links, perfConfig.maxLinks]);
 
     // Update Simulation Forces when props change
     useEffect(() => {
@@ -181,7 +190,7 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
 
         // Re-heat simulation
         sim.alpha(0.3).restart();
-    }, [forceProps, links, nodes, groupByKind]);
+    }, [forceProps, groupByKind]);
 
     // Auto-Center Effect
     useEffect(() => {
@@ -207,7 +216,29 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
         }
     }, [selectedEntityId]);
 
+    // Selection is presentation state. Update the existing SVG nodes instead of
+    // rebuilding the simulation and resetting the user's camera on every click.
     useEffect(() => {
+        if (!svgRef.current) return;
+        const svg = d3.select(svgRef.current);
+        svg.selectAll<SVGCircleElement, any>("g.node circle")
+            .attr("stroke", (d: any) => d.id === selectedEntityId ? "var(--accent-primary)" : "var(--surface-canvas)")
+            .attr("stroke-width", (d: any) => d.id === selectedEntityId ? 3 : 1.5);
+        svg.selectAll<SVGTextElement, any>("g.node text")
+            .style("display", perfConfig.labelMode === 'none' ? 'none' :
+                perfConfig.labelMode === 'focused' ? (d: any) => d.id === selectedEntityId ? 'block' : 'none' : null);
+    }, [selectedEntityId, perfConfig.labelMode]);
+
+    useEffect(() => {
+        if (nodes.length === 0) {
+            simulationRef.current?.stop();
+            simulationRef.current = null;
+            resizeObserverRef.current?.disconnect();
+            resizeObserverRef.current = null;
+            zoomBehaviorRef.current = null;
+            hasFittedCameraRef.current = false;
+            return;
+        }
         if (!svgRef.current || !containerRef.current) return;
 
         // Resize handling
@@ -216,9 +247,7 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
         let height = container.clientHeight;
 
         const svg = d3.select(svgRef.current);
-        svg.selectAll("*").remove(); // Clear previous
-
-        if (nodes.length === 0) return;
+        if (width > 0 && height > 0) svg.attr("viewBox", [0, 0, width, height]);
 
         // --- Adjacency Matrix for Highlighting ---
         const linkedByIndex: Record<string, boolean> = {};
@@ -234,102 +263,110 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
         }
         // -----------------------------------------
 
-        // Zoom Group
-        const g = svg.append("g");
+        // Keep a single viewport, zoom behavior, and simulation for the life of
+        // this mounted graph. Data updates use keyed joins below.
+        let g = svg.select<SVGGElement>("g.graph-viewport");
+        const isNewGraph = g.empty();
+        if (isNewGraph) g = svg.append("g").attr("class", "graph-viewport");
 
-        const zoom = d3.zoom()
-            .scaleExtent([0.1, 4])
-            .on("zoom", (event) => {
-                g.attr("transform", event.transform);
-                setTransform(event.transform); // Sync state
-                setContextMenu(null); // Hide menu on zoom
+        let zoom = zoomBehaviorRef.current;
+        if (!zoom || isNewGraph) {
+            zoom = d3.zoom()
+                .scaleExtent([0.1, 4])
+                .on("zoom", (event) => {
+                    d3.select(svgRef.current).select("g.graph-viewport").attr("transform", event.transform.toString());
+                    if (event.sourceEvent) hasFittedCameraRef.current = true;
+                    setTransform(event.transform);
+                    setContextMenu(null);
+                });
+            zoomBehaviorRef.current = zoom;
+            svg.call(zoom as any).on("dblclick.zoom", null);
+            svg.on("click", () => {
+                selectEntity(null);
+                setContextMenu(null);
             });
-
-        zoomBehaviorRef.current = zoom;
-
-        svg.call(zoom as any)
-            .on("dblclick.zoom", null);
+        }
+        const initialTransform = d3.zoomTransform(svgRef.current);
+        const shouldFitOnSettle = !hasFittedCameraRef.current && initialTransform.k === 1 && initialTransform.x === 0 && initialTransform.y === 0;
+        if (isNewGraph) g.attr("transform", initialTransform.toString());
 
         // Color scale for Entity Kind
         const color = d3.scaleOrdinal<string>()
             .domain(Object.values(EntityKind))
             .range([
-                '#ef4444', // GOAL (red)
-                '#f97316', // PROJECT (orange)
-                '#3b82f6', // TASK (blue)
-                '#a855f7', // EVENT (purple)
-                '#ec4899', // ACTIVITY (pink)
-                '#f43f5e', // HABIT (rose)
-                '#94a3b8', // TAG (slate)
-                '#cbd5e1', // NOTE (light slate)
-                '#8b5cf6', // CONTEXT (violet)
-                '#fb923c', // PERSON (orange-light)
-                '#fbbf24', // PROMISE (amber)
-                '#22c55e', // OPPORTUNITY (green)
-                '#06b6d4', // MINI_STREAK (cyan)
+                'var(--graph-node-secondary)', // GOAL (red)
+                'var(--accent-primary)', // PROJECT (orange)
+                'var(--accent-primary)', // TASK (blue)
+                'var(--graph-edge-primary)', // EVENT (purple)
+                'var(--graph-node-secondary)', // ACTIVITY (pink)
+                'var(--graph-edge-primary)', // HABIT (rose)
+                'var(--graph-node-muted)', // TAG (slate)
+                'var(--text-secondary)', // NOTE (light slate)
+                'var(--graph-edge-primary)', // CONTEXT (violet)
+                'var(--graph-node-secondary)', // PERSON (orange-light)
+                'var(--accent-primary)', // PROMISE (amber)
+                'var(--graph-edge-primary)', // OPPORTUNITY (green)
+                'var(--accent-primary)', // MINI_STREAK (cyan)
             ]);
 
-        const simulation = d3.forceSimulation(nodes as any)
+        const simulation = simulationRef.current || d3.forceSimulation<any>();
+        simulation.nodes(nodes as any)
             .force("link", d3.forceLink(optimizedLinks).id((d: any) => d.id).distance(forceProps.linkDistance))
             .force("charge", d3.forceManyBody().strength(forceProps.charge))
             .force("center", d3.forceCenter(width / 2, height / 2))
             .force("collide", d3.forceCollide().radius(forceProps.collideRadius))
             .alphaDecay(perfConfig.alphaDecay)
             .velocityDecay(perfConfig.velocityDecay);
-
         simulationRef.current = simulation;
 
         // Arrow markers - Generate one per color
-        const defs = g.append("defs");
+        if (isNewGraph) {
+            const defs = g.append("defs");
+            Object.entries(relColors).forEach(([type, color]) => {
+                const markerId = `arrow-${type.replace(/_/g, '-')}`;
+                defs.append("marker").attr("id", markerId).attr("viewBox", "0 -5 10 10")
+                    .attr("refX", 25).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6)
+                    .attr("orient", "auto").append("path").attr("fill", color).attr("d", "M0,-5L10,0L0,5");
+            });
+            defs.append("marker").attr("id", "arrow-default").attr("viewBox", "0 -5 10 10")
+                .attr("refX", 25).attr("refY", 0).attr("markerWidth", 6).attr("markerHeight", 6)
+                .attr("orient", "auto").append("path").attr("fill", relColors['DEFAULT']).attr("d", "M0,-5L10,0L0,5");
+        }
 
-        Object.entries(relColors).forEach(([type, color]) => {
-            const markerId = `arrow-${type.replace(/_/g, '-')}`;
-            defs.append("marker")
-                .attr("id", markerId)
-                .attr("viewBox", "0 -5 10 10")
-                .attr("refX", 25)
-                .attr("refY", 0)
-                .attr("markerWidth", 6)
-                .attr("markerHeight", 6)
-                .attr("orient", "auto")
-                .append("path")
-                .attr("fill", color)
-                .attr("d", "M0,-5L10,0L0,5");
-        });
-
-        // Fallback marker
-        defs.append("marker")
-            .attr("id", "arrow-default")
-            .attr("viewBox", "0 -5 10 10")
-            .attr("refX", 25)
-            .attr("refY", 0)
-            .attr("markerWidth", 6)
-            .attr("markerHeight", 6)
-            .attr("orient", "auto")
-            .append("path")
-            .attr("fill", relColors['DEFAULT'])
-            .attr("d", "M0,-5L10,0L0,5");
-
-        const link = g.append("g")
-            .selectAll("line")
-            .data(optimizedLinks)
+        let linkGroup = g.select<SVGGElement>("g.links");
+        if (linkGroup.empty()) linkGroup = g.append("g").attr("class", "links").style("pointer-events", "none");
+        const link = linkGroup.selectAll<SVGLineElement, any>("line.link")
+            .data(optimizedLinks, (d: any) => d.id)
             .join("line")
             .attr("stroke-width", (d: any) => d.type === RelationshipType.TAGGED_WITH ? 1 : 2) // Thinner for TAGGED_WITH
             .attr("stroke", (d: any) => getLinkColor(d.type))
             .attr("stroke-opacity", (d: any) => d.type === RelationshipType.TAGGED_WITH ? 0.4 : 0.6)
             .attr("marker-end", (d: any) => {
+                if (d.type === RelationshipType.RELATED_TO) return null;
                 const markerId = `arrow-${d.type.replace(/_/g, '-')}`;
-                return `url(#${markerId})`;
+                return `url(#${g.select(`#${markerId}`).empty() ? 'arrow-default' : markerId})`;
             })
-            .attr("class", "link");
+            .attr("class", "link")
+            .attr("data-relationship-id", (d: any) => d.id)
+            .attr("data-relationship-type", (d: any) => d.type);
 
-        const node = g.append("g")
-            .attr("stroke", "#fff")
+        let nodeGroup = g.select<SVGGElement>("g.nodes");
+        if (nodeGroup.empty()) nodeGroup = g.append("g").attr("class", "nodes");
+        const node = nodeGroup.selectAll<SVGGElement, any>("g.node")
+            .data(nodes, (d: any) => d.id)
+            .join(
+                enter => {
+                    const entered = enter.append("g").attr("class", "node");
+                    entered.append("circle");
+                    entered.append("text");
+                    return entered;
+                },
+                update => update,
+                exit => exit.remove()
+            )
+            .attr("stroke", "var(--surface-canvas)")
             .attr("stroke-width", 1.5)
-            .selectAll("g")
-            .data(nodes)
-            .join("g")
-            .attr("class", "node")
+            .attr("data-node-id", (d: any) => d.id)
             .call(drag(simulation) as any)
             .on("click", (event, d: any) => {
                 selectEntity(d.id);
@@ -361,20 +398,21 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
                 link.transition().duration(200).style("opacity", (d: any) => d.type === RelationshipType.TAGGED_WITH ? 0.4 : 0.6);
             });
 
-        node.append("circle")
+        node.select<SVGCircleElement>("circle")
             .attr("r", (d: any) => d.kind === EntityKind.CONTEXT ? 24 : 15) // Larger size for Context nodes
             .attr("fill", (d: any) => color(d.kind))
             .attr("cursor", "pointer")
-            .attr("class", (d: any) => d.id === selectedEntityId ? "stroke-indigo-400 stroke-[3px]" : "");
+            .attr("stroke", (d: any) => d.id === selectedEntityId ? "var(--accent-primary)" : "var(--surface-canvas)")
+            .attr("stroke-width", (d: any) => d.id === selectedEntityId ? 3 : 1.5);
 
-        node.append("text")
+        node.select<SVGTextElement>("text")
             .text((d: any) => {
                 const title = d.title || 'Untitled';
                 return title.length > 15 ? title.substring(0, 15) + '...' : title;
             })
             .attr("x", 25)
             .attr("y", 5)
-            .attr("fill", "#e2e8f0")
+            .attr("fill", 'var(--text-primary)')
             .attr("stroke", "none")
             .attr("font-size", (d: any) => d.kind === EntityKind.CONTEXT ? "14px" : "12px")
             .attr("font-weight", (d: any) => d.kind === EntityKind.CONTEXT ? "bold" : "normal")
@@ -409,6 +447,25 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
             : tickHandler;
 
         simulation.on("tick", throttledTick);
+        simulation.on("end", () => {
+            if (!shouldFitOnSettle || !svgRef.current || !containerRef.current || simulation.nodes().length === 0) return;
+            const positioned = simulation.nodes().filter((node: any) => Number.isFinite(node.x) && Number.isFinite(node.y));
+            if (!positioned.length) return;
+            const minX = Math.min(...positioned.map((node: any) => node.x));
+            const maxX = Math.max(...positioned.map((node: any) => node.x));
+            const minY = Math.min(...positioned.map((node: any) => node.y));
+            const maxY = Math.max(...positioned.map((node: any) => node.y));
+            const currentWidth = containerRef.current.clientWidth;
+            const currentHeight = containerRef.current.clientHeight;
+            if (currentWidth <= 0 || currentHeight <= 0) return;
+            const padding = 56;
+            const scale = Math.min(1, (currentWidth - padding * 2) / Math.max(1, maxX - minX + 48),
+                (currentHeight - padding * 2) / Math.max(1, maxY - minY + 48));
+            const tx = currentWidth / 2 - ((minX + maxX) / 2) * scale;
+            const ty = currentHeight / 2 - ((minY + maxY) / 2) * scale;
+            hasFittedCameraRef.current = true;
+            svg.transition().duration(250).call(zoom.transform as any, d3.zoomIdentity.translate(tx, ty).scale(scale));
+        });
 
         function drag(simulation: d3.Simulation<d3.SimulationNodeDatum, undefined>) {
             function dragstarted(event: any) {
@@ -438,27 +495,33 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
                 .on("end", dragended);
         }
 
-        const resizeObserver = new ResizeObserver(entries => {
-            for (let entry of entries) {
-                const { width: newWidth, height: newHeight } = entry.contentRect;
-                svg.attr("viewBox", [0, 0, newWidth, newHeight]);
-                simulation.force("center", d3.forceCenter(newWidth / 2, newHeight / 2));
-                simulation.alpha(0.3).restart();
-            }
-        });
+        if (!resizeObserverRef.current) {
+            resizeObserverRef.current = new ResizeObserver(entries => {
+                for (const entry of entries) {
+                    const { width: newWidth, height: newHeight } = entry.contentRect;
+                    if (newWidth <= 0 || newHeight <= 0) continue;
+                    svg.attr("viewBox", [0, 0, newWidth, newHeight]);
+                    if (!groupByKind) simulation.force("center", d3.forceCenter(newWidth / 2, newHeight / 2));
+                    simulation.alpha(0.3).restart();
+                }
+            });
+            resizeObserverRef.current.observe(container);
+        }
+        // Reapply the camera already stored on the SVG; this is the identity
+        // only for the first graph mount and otherwise preserves user zoom/pan.
+        if (isNewGraph) svg.call(zoom.transform as any, initialTransform);
+        else g.attr("transform", initialTransform.toString());
+        simulation.alpha(0.3).restart();
+    }, [nodes, optimizedLinks, perfConfig]);
 
-        resizeObserver.observe(container);
-        svg.call(zoom.transform as any, d3.zoomIdentity);
-        svg.on("click", () => {
-            selectEntity(null);
-            setContextMenu(null);
-        });
-
-        return () => {
-            simulation.stop();
-            resizeObserver.disconnect();
-        };
-    }, [nodes, optimizedLinks, selectedEntityId, perfConfig]);
+    useEffect(() => () => {
+        simulationRef.current?.stop();
+        simulationRef.current = null;
+        resizeObserverRef.current?.disconnect();
+        resizeObserverRef.current = null;
+        zoomBehaviorRef.current = null;
+        hasFittedCameraRef.current = false;
+    }, []);
 
     const handleGlobalMouseUp = (e: React.MouseEvent) => {
         if (dragLink) {
@@ -601,7 +664,7 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
                 </div>
             )}
             
-            <svg ref={svgRef} className="w-full h-full cursor-move"></svg>
+            <svg ref={svgRef} data-testid="graph-canvas" className="w-full h-full cursor-move"></svg>
 
             {/* Visual Link Line */}
             {lineCoords && (

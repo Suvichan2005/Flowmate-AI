@@ -35,6 +35,8 @@ import {
     AttendanceLog,
     ChatSession,
 } from '../types';
+import { isDemoSyncBlocked } from './syncManager';
+import { isLegacySyntheticEntity } from './legacySyntheticEntity';
 
 // --- Collection Paths ---
 
@@ -264,12 +266,23 @@ export function subscribeToChatSessions(
 
     listeners.chatSessions?.();
 
+    let lastSessionsHash = '';
+
     const unsub = onSnapshot(metaDoc(userId, 'chat_sessions'), (snap) => {
         if (snap.exists()) {
             const data = snap.data();
             const sessions: ChatSession[] = data.sessions || [];
-            console.log(`[FirestoreSync] Chat sessions snapshot: ${sessions.length} sessions`);
-            onUpdate(sessions);
+            const hash = JSON.stringify(sessions.map(s => ({
+                id: s.id,
+                title: s.title,
+                deleted: !!s.deleted,
+                updated_at: s.updated_at,
+            })));
+            if (hash !== lastSessionsHash) {
+                lastSessionsHash = hash;
+                console.log(`[FirestoreSync] Chat sessions snapshot: ${sessions.length} sessions`);
+                onUpdate(sessions);
+            }
         }
     }, (error) => {
         console.error('[FirestoreSync] Chat sessions listener error:', error);
@@ -456,7 +469,7 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
  * Save a single message to Firestore.
  */
 export async function saveMessage(userId: string, message: Message): Promise<boolean> {
-    if (!isFirebaseConfigured() || !db) return false;
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
 
     try {
         const { id, ...data } = message;
@@ -472,7 +485,7 @@ export async function saveMessage(userId: string, message: Message): Promise<boo
  * Save multiple messages to Firestore in a batch.
  */
 export async function saveMessages(userId: string, messages: Message[]): Promise<boolean> {
-    if (!isFirebaseConfigured() || !db || messages.length === 0) return false;
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db || messages.length === 0) return false;
 
     try {
         const BATCH_SIZE = 450;
@@ -497,20 +510,33 @@ export async function saveMessages(userId: string, messages: Message[]): Promise
  * Sync specific changed entities to Firestore (granular write).
  */
 export async function syncEntities(userId: string, entities: Entity[]): Promise<boolean> {
+    // Demo Mode Isolation: Block granular entity sync if demo mode is active
+    if (isDemoSyncBlocked()) {
+        console.warn('[FirestoreSync] syncEntities blocked: Demo mode is active.');
+        return false;
+    }
+
     if (!isFirebaseConfigured() || !db || entities.length === 0) return false;
+
+    // Filter out synthetic demo entities to isolate personal cloud sync
+    const nonDemoEntities = entities.filter(e => !isLegacySyntheticEntity(e));
+    if (nonDemoEntities.length === 0) {
+        console.warn('[FirestoreSync] syncEntities skipped: all entities are demo entities.');
+        return false;
+    }
 
     try {
         const BATCH_SIZE = 450;
-        for (let i = 0; i < entities.length; i += BATCH_SIZE) {
+        for (let i = 0; i < nonDemoEntities.length; i += BATCH_SIZE) {
             const batch = writeBatch(db);
-            const chunk = entities.slice(i, i + BATCH_SIZE);
+            const chunk = nonDemoEntities.slice(i, i + BATCH_SIZE);
             for (const entity of chunk) {
                 const { id, ...data } = entity;
                 batch.set(entityDoc(userId, id), sanitizeForFirestore(data));
             }
             await batch.commit();
         }
-        console.log(`[FirestoreSync] Synced ${entities.length} entities`);
+        console.log(`[FirestoreSync] Synced ${nonDemoEntities.length} entities`);
         return true;
     } catch (error) {
         console.error('[FirestoreSync] Entity sync failed:', error);
@@ -522,7 +548,7 @@ export async function syncEntities(userId: string, entities: Entity[]): Promise<
  * Sync specific changed relationships to Firestore.
  */
 export async function syncRelationships(userId: string, relationships: Relationship[]): Promise<boolean> {
-    if (!isFirebaseConfigured() || !db || relationships.length === 0) return false;
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db || relationships.length === 0) return false;
 
     try {
         const BATCH_SIZE = 450;
@@ -547,7 +573,7 @@ export async function syncRelationships(userId: string, relationships: Relations
  * Delete specific entities from Firestore.
  */
 export async function deleteEntitiesFromCloud(userId: string, entityIds: string[]): Promise<boolean> {
-    if (!isFirebaseConfigured() || !db || entityIds.length === 0) return false;
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db || entityIds.length === 0) return false;
 
     try {
         const batch = writeBatch(db);
@@ -567,7 +593,7 @@ export async function deleteEntitiesFromCloud(userId: string, entityIds: string[
  * Delete specific relationships from Firestore.
  */
 export async function deleteRelationshipsFromCloud(userId: string, relIds: string[]): Promise<boolean> {
-    if (!isFirebaseConfigured() || !db || relIds.length === 0) return false;
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db || relIds.length === 0) return false;
 
     try {
         const batch = writeBatch(db);
@@ -583,13 +609,64 @@ export async function deleteRelationshipsFromCloud(userId: string, relIds: strin
 }
 
 /**
+ * Delete specific messages from Firestore.
+ */
+export async function deleteMessagesFromCloud(userId: string, messageIds: string[]): Promise<boolean> {
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db || messageIds.length === 0) return false;
+
+    try {
+        const BATCH_SIZE = 450;
+        for (let i = 0; i < messageIds.length; i += BATCH_SIZE) {
+            const batch = writeBatch(db);
+            const chunk = messageIds.slice(i, i + BATCH_SIZE);
+            for (const id of chunk) {
+                batch.delete(messageDoc(userId, id));
+            }
+            await batch.commit();
+        }
+        console.log(`[FirestoreSync] Deleted ${messageIds.length} messages from cloud`);
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Messages delete failed:', error);
+        return false;
+    }
+}
+
+/**
+ * Delete all messages belonging to a specific channel/session from Firestore.
+ */
+export async function deleteChannelMessages(userId: string, channelId: string): Promise<boolean> {
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db || !channelId) return false;
+
+    try {
+        const snap = await getDocs(messagesCol(userId));
+        const toDelete: string[] = [];
+        snap.forEach(docSnap => {
+            const data = docSnap.data();
+            const msgChannel = data.channelId || 'general';
+            if (msgChannel === channelId) {
+                toDelete.push(docSnap.id);
+            }
+        });
+
+        if (toDelete.length > 0) {
+            return await deleteMessagesFromCloud(userId, toDelete);
+        }
+        return true;
+    } catch (error) {
+        console.error(`[FirestoreSync] Channel messages delete failed for ${channelId}:`, error);
+        return false;
+    }
+}
+
+/**
  * Save user config (tags, settings, metadata) to the user document.
  */
 export async function saveUserConfig(
     userId: string,
     config: Partial<UserConfig>,
 ): Promise<boolean> {
-    if (!isFirebaseConfigured() || !db) return false;
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
 
     try {
         await setDoc(userDoc(userId), {
@@ -608,7 +685,7 @@ export async function saveUserConfig(
  * Save food logs to meta/food document.
  */
 export async function saveFoodLogs(userId: string, foodLogs: FoodLogEntry[]): Promise<boolean> {
-    if (!isFirebaseConfigured() || !db) return false;
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
 
     try {
         await setDoc(metaDoc(userId, 'food'), { foodLogs, updatedAt: serverTimestamp() });
@@ -626,7 +703,7 @@ export async function saveAttendanceData(
     userId: string,
     data: { subjects: Subject[]; classSchedule: ClassSchedule[]; holidays: Holiday[]; attendanceLogs: AttendanceLog[] }
 ): Promise<boolean> {
-    if (!isFirebaseConfigured() || !db) return false;
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
 
     try {
         await setDoc(metaDoc(userId, 'attendance'), { ...data, updatedAt: serverTimestamp() });
@@ -641,7 +718,7 @@ export async function saveAttendanceData(
  * Save chat sessions to meta/chat_sessions document.
  */
 export async function saveChatSessions(userId: string, sessions: ChatSession[]): Promise<boolean> {
-    if (!isFirebaseConfigured() || !db) return false;
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
 
     try {
         await setDoc(metaDoc(userId, 'chat_sessions'), { sessions: sanitizeForFirestore(sessions), updatedAt: serverTimestamp() });
@@ -672,15 +749,20 @@ export const saveUserData = async (
         attendanceLogs?: AttendanceLog[];
     },
 ): Promise<boolean> => {
+    if (isDemoSyncBlocked()) {
+        console.warn('[FirestoreSync] saveUserData blocked: Demo mode is active.');
+        return false;
+    }
     if (!isFirebaseConfigured() || !db) return false;
 
     try {
         const BATCH_SIZE = 450;
+        const nonDemoEntities = (data.entities || []).filter(e => !isLegacySyntheticEntity(e));
 
         // Write entities in batches
-        for (let i = 0; i < data.entities.length; i += BATCH_SIZE) {
+        for (let i = 0; i < nonDemoEntities.length; i += BATCH_SIZE) {
             const batch = writeBatch(db);
-            const chunk = data.entities.slice(i, i + BATCH_SIZE);
+            const chunk = nonDemoEntities.slice(i, i + BATCH_SIZE);
             for (const entity of chunk) {
                 const { id, ...entityData } = entity;
                 batch.set(entityDoc(userId, id), sanitizeForFirestore(entityData));
@@ -757,7 +839,7 @@ export const syncOperation = async (
     operation: any,
     currentData: { entities: Entity[]; relationships: Relationship[] },
 ): Promise<boolean> => {
-    if (!isFirebaseConfigured() || !db) return false;
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
 
     try {
         const changedEntityIds: string[] = [];
@@ -879,6 +961,7 @@ export const mergeMessages = (
 
 /**
  * Merge chat sessions - union by ID, newer updated_at wins.
+ * Preserves soft-deleted tombstones so deletions propagate across devices and sync without resurrection.
  */
 export const mergeChatSessions = (
     local: ChatSession[],
@@ -897,8 +980,22 @@ export const mergeChatSessions = (
         } else {
             const localTime = new Date(localSession.updated_at || localSession.created_at).getTime();
             const remoteTime = new Date(remoteSession.updated_at || remoteSession.created_at).getTime();
-            if (localTime >= remoteTime) {
+            if (localTime > remoteTime) {
                 merged.set(localSession.id, localSession);
+            } else if (remoteTime > localTime) {
+                merged.set(localSession.id, remoteSession);
+            } else {
+                // Identical timestamps: preserve deleted tombstone if either is deleted
+                if (localSession.deleted || remoteSession.deleted) {
+                    const winner = localSession.deleted ? localSession : remoteSession;
+                    merged.set(localSession.id, {
+                        ...winner,
+                        deleted: true,
+                        deleted_at: localSession.deleted_at || remoteSession.deleted_at || winner.updated_at,
+                    });
+                } else {
+                    merged.set(localSession.id, localSession);
+                }
             }
         }
     });
@@ -912,7 +1009,7 @@ export const mergeChatSessions = (
 // --- Delete User Data ---
 
 export const deleteUserData = async (userId: string): Promise<boolean> => {
-    if (!isFirebaseConfigured() || !db) return false;
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
 
     try {
         // Delete all entities

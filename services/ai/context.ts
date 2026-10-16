@@ -15,22 +15,41 @@ import { useStore } from "../../store";
 import { stripBase64Prefix, getMimeType } from "../../utils/imageProcessing";
 import { calculateRelevance } from "./executors";
 import { HISTORY_WINDOW } from "./client";
+import type { DeviceLocationWithFreshness } from "../context/types";
 
 // ---------------------------------------------------------------------------
 // Entity Context
 // ---------------------------------------------------------------------------
 
 interface ContextSnapshot {
-  entities: Array<Record<string, any>>;
+  entities: Array<Record<string, unknown>>;
   relationships: Array<{ f: string; t: string; tp: string }>;
 }
 
 /** Compact entity representation — drops null fields to save tokens. */
-function compactEntity(e: Entity): Record<string, any> {
-  const obj: Record<string, any> = { id: e.id, k: e.kind, t: e.title, s: e.status };
+function compactEntity(e: Entity): Record<string, unknown> {
+  const obj: Record<string, unknown> = {
+    id: e.id,
+    k: e.kind,
+    s_id: (e as { schema_id?: string }).schema_id || `system/${e.kind.toLowerCase()}`,
+    t: e.title,
+    s: e.status,
+  };
+  if (e.parent_id) obj.p_id = e.parent_id;
   if (e.deadline) obj.dl = e.deadline;
   if (e.start_time) obj.st = e.start_time;
   if (e.canonical_tags?.length) obj.tags = e.canonical_tags;
+  const certainty = e.scheduling_certainty || (e.metadata?.scheduling_certainty as string | undefined);
+  if (certainty) obj.cert = certainty;
+
+  const subtasks = e.subtasks || (e.metadata?.subtasks as typeof e.subtasks | undefined);
+  if (Array.isArray(subtasks) && subtasks.length > 0) {
+    obj.subtasks = subtasks.map(s => ({
+      id: s.id,
+      t: s.title,
+      c: Boolean(s.completed),
+    }));
+  }
   return obj;
 }
 
@@ -52,8 +71,8 @@ export function buildEntityContext(
   const windowStart = now - 7 * DAY;
   const windowEnd = now + 7 * DAY;
 
-  // Exclude hidden entities
-  const visible = entities.filter(e => !e.metadata?.hidden);
+  // Exclude hidden and deleted entities
+  const visible = entities.filter(e => !e.metadata?.hidden && !e.metadata?.deleted);
 
   // 1) Date-window entities
   const inWindow = visible.filter(e => {
@@ -76,6 +95,25 @@ export function buildEntityContext(
   const contextMap = new Map<string, Entity>();
   for (const e of inWindow) contextMap.set(e.id, e);
   for (const e of relevant) contextMap.set(e.id, e);
+
+  // Include 1-hop connected entities for selected items (up to 15 max)
+  let hopCount = 0;
+  for (const r of relationships) {
+    if (hopCount >= 15) break;
+    if (contextMap.has(r.from) && !contextMap.has(r.to)) {
+      const target = visible.find(e => e.id === r.to);
+      if (target) {
+        contextMap.set(target.id, target);
+        hopCount++;
+      }
+    } else if (contextMap.has(r.to) && !contextMap.has(r.from)) {
+      const source = visible.find(e => e.id === r.from);
+      if (source) {
+        contextMap.set(source.id, source);
+        hopCount++;
+      }
+    }
+  }
 
   const selected = Array.from(contextMap.values());
   const filteredRels = relationships.filter(
@@ -214,14 +252,16 @@ export function buildHistory(
   }
 
   // Sliding window of recent messages
-  const window = messages.slice(-HISTORY_WINDOW);
+  const messageWindow = messages.slice(-HISTORY_WINDOW);
 
-  for (const msg of window) {
+  for (const msg of messageWindow) {
     if (msg.role === 'user') {
-      const parts: any[] = [{ text: msg.text }];
+      const parts: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> = [
+        { text: msg.text },
+      ];
 
       // Attach image on the last user message if provided
-      if (msg === window[window.length - 1] && attachmentDataUrl) {
+      if (msg === messageWindow[messageWindow.length - 1] && attachmentDataUrl) {
         try {
           parts.push({
             inlineData: {
@@ -293,18 +333,77 @@ export function summarizeOlderMessages(messages: Message[]): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Current-Turn Live Context Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Detects whether the current turn's query is location-sensitive
+ * (e.g., travel, commute, directions, nearby places, weather, "where am I").
+ */
+export function isLocationRelevantQuery(message: string): boolean {
+  if (!message || typeof message !== 'string') return false;
+  const lower = message.toLowerCase().trim();
+
+  // Multi-word phrases
+  const phrases = [
+    'where am i',
+    'where are we',
+    'my location',
+    'current location',
+    'near me',
+    'how far',
+    'when should i leave',
+    'leave for',
+    'head out',
+    'how long to reach',
+    'way to',
+  ];
+  if (phrases.some(p => lower.includes(p))) return true;
+
+  // Spatial intent regex patterns
+  const patterns = [
+    /\b(nearby|nearest|closest)\b/,
+    /\b(commute|commutes|travel|route|routes|directions?)\b/,
+    /\b(distance|eta|navigation|navigate)\b/,
+    /\b(station|airport|terminal)\b/,
+    /\b(weather|forecast)\b/,
+    /\b(coffee\s*shop|restaurant|cafe|pharmacy|petrol|gas\s*station|atm)\b/,
+  ];
+
+  return patterns.some(pattern => pattern.test(lower));
+}
+
+/**
+ * Formats a live device location reading into human-readable model-facing context prose.
+ * High-level locality/place name is prioritized over raw coordinates so LLMs can reason naturally.
+ */
+export function formatLiveLocationForContext(
+  reading: DeviceLocationWithFreshness,
+  placeName?: string,
+): string {
+  const ageSec = Math.max(1, Math.round(reading.ageMs / 1000));
+  const accM = Math.round(reading.accuracy_meters);
+  const locationLabel = placeName || `${reading.lat.toFixed(4)}°N, ${reading.lon.toFixed(4)}°E`;
+  const tierLabel = reading.freshnessTier === 'fresh' ? 'fresh' : `${reading.freshnessTier} observation`;
+
+  return `Current approximate location: ${locationLabel}. Accuracy: ~${accM}m. Acquired ${ageSec}s ago. Source: device location (${tierLabel}).`;
+}
+
+// ---------------------------------------------------------------------------
 // Full Context Prompt
 // ---------------------------------------------------------------------------
 
 /**
  * Assemble the full context prompt that gets prepended to the user's message.
- * Combines entity snapshot, tags, food data, and time awareness.
+ * Combines entity snapshot, tags, food data, time awareness, and live context.
  */
 export function buildContextPrompt(
   contextSnapshot: ContextSnapshot,
   tagList: string,
   foodEnabled: boolean,
   timezone: string,
+  homeLocation?: string,
+  liveLocationContext?: string | null,
 ): string {
   const { timeString, timeOfDay, isoDate } = buildTimeContext(timezone);
 
@@ -312,6 +411,8 @@ export function buildContextPrompt(
     `[Graph] ${JSON.stringify(contextSnapshot)}`,
     tagList ? `[Tags] ${tagList}` : '',
     `[Time] ${timeString} (${timeOfDay}) | Reference ISO: ${isoDate}`,
+    liveLocationContext ? `[Live Context] ${liveLocationContext}` : '',
+    homeLocation ? `[Location] Configured Default Starting Location: ${homeLocation}` : '',
   ];
 
   if (foodEnabled) {

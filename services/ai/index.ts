@@ -12,15 +12,15 @@
 export type { ImprovementType } from "./prompts";
 export { generateContextualSuggestions, getInstantContextualSuggestions, type ContextualSuggestion } from "./suggestions";
 
-import { FunctionCallingConfigMode } from "@google/genai";
+import { FunctionCallingConfigMode, ThinkingLevel } from "@google/genai";
 import type { Content } from "@google/genai";
 import type { Entity, Relationship, Message, ToonResponse, ToonOperation } from "../../types";
 import { EntityKind, EntityStatus } from "../../types";
 import { useStore } from "../../store";
 import { withRetry } from "../../utils/apiRetry";
 
-import { getAiClient, GEMINI_RETRY_CONFIG, DEFAULT_MODEL, MAX_FUNCTION_TURNS } from "./client";
-import { FLOWMATE_TOOLS } from "./tools";
+import { getAiClient, hasAiApiKey, GEMINI_RETRY_CONFIG, DEFAULT_MODEL, MAX_FUNCTION_TURNS } from "./client";
+import { FLOWMATE_TOOLS, ACTIVE_AI_TOOLS } from "./tools";
 import { dispatchToolCall, calculateRelevance } from "./executors";
 import {
   SYSTEM_INSTRUCTION,
@@ -32,23 +32,57 @@ import {
 import {
   buildEntityContext,
   buildContextPrompt,
+  buildFoodContext,
   buildHistory,
   summarizeOlderMessages,
+  isLocationRelevantQuery,
+  formatLiveLocationForContext,
 } from "./context";
+import { liveContext, privacyManager, contextResolver } from "../context";
 
 // ---------------------------------------------------------------------------
-// orchestrateMessage
+// Orchestration Callbacks & orchestrateMessage
 // ---------------------------------------------------------------------------
+
+export interface OrchestrationCallbacks {
+  onChunk?: (chunk: string) => void;
+  onThinking?: (thinkingText: string) => void;
+  onToolCall?: (tool: { name: string; latency_ms: number; success: boolean }) => void;
+  onMetrics?: (metrics: {
+    ttft_ms?: number;
+    thinking_ms?: number;
+    total_ms?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+  }) => void;
+  signal?: AbortSignal;
+}
 
 export const orchestrateMessage = async (
   history: Message[],
   userMessage: string,
   snapshot: { entities: Entity[]; relationships: Relationship[] },
   attachmentDataUrl?: string | null,
+  callbacks?: OrchestrationCallbacks,
 ): Promise<ToonResponse> => {
   const { addDebugLog, settings, universalTags } = useStore.getState();
   const modelName = settings?.preferred_model || DEFAULT_MODEL;
   const customInstructions = settings?.custom_instructions || '';
+
+  // Never present deterministic local rules as generated AI output.
+  if (!hasAiApiKey()) {
+    const unavailableMessage = 'Gemini is not configured, so Flowmate did not generate an AI response. Your message is saved in this conversation. Configure an authorized provider in Settings to use AI assistance; your local workspace remains available.';
+    callbacks?.onChunk?.(unavailableMessage);
+    return {
+      ops: [],
+      assistant: {
+        message: unavailableMessage,
+        tone: 'neutral',
+        follow_up: ['Open Settings'],
+      },
+    };
+  }
+
   const ai = getAiClient();
 
   // --- System Instruction ---
@@ -64,8 +98,12 @@ export const orchestrateMessage = async (
     systemInstruction += `\n\nUSER CUSTOM INSTRUCTIONS:\n${customInstructions}`;
   }
 
-  // --- Context ---
-  const timezone = settings.timezone || 'Asia/Kolkata';
+  // --- P1-07 Unified Context & Memory Resolution ---
+  const resolvedContext = await contextResolver.resolveContext({
+    userMessage,
+    source: 'text_chat',
+  });
+
   const entityContext = buildEntityContext(
     snapshot.entities,
     snapshot.relationships,
@@ -76,19 +114,26 @@ export const orchestrateMessage = async (
     .map(t => `${t.title} (${t.kind[0]})`)
     .join(', ');
 
-  const contextPrompt = buildContextPrompt(
-    entityContext,
-    tagList,
-    !!featureToggles.food_tracking,
-    timezone,
-  );
+  const promptSections: string[] = [
+    resolvedContext.serializedPromptSection,
+    `[Graph] ${JSON.stringify(entityContext)}`,
+    tagList ? `[Tags] ${tagList}` : '',
+  ];
+
+  if (featureToggles.food_tracking) {
+    const food = buildFoodContext();
+    if (food.summary) promptSections.push(`[Food] ${food.summary}`);
+    if (food.recentMeals) promptSections.push(`[Recent meals] ${food.recentMeals}`);
+  }
+
+  const contextPrompt = promptSections.filter(Boolean).join('\n\n');
 
   // --- Conversation History (with rolling summary) ---
   const conversationSummary = summarizeOlderMessages(history);
   const contents = buildHistory(history, conversationSummary, attachmentDataUrl);
 
   // Attach context to the latest user message or append one
-  let lastUserEntry: any = null;
+  let lastUserEntry: Content | null = null;
   for (let i = contents.length - 1; i >= 0; i--) {
     if (contents[i].role === 'user') {
       lastUserEntry = contents[i];
@@ -97,8 +142,10 @@ export const orchestrateMessage = async (
   }
 
   if (lastUserEntry && lastUserEntry.parts && lastUserEntry.parts[0]) {
-    const textPart = lastUserEntry.parts[0] as { text: string };
-    textPart.text = `${contextPrompt}\n\n${textPart.text}`;
+    const firstPart = lastUserEntry.parts[0];
+    if (typeof firstPart === 'object' && firstPart !== null && 'text' in firstPart) {
+      (firstPart as { text: string }).text = `${contextPrompt}\n\n${(firstPart as { text: string }).text}`;
+    }
   } else {
     // If contents has no user message or ended on a model message, append a fresh user turn
     contents.push({
@@ -121,46 +168,144 @@ export const orchestrateMessage = async (
     );
   }
 
+  const turnStartTime = performance.now();
+  let firstTokenTime: number | null = null;
+  let accumulatedStreamingText = '';
+
   try {
     // --- Multi-turn function-calling loop ---
     for (let turn = 0; turn < MAX_FUNCTION_TURNS; turn++) {
-      const response = await withRetry(
-        () =>
-          ai.models.generateContent({
-            model: modelName,
-            contents,
-            config: {
-              tools: FLOWMATE_TOOLS,
-              toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
-              systemInstruction,
-              temperature: 0.7,
-            },
-          }),
-        GEMINI_RETRY_CONFIG,
-        (attempt, error, delay) => {
-          console.warn(`[Gemini] Retry ${attempt} after ${delay}ms:`, error?.message);
-        },
-      );
+      if (callbacks?.signal?.aborted) {
+        throw new DOMException('Aborted by user', 'AbortError');
+      }
+
+      let responseText = '';
+      const functionCalls: Array<{ name: string; args: Record<string, unknown> | undefined }> = [];
+      let candidateContent: Content | null = null;
+
+      const aiConfig = {
+        tools: ACTIVE_AI_TOOLS,
+        toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
+        systemInstruction,
+        temperature: 0.2,
+        thinkingConfig: modelName.includes('2.5')
+          ? { thinkingBudget: 0 }
+          : { thinkingLevel: ThinkingLevel.LOW },
+      };
+
+      if (typeof ai.models.generateContentStream === 'function') {
+        const stream = await withRetry(
+          () =>
+            ai.models.generateContentStream({
+              model: modelName,
+              contents,
+              config: aiConfig,
+            }),
+          GEMINI_RETRY_CONFIG,
+          (attempt, error, delay) => {
+            console.warn(`[Gemini] Stream retry ${attempt} after ${delay}ms:`, error?.message);
+          },
+        );
+
+        for await (const chunk of stream) {
+          if (callbacks?.signal?.aborted) {
+            throw new DOMException('Aborted by user', 'AbortError');
+          }
+
+          if (chunk.candidates && chunk.candidates[0]?.content) {
+            candidateContent = chunk.candidates[0].content;
+          }
+
+          if (chunk.functionCalls && chunk.functionCalls.length > 0) {
+            for (const fc of chunk.functionCalls) {
+              functionCalls.push({ name: fc.name!, args: fc.args as Record<string, unknown> | undefined });
+            }
+          }
+
+          const chunkText = chunk.text;
+          if (chunkText) {
+            if (firstTokenTime === null) {
+              firstTokenTime = performance.now();
+              const ttft = Math.round(firstTokenTime - turnStartTime);
+              callbacks?.onMetrics?.({ ttft_ms: ttft });
+            }
+            responseText += chunkText;
+            accumulatedStreamingText += chunkText;
+            callbacks?.onChunk?.(chunkText);
+          }
+        }
+      } else {
+        const response = await withRetry(
+          () =>
+            ai.models.generateContent({
+              model: modelName,
+              contents,
+              config: aiConfig,
+            }),
+          GEMINI_RETRY_CONFIG,
+          (attempt, error, delay) => {
+            console.warn(`[Gemini] Retry ${attempt} after ${delay}ms:`, error?.message);
+          },
+        );
+
+        if (response.candidates && response.candidates[0]?.content) {
+          candidateContent = response.candidates[0].content;
+        }
+        if (response.functionCalls && response.functionCalls.length > 0) {
+          for (const fc of response.functionCalls) {
+            functionCalls.push({ name: fc.name!, args: fc.args as Record<string, unknown> | undefined });
+          }
+        }
+        responseText = response.text || '';
+        if (responseText) {
+          if (firstTokenTime === null) {
+            firstTokenTime = performance.now();
+            const ttft = Math.round(firstTokenTime - turnStartTime);
+            callbacks?.onMetrics?.({ ttft_ms: ttft });
+          }
+          callbacks?.onChunk?.(responseText);
+        }
+      }
 
       // --- Handle apply_changes (write tool) ---
-      const applyCall = response.functionCalls?.find(c => c.name === 'apply_changes');
+      const applyCall = functionCalls.find(c => c.name === 'apply_changes');
       if (applyCall) {
-        const ops: ToonOperation[] = (applyCall.args as any).ops || [];
-        const explanation = (applyCall.args as any).explanation || '';
+        const rawArgs = applyCall.args;
+        const ops: ToonOperation[] = Array.isArray(rawArgs?.ops)
+          ? (rawArgs.ops as ToonOperation[])
+          : [];
+        const explanation = typeof rawArgs?.explanation === 'string'
+          ? rawArgs.explanation
+          : '';
 
         // Execute read-only calls that came in the same turn
-        const otherCalls = (response.functionCalls || []).filter(c => c.name !== 'apply_changes');
+        const otherCalls = functionCalls.filter(c => c.name !== 'apply_changes');
         if (otherCalls.length > 0) {
-          const otherResponses = otherCalls.map(c =>
-            dispatchToolCall({ name: c.name!, args: c.args }, snapshot.entities),
+          const otherResponses = await Promise.all(
+            otherCalls.map(async c => {
+              const t0 = performance.now();
+              const res = await dispatchToolCall(
+                { name: c.name!, args: c.args as Record<string, unknown> | undefined },
+                snapshot.entities,
+              );
+              const lat = Math.round(performance.now() - t0);
+              callbacks?.onToolCall?.({ name: c.name!, latency_ms: lat, success: true });
+              return res;
+            }),
           );
           contents.push({
-            role: 'function' as any,
+            role: 'user',
             parts: otherResponses.map(r => ({
               functionResponse: { name: r.name, response: r.response },
             })),
           });
         }
+
+        const total_ms = Math.round(performance.now() - turnStartTime);
+        callbacks?.onMetrics?.({
+          total_ms,
+          ttft_ms: firstTokenTime ? Math.round(firstTokenTime - turnStartTime) : undefined,
+        });
 
         return {
           ops,
@@ -173,21 +318,29 @@ export const orchestrateMessage = async (
       }
 
       // --- Handle read-only function calls (continue loop) ---
-      if (response.functionCalls && response.functionCalls.length > 0) {
-        // First append the model turn that invoked the function calls
-        if (response.candidates && response.candidates[0]?.content) {
-          contents.push(response.candidates[0].content);
+      if (functionCalls.length > 0) {
+        if (candidateContent) {
+          contents.push(candidateContent);
         } else {
           contents.push({
             role: 'model',
-            parts: response.functionCalls.map(call => ({
-              functionCall: { name: call.name!, args: call.args },
+            parts: functionCalls.map(call => ({
+              functionCall: { name: call.name, args: call.args },
             })),
           });
         }
 
-        const functionResponses = response.functionCalls.map(call =>
-          dispatchToolCall({ name: call.name!, args: call.args }, snapshot.entities),
+        const functionResponses = await Promise.all(
+          functionCalls.map(async call => {
+            const t0 = performance.now();
+            const res = await dispatchToolCall(
+              { name: call.name, args: call.args },
+              snapshot.entities,
+            );
+            const lat = Math.round(performance.now() - t0);
+            callbacks?.onToolCall?.({ name: call.name, latency_ms: lat, success: true });
+            return res;
+          }),
         );
 
         contents.push({
@@ -201,7 +354,7 @@ export const orchestrateMessage = async (
       }
 
       // --- Handle pure text response ---
-      let text = response.text || '';
+      let text = responseText;
 
       if (!text.trim()) {
         const upcoming = snapshot.entities
@@ -232,6 +385,12 @@ export const orchestrateMessage = async (
         // Not JSON — expected for normal text responses
       }
 
+      const total_ms = Math.round(performance.now() - turnStartTime);
+      callbacks?.onMetrics?.({
+        total_ms,
+        ttft_ms: firstTokenTime ? Math.round(firstTokenTime - turnStartTime) : undefined,
+      });
+
       return {
         ops: toonOps,
         assistant: {
@@ -243,12 +402,24 @@ export const orchestrateMessage = async (
     }
 
     throw new Error('Max function-calling turns exceeded');
-  } catch (error: any) {
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return {
+        ops: [],
+        assistant: {
+          message: accumulatedStreamingText || 'Generation stopped.',
+          tone: 'neutral',
+          follow_up: [],
+        },
+      };
+    }
+
     console.error('Orchestrator failed:', error);
 
-    const errorMsg = error?.message?.includes('quota')
+    const errObj = error as { message?: string } | null;
+    const errorMsg = errObj?.message?.includes('quota')
       ? 'API quota exceeded. Please wait a moment and try again.'
-      : error?.message?.includes('network') || error?.message?.includes('fetch')
+      : errObj?.message?.includes('network') || errObj?.message?.includes('fetch')
         ? 'Network error. Please check your connection.'
         : "I encountered a temporary issue. Please try again — I'm ready to help!";
 
@@ -268,9 +439,18 @@ export const generateBriefing = async (
 ): Promise<string> => {
   const { settings } = useStore.getState();
   const modelName = settings?.preferred_model || DEFAULT_MODEL;
-  const ai = getAiClient();
   const timezone = settings.timezone || 'Asia/Kolkata';
   const now = new Date();
+
+  if (!hasAiApiKey()) {
+    const activeTasks = snapshot.entities.filter(e => e.kind === EntityKind.TASK && e.status === EntityStatus.ACTIVE);
+    const eventsToday = snapshot.entities.filter(
+      e => e.kind === EntityKind.EVENT && e.start_time && new Date(e.start_time).toDateString() === now.toDateString(),
+    );
+    return `Local briefing: you have ${activeTasks.length} active task${activeTasks.length === 1 ? '' : 's'} and ${eventsToday.length} scheduled event${eventsToday.length === 1 ? '' : 's'} today. Calculated from your current workspace, without an AI request.`;
+  }
+
+  const ai = getAiClient();
 
   const timeContext = now.toLocaleString('en-US', {
     weekday: 'long',

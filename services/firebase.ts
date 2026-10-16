@@ -23,7 +23,13 @@ import {
     onAuthStateChanged,
     User
 } from 'firebase/auth';
-import { getFirestore, Firestore } from 'firebase/firestore';
+import {
+    getFirestore,
+    initializeFirestore,
+    persistentLocalCache,
+    persistentMultipleTabManager,
+    Firestore
+} from 'firebase/firestore';
 import type { Auth } from 'firebase/auth';
 
 // Validate required environment variables
@@ -68,7 +74,17 @@ if (hasValidConfig) {
 
     // Export services
     auth = getAuth(app);
-    db = getFirestore(app);
+    try {
+        db = initializeFirestore(app, {
+            localCache: persistentLocalCache({
+                tabManager: persistentMultipleTabManager(),
+            }),
+        });
+        console.log('[Firebase] Initialized Firestore with multi-tab persistent IndexedDB cache');
+    } catch (e) {
+        db = getFirestore(app);
+        console.log('[Firebase] Using existing Firestore instance:', e);
+    }
 
     // Auth providers
     googleProvider = new GoogleAuthProvider();

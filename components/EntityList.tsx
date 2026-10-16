@@ -1,18 +1,23 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
+import { getActiveEntities } from '../store/helpers';
 import { EntityKind, EntityStatus, RelationshipType } from '../types';
 import { Target, BookOpen, Clock, AlertCircle, Search, Filter, CheckCircle2, Circle, Library, StickyNote, Hash, LayoutGrid, Kanban, CalendarRange } from 'lucide-react';
 import KanbanBoard from './KanbanBoard';
 import TimelineView from './TimelineView';
 import { calculateProgress } from '../utils/progressCalculation';
+import { CommitmentCard } from './CommitmentCard';
 
 interface EntityListProps {
-  kinds: EntityKind[]; 
+  kinds?: EntityKind[]; 
+  schemaId?: string;
+  capability?: string;
   title: string;
 }
 
-const EntityList: React.FC<EntityListProps> = ({ kinds, title }) => {
-  const { entities, relationships, selectEntity } = useStore();
+const EntityList: React.FC<EntityListProps> = ({ kinds, schemaId, capability, title }) => {
+  const { entities: rawEntities, relationships, selectEntity } = useStore();
+  const entities = useMemo(() => getActiveEntities(rawEntities), [rawEntities]);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<EntityStatus | 'ALL'>('ALL');
@@ -20,34 +25,44 @@ const EntityList: React.FC<EntityListProps> = ({ kinds, title }) => {
 
   const filteredItems = useMemo(() => {
     return entities.filter(e => {
-        // 1. Kind Check
-        if (!kinds.includes(e.kind)) return false;
+        // 1. Schema Check
+        if (schemaId) {
+          const itemSchema = (e.metadata?._schema_id as string) || `system/${e.kind.toLowerCase()}`;
+          if (itemSchema !== schemaId && itemSchema !== `system/${schemaId}`) return false;
+        }
+
+        // 2. Kind Check
+        if (kinds && kinds.length > 0 && !kinds.includes(e.kind)) return false;
         
-        // 2. Search Check
+        // 3. Search Check
         const query = searchQuery.toLowerCase();
         const matchesSearch = e.title.toLowerCase().includes(query) || 
                               (e.description || '').toLowerCase().includes(query);
         if (!matchesSearch) return false;
 
-        // 3. Status Check (Only applies to GRID view)
+        // 4. Status Check (Only applies to GRID view)
         if (viewMode === 'GRID' && statusFilter !== 'ALL' && e.status !== statusFilter) return false;
 
         return true;
     }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
-  }, [entities, kinds, searchQuery, statusFilter, viewMode]);
+  }, [entities, kinds, schemaId, searchQuery, statusFilter, viewMode]);
 
   const getChildCount = (entityId: string) => {
      return relationships.filter(r => r.to === entityId && r.type === RelationshipType.PART_OF).length;
   };
 
   const getIcon = () => {
-      if (kinds.includes(EntityKind.GOAL)) return <Target className="text-indigo-400 w-8 h-8" />;
-      if (kinds.includes(EntityKind.PROJECT)) return <BookOpen className="text-orange-400 w-8 h-8" />;
-      if (kinds.includes(EntityKind.NOTE)) return <Library className="text-emerald-400 w-8 h-8" />;
+      if (schemaId === 'system/goal' || (kinds && kinds.includes(EntityKind.GOAL))) return <Target className="text-indigo-400 w-8 h-8" />;
+      if (kinds && kinds.includes(EntityKind.PROJECT)) return <BookOpen className="text-orange-400 w-8 h-8" />;
+      if (schemaId === 'system/note' || (kinds && kinds.includes(EntityKind.NOTE))) return <Library className="text-emerald-400 w-8 h-8" />;
       return <StickyNote className="text-slate-400 w-8 h-8" />;
   };
 
-  const isTrackable = kinds.includes(EntityKind.PROJECT) || kinds.includes(EntityKind.GOAL);
+  const isTrackable = Boolean(
+    (kinds && (kinds.includes(EntityKind.PROJECT) || kinds.includes(EntityKind.GOAL))) ||
+    schemaId === 'system/goal' ||
+    capability === 'trackable_progress'
+  );
 
   return (
     <div className="flex-1 overflow-hidden bg-slate-950 p-6 md:p-8 flex flex-col">
@@ -133,6 +148,9 @@ const EntityList: React.FC<EntityListProps> = ({ kinds, title }) => {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-4">
             {filteredItems.map(item => {
+                if (item.metadata?.commitment) {
+                  return <CommitmentCard key={item.id} entityId={item.id} />;
+                }
                 const progress = calculateProgress(item, entities, relationships);
                 const childCount = getChildCount(item.id);
 

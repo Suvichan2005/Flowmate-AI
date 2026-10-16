@@ -1,7 +1,11 @@
 import { Entity, Relationship, EntityKind, EntityStatus, RelationshipType, Subtask } from '../types';
+import { isEntityActive } from '../store/helpers';
 
 export const calculateProgress = (entity: Entity, allEntities: Entity[], allRelationships: Relationship[]): number => {
     // 1. Manual Progress in Metadata (Priority if set explicitly)
+    if (typeof entity.metadata?.progress === 'number') {
+        return entity.metadata.progress;
+    }
     if (typeof entity.metadata?.progress_percent === 'number') {
         return entity.metadata.progress_percent;
     }
@@ -28,10 +32,11 @@ export const calculateProgress = (entity: Entity, allEntities: Entity[], allRela
         }
     }
 
-    // 4. Find children via BOTH parent_id field (new) AND PART_OF relationships (legacy)
-    const childrenViaParentId = allEntities.filter(e => e.parent_id === entity.id);
+    // 4. Find active children via BOTH parent_id field (new) AND PART_OF relationships (legacy)
+    const activeEntities = allEntities.filter(isEntityActive);
+    const childrenViaParentId = activeEntities.filter(e => e.parent_id === entity.id);
     const childrenLinks = allRelationships.filter(r => r.to === entity.id && r.type === RelationshipType.PART_OF);
-    const childrenViaRelationship = allEntities.filter(e => childrenLinks.some(r => r.from === e.id));
+    const childrenViaRelationship = activeEntities.filter(e => childrenLinks.some(r => r.from === e.id));
 
     // Combine and deduplicate
     const allChildren = [...new Map([...childrenViaParentId, ...childrenViaRelationship].map(e => [e.id, e])).values()];

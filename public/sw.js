@@ -1,12 +1,12 @@
 // Flowmate Service Worker
 // Enables offline support and caching for PWA
 
-const CACHE_NAME = 'flowmate-v4-0-1';
+const CACHE_NAME = 'flowmate-v4-themes-1';
 const STATIC_ASSETS = [
     '/',
     '/index.html',
-    '/index.css',
-    '/manifest.json'
+    '/manifest.json',
+    '/theme-init.js'
 ];
 
 // Install event - cache static assets
@@ -73,8 +73,8 @@ self.addEventListener('fetch', (event) => {
                     }
                     return networkResponse;
                 })
-                .catch(() => {
-                    return caches.match('/') || caches.match('/index.html') || new Response('Offline', { status: 503 });
+                .catch(async () => {
+                    return (await caches.match('/')) || (await caches.match('/index.html')) || new Response('Offline', { status: 503 });
                 })
         );
         return;
@@ -88,10 +88,10 @@ self.addEventListener('fetch', (event) => {
                     // Return cached version, but also update cache in background
                     event.waitUntil(
                         fetch(request)
-                            .then((networkResponse) => {
+                            .then(async (networkResponse) => {
                                 if (networkResponse.ok) {
-                                    caches.open(CACHE_NAME)
-                                        .then((cache) => cache.put(request, networkResponse));
+                                    const cache = await caches.open(CACHE_NAME);
+                                    await cache.put(request, networkResponse);
                                 }
                             })
                             .catch(() => { })
@@ -101,11 +101,10 @@ self.addEventListener('fetch', (event) => {
 
                 // Not in cache, fetch from network
                 return fetch(request)
-                    .then((networkResponse) => {
+                    .then(async (networkResponse) => {
                         if (networkResponse.ok) {
-                            const responseToCache = networkResponse.clone();
-                            caches.open(CACHE_NAME)
-                                .then((cache) => cache.put(request, responseToCache));
+                            const cache = await caches.open(CACHE_NAME);
+                            await cache.put(request, networkResponse.clone());
                         }
                         return networkResponse;
                     })

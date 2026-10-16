@@ -1,10 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { EntityKind } from '../types';
 import { useStore } from '../store';
+import { getActiveEntities } from '../store/helpers';
 import { ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 
 const MomentumHeatmap: React.FC = () => {
-    const entities = useStore(state => state.entities) || [];
+    const rawEntities = useStore(state => state.entities) || [];
+    const entities = useMemo(() => getActiveEntities(rawEntities), [rawEntities]);
     const [yearOffset, setYearOffset] = useState(0);
 
     const { weeks, months, maxMinutes, year } = useMemo(() => {

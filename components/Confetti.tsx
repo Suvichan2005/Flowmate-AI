@@ -1,7 +1,9 @@
+import { themeColor, useTheme } from '../services/theme';
 import React, { useEffect, useRef } from 'react';
 import { useStore } from '../store';
 
 const Confetti: React.FC = () => {
+  const activeTheme = useTheme();
   const { showConfetti } = useStore();
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -16,7 +18,7 @@ const Confetti: React.FC = () => {
     canvas.height = window.innerHeight;
 
     const particles: Particle[] = [];
-    const colors = ['#6366f1', '#a855f7', '#ec4899', '#10b981', '#f59e0b'];
+    const colors = [themeColor('--accent-primary'), themeColor('--graph-edge-primary'), themeColor('--graph-node-secondary'), themeColor('--status-success'), themeColor('--graph-node-secondary')];
 
     class Particle {
       x: number;
@@ -89,7 +91,7 @@ const Confetti: React.FC = () => {
     animate();
 
     return () => cancelAnimationFrame(animationId);
-  }, [showConfetti]);
+  }, [showConfetti, activeTheme]);
 
   if (!showConfetti) return null;
 

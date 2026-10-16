@@ -1,3 +1,3 @@
 // Storage Module Barrel Export
-export { asyncStorage } from './asyncStorageAdapter';
+export { asyncStorage, setupCrossTabSync, reconcileStorageSnapshot } from './asyncStorageAdapter';
 export { LocalStorageAdapter } from './LocalStorageAdapter';

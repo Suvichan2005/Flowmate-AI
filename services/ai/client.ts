@@ -11,12 +11,41 @@ import { GoogleGenAI } from "@google/genai";
 import type { RetryConfig } from "../../utils/apiRetry";
 
 // ---------------------------------------------------------------------------
-// Client
+// Client (ephemeral browser key; local rules remain available without Gemini)
 // ---------------------------------------------------------------------------
 
-/** Returns a fresh GoogleGenAI instance using the current API key. */
+let ephemeralApiKey: string | null = null;
+const apiKeyListeners = new Set<(configured: boolean) => void>();
+
+export const subscribeToApiKeyStatus = (listener: (configured: boolean) => void): (() => void) => {
+  apiKeyListeners.add(listener);
+  return () => apiKeyListeners.delete(listener);
+};
+
+/**
+ * Configure an optional, ephemeral user-supplied key at runtime.
+ * Privileged keys must NEVER be configured as build-time VITE_* variables.
+ */
+export const setEphemeralApiKey = (key: string | null): void => {
+  ephemeralApiKey = key;
+  const configured = hasAiApiKey();
+  apiKeyListeners.forEach(listener => listener(configured));
+};
+
+export const getEphemeralApiKey = (): string | null => {
+  return ephemeralApiKey;
+};
+
+/** Check if Gemini API key is configured ephemerally at runtime */
+export const hasAiApiKey = (): boolean => {
+  const key = getEphemeralApiKey();
+  return Boolean(key && key.trim() !== '');
+};
+
+/** Returns a fresh GoogleGenAI instance using the ephemeral runtime API key. */
 export const getAiClient = (): GoogleGenAI => {
-  return new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || '' });
+  const key = getEphemeralApiKey();
+  return new GoogleGenAI({ apiKey: key || '' });
 };
 
 // ---------------------------------------------------------------------------
@@ -39,9 +68,18 @@ export const GEMINI_RETRY_CONFIG: Partial<RetryConfig> = {
 };
 
 // ---------------------------------------------------------------------------
-// Shared Constants
+// Authoritative Model Configuration
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_MODEL = 'gemini-3.8-flash';
+export const AI_MODELS = {
+  BALANCED: 'gemini-3.8-flash',
+  FAST_LITE: 'gemini-3.5-flash-lite',
+  REASONING: 'gemini-3.1-pro-preview',
+  LIVE: 'gemini-3.8-live',
+} as const;
+
+export type AiModelId = typeof AI_MODELS[keyof typeof AI_MODELS];
+
+export const DEFAULT_MODEL = AI_MODELS.BALANCED;
 export const MAX_FUNCTION_TURNS = 5;
 export const HISTORY_WINDOW = 12;

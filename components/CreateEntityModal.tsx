@@ -1,7 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../store';
 import { EntityKind, EntityStatus, RecurrenceType } from '../types';
-import { X, Plus, Type, FileText, Calendar, Repeat, TrendingUp, TrendingDown } from 'lucide-react';
+import { X, Plus, Type, FileText, Calendar, Repeat, TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, Sparkles } from 'lucide-react';
+import {
+    evaluateCandidateSlot,
+    findEarliestFreeSlot,
+    formatLocalTimeSpan,
+    CandidateSlot
+} from '../utils/calendarConflicts';
 
 interface CreateEntityModalProps {
     onClose: () => void;
@@ -11,7 +17,7 @@ interface CreateEntityModalProps {
 }
 
 const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialDate, initialKind, initialTime }) => {
-    const { applyOperations } = useStore();
+    const { applyOperations, entities } = useStore();
 
     const [title, setTitle] = useState('');
     const [kind, setKind] = useState<EntityKind>(initialKind || EntityKind.TASK);
@@ -35,6 +41,56 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
     const [habitType, setHabitType] = useState<'GOOD' | 'BAD'>('GOOD');
     const [frequencyGoal, setFrequencyGoal] = useState<'DAILY' | 'WEEKLY'>('DAILY');
 
+    // Real-Time Calendar Conflict Grounding (Priority D)
+    const candidateSlot: CandidateSlot | null = useMemo(() => {
+        if (kind !== EntityKind.EVENT || !date) return null;
+        try {
+            if (isAllDay) {
+                const start = new Date(date + 'T00:00:00');
+                const end = new Date(date + 'T23:59:59.999');
+                if (isNaN(start.getTime()) || isNaN(end.getTime())) return null;
+                return {
+                    startTimeIso: start.toISOString(),
+                    endTimeIso: end.toISOString(),
+                    isAllDay: true
+                };
+            } else {
+                const start = new Date(date);
+                if (isNaN(start.getTime())) return null;
+                const end = new Date(start.getTime() + 60 * 60 * 1000);
+                return {
+                    startTimeIso: start.toISOString(),
+                    endTimeIso: end.toISOString(),
+                    isAllDay: false
+                };
+            }
+        } catch {
+            return null;
+        }
+    }, [kind, date, isAllDay]);
+
+    const candidateEvaluation = useMemo(() => {
+        if (!candidateSlot) return null;
+        return evaluateCandidateSlot(candidateSlot, entities);
+    }, [candidateSlot, entities]);
+
+    const conflicts = candidateEvaluation?.conflicts || [];
+    const hasConflict = candidateEvaluation?.status === 'conflict';
+    const isSlotClear = candidateEvaluation?.status === 'clear';
+
+    const suggestedFreeSlot = useMemo(() => {
+        if (!hasConflict || !candidateSlot || isAllDay) return null;
+        return findEarliestFreeSlot(candidateSlot, entities);
+    }, [hasConflict, candidateSlot, entities, isAllDay]);
+
+    const handleApplySuggestedSlot = () => {
+        if (!suggestedFreeSlot) return;
+        const slotStart = new Date(suggestedFreeSlot.startTimeIso);
+        slotStart.setMinutes(slotStart.getMinutes() - slotStart.getTimezoneOffset());
+        const newDateStr = isAllDay ? slotStart.toISOString().slice(0, 10) : slotStart.toISOString().slice(0, 16);
+        setDate(newDateStr);
+    };
+
     useEffect(() => {
         if (!date) return;
         if (isAllDay && date.includes('T')) {
@@ -57,6 +113,17 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
         }
     }, [initialDate, initialKind, initialTime]);
 
+    // Accessible Escape key listener to dismiss modal
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                onClose();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [onClose]);
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (!title.trim()) return;
@@ -74,7 +141,7 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
             if (isAllDay) {
                 isoDate = new Date(date + 'T00:00:00').toISOString();
                 if (kind === EntityKind.EVENT) {
-                    payload.metadata = { is_all_day: true };
+                    payload.metadata = { ...(payload.metadata || {}), is_all_day: true };
                 }
             } else {
                 isoDate = new Date(date).toISOString();
@@ -83,9 +150,12 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
             if (kind === EntityKind.EVENT) {
                 payload.start_time = isoDate;
                 if (isAllDay) {
+                    payload.end_time = new Date(date + 'T23:59:59.999').toISOString();
+                } else {
                     const sd = new Date(isoDate);
-                    sd.setHours(23, 59, 59, 999);
+                    sd.setMinutes(sd.getMinutes() + 60);
                     payload.end_time = sd.toISOString();
+                    payload.duration_minutes = 60;
                 }
             } else {
                 payload.deadline = isoDate;
@@ -113,14 +183,28 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-            <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-w-md w-full flex flex-col animate-in fade-in zoom-in duration-200">
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            onClick={onClose}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-entity-modal-title"
+        >
+            <div
+                className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-w-md w-full flex flex-col animate-in fade-in zoom-in duration-200"
+                onClick={(e) => e.stopPropagation()}
+            >
                 <div className="p-6 border-b border-slate-800 flex justify-between items-center">
-                    <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
+                    <h2 id="create-entity-modal-title" className="text-xl font-bold text-slate-100 flex items-center gap-2">
                         <Plus className="w-5 h-5 text-indigo-400" />
                         Create New Entity
                     </h2>
-                    <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="text-slate-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-slate-800"
+                        aria-label="Close dialog"
+                    >
                         <X size={20} />
                     </button>
                 </div>
@@ -133,6 +217,7 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
                             <input
                                 type="text"
                                 value={title}
+                                aria-label="Title"
                                 onChange={(e) => setTitle(e.target.value)}
                                 placeholder="e.g., Complete Project X"
                                 className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-4 focus:ring-2 focus:ring-indigo-500/50 outline-none"
@@ -221,7 +306,15 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
                     <div className="grid grid-cols-2 gap-4">
                         <div>
                             <div className="flex justify-between items-center mb-1">
-                                <label className="block text-xs font-semibold text-slate-500 uppercase">Date</label>
+                                <div className="flex items-center gap-2">
+                                    <label className="block text-xs font-semibold text-slate-500 uppercase">Date</label>
+                                    {kind === EntityKind.EVENT && date && isSlotClear && (
+                                        <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1" data-testid="create-modal-slot-clear">
+                                            <CheckCircle2 className="w-3 h-3" />
+                                            Slot clear
+                                        </span>
+                                    )}
+                                </div>
                                 {kind === EntityKind.EVENT && (
                                     <label className="flex items-center gap-1 cursor-pointer">
                                         <input
@@ -238,6 +331,7 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
                                 <Calendar className="absolute left-3 top-2.5 text-slate-600 w-4 h-4" />
                                 <input
                                     type={isAllDay ? "date" : "datetime-local"}
+                                    aria-label="Date"
                                     value={date}
                                     onChange={(e) => setDate(e.target.value)}
                                     className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-2 focus:ring-2 focus:ring-indigo-500/50 outline-none text-xs"
@@ -261,6 +355,57 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
                             </div>
                         </div>
                     </div>
+
+                    {/* Real-time calendar conflict banner & alternative slot recommendation */}
+                    {kind === EntityKind.EVENT && hasConflict && (
+                        <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs space-y-2.5 animate-in fade-in duration-150" data-testid="create-modal-conflict-banner">
+                            <div className="flex items-start gap-2 text-amber-300">
+                                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                                <div className="flex-1 min-w-0">
+                                    <div className="font-semibold text-amber-200">
+                                        Schedule Conflict Detected
+                                    </div>
+                                    <p className="text-amber-300/80 text-[11px] mt-0.5">
+                                        Overlaps with {conflicts.length} scheduled event{conflicts.length > 1 ? 's' : ''}:
+                                    </p>
+                                    <div className="mt-1.5 space-y-1">
+                                        {conflicts.slice(0, 3).map((c) => (
+                                            <div key={c.collidingEventId} className="flex items-center justify-between text-[11px] bg-slate-900/80 px-2.5 py-1 rounded border border-amber-500/20">
+                                                <span className="font-medium text-slate-200 truncate pr-2">{c.collidingEventTitle}</span>
+                                                <span className="text-amber-300 shrink-0 font-mono text-[10px]">{c.formattedTimeSpan}</span>
+                                            </div>
+                                        ))}
+                                        {conflicts.length > 3 && (
+                                            <div className="text-[10px] text-amber-400/80 pl-1">
+                                                +{conflicts.length - 3} more conflict{conflicts.length - 3 > 1 ? 's' : ''}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {suggestedFreeSlot && (
+                                <div className="pt-2 border-t border-amber-500/20 flex items-center justify-between gap-2">
+                                    <div className="text-[11px] text-amber-100 flex items-center gap-1.5 min-w-0">
+                                        <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                        <span className="text-slate-400">Earliest free:</span>
+                                        <span className="font-medium text-emerald-300 font-mono truncate">
+                                            {formatLocalTimeSpan(new Date(suggestedFreeSlot.startTimeIso), new Date(suggestedFreeSlot.endTimeIso), isAllDay)}
+                                        </span>
+                                        <span className="text-slate-500 text-[10px] shrink-0">(+{suggestedFreeSlot.displacementMinutes}m)</span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={handleApplySuggestedSlot}
+                                        className="px-2.5 py-1 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded text-[11px] font-medium transition-colors shrink-0"
+                                        data-testid="apply-suggested-slot-btn"
+                                    >
+                                        Use Suggested Slot
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     <div>
                         <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Description</label>

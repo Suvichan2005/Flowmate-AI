@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react';
 import { useStore } from './store';
+import { getActiveEntities, getActiveChatSessions, isChatSessionActive } from './store/helpers';
 import { orchestrateMessage, generateContextualSuggestions, getInstantContextualSuggestions, type ContextualSuggestion } from './services/ai';
+import { hasAiApiKey } from './services/ai/client';
 import { processFileAttachment } from './utils/imageProcessing';
 import { onAuthChange, signOut } from './services/firebase';
-import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud, syncChatSessionsToCloud } from './services/syncManager';
+import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
 import { mergeData, mergeMessages, mergeChatSessions } from './services/firestoreSync';
 import { preventDoubleClick } from './utils/debounce';
 import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers, Sparkles, LayoutDashboard } from 'lucide-react';
@@ -21,7 +23,18 @@ import AuthModal from './components/AuthModal';
 import UnifiedChatInput from './components/UnifiedChatInput';
 import ChatSessionBar from './components/ChatSessionBar';
 import ConnectionStatus from './components/ConnectionStatus';
-import { EntityKind, ToonOperation } from './types';
+import WorkspaceStatus from './components/WorkspaceStatus';
+import { MessageVersionNav } from './components/MessageVersionNav';
+import { DeveloperModeDrawer } from './components/DeveloperModeDrawer';
+import { resolveBranchHistory } from './utils/conversationGraph';
+import { EntityKind, ToonOperation, ChatSession, Entity, TurnExecutor, BranchQueueItem } from './types';
+import { v4 as uuidv4 } from 'uuid';
+import { ConfirmedExecutionPlan } from './services/kernel';
+
+import { reconcileEntityCollection, globalPendingMutationQueue } from './services/sync';
+import { projectKernelEntitiesToLegacy } from './store/kernelProjection';
+import { setupCrossTabSync } from './services/storage';
+import { getLatestReviewDraft, deleteReviewDraft, revalidateReviewDraft, type ReviewDraft } from './services/action-review';
 
 // Helper to safely load dynamic chunks across deployments
 function lazyWithRetry<T extends React.ComponentType<any>>(
@@ -81,7 +94,7 @@ const App: React.FC = () => {
     setPendingOps,
     clearPendingOps,
     applyOperations,
-    syncQueue,
+    executeConfirmedPlan,
     currentView,
     setView,
     isZenMode,
@@ -93,29 +106,111 @@ const App: React.FC = () => {
     activeSessionId,
     setActiveSessionId,
     foodLogs,
-    subjects
+    subjects,
+    branches,
+    activeBranchId,
+    branchQueues,
+    developerModeEnabled,
+    toggleDeveloperMode,
+    updateMessageText,
+    updateMessageTurnMetadata,
+    setIsStreaming,
+    isStreaming,
+    setLastTurnDiagnostics,
+    addToast,
   } = useStore();
 
-  const [input, setInput] = useState('');
+  const input = useStore(state => state.unsentDrafts[state.activeBranchId]?.text || '');
+  const setInput = useCallback((text: string) => {
+    const state = useStore.getState();
+    state.setUnsentDraft(state.activeBranchId, text);
+  }, []);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const handleStopGeneration = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsStreaming(false, null);
+    setLoading(false);
+  }, [setIsStreaming]);
+
+  // Keyboard shortcut Ctrl+Shift+D for Developer Diagnostics
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+        e.preventDefault();
+        toggleDeveloperMode();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [toggleDeveloperMode]);
   const [contextualSuggestions, setContextualSuggestions] = useState<ContextualSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showGraphFixingModal, setShowGraphFixingModal] = useState(false);
-  const [selectedAttachment, setSelectedAttachment] = useState<string | null>(null);
-  const [attachmentType, setAttachmentType] = useState<'image' | 'audio' | null>(null);
+  const selectedAttachment = useStore(state => state.unsentDrafts[state.activeBranchId]?.attachment || null);
+  const setSelectedAttachment = (attachment: string | null) => {
+    const state = useStore.getState(); state.setDraftAttachment(state.activeBranchId, attachment);
+  };
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [chatWidth, setChatWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const mobileSidebarRef = useRef<HTMLDivElement>(null);
+  const mobileSidebarCloseRef = useRef<HTMLButtonElement>(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
+  useEffect(() => {
+    if (!isMobileSidebarOpen) return;
+
+    const dialog = mobileSidebarRef.current;
+    const returnFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    mobileSidebarCloseRef.current?.focus();
+
+    const handleDialogKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setIsMobileSidebarOpen(false);
+        return;
+      }
+
+      if (event.key !== 'Tab' || !dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )).filter(element => element.getClientRects().length > 0);
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (!first || !last) {
+        event.preventDefault();
+        dialog.focus();
+      } else if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleDialogKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleDialogKeyDown);
+      if (returnFocus?.isConnected) returnFocus.focus();
+    };
+  }, [isMobileSidebarOpen]);
   // Dynamic context-aware suggestions (time of day, events, tasks, meals)
   useEffect(() => {
-    const ctx = { entities, foodLogs, subjects };
+    const ctx = { entities: getActiveEntities(entities), foodLogs, subjects };
     setContextualSuggestions(getInstantContextualSuggestions(ctx));
     generateContextualSuggestions(ctx).then(res => {
       if (res && res.length > 0) setContextualSuggestions(res);
@@ -171,15 +266,75 @@ const App: React.FC = () => {
     };
   }, [isResizing]);
 
+  // Cross-Tab Snapshot Synchronization (Prevents stale multi-tab overwrites)
+  useEffect(() => {
+    return setupCrossTabSync(() => {
+      useStore.persist.rehydrate();
+    });
+  }, []);
+
+  // Recoverable Action Review Drafts (detects unconfirmed drafts on reload)
+  const [restoredDraft, setRestoredDraft] = useState<ReviewDraft | null>(null);
+
+  useEffect(() => {
+    getLatestReviewDraft().then(draft => {
+      if (!draft || draft.ops.length === 0) return;
+      const kernelEntities = useStore.getState().kernelEntities || {};
+      const validation = revalidateReviewDraft(draft, kernelEntities);
+      if (validation.isValid || validation.validOpCount > validation.conflictCount) {
+        setRestoredDraft(draft);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleResumeDraft = () => {
+    if (!restoredDraft) return;
+    setPendingOps(restoredDraft.ops, (restoredDraft.metadata?.originalMessageId as string) || 'restored-draft');
+    setRestoredDraft(null);
+  };
+
+  const handleDiscardDraft = async () => {
+    if (!restoredDraft) return;
+    await deleteReviewDraft(restoredDraft.id).catch(() => {});
+    setRestoredDraft(null);
+  };
+
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
+  const prevMessagesLengthRef = useRef(messages?.length || 0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const handleChatScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isAtBottomRef.current = distanceToBottom <= 80;
+  }, []);
+
   useEffect(() => {
-    if (scrollRef.current) {
+    if (!scrollRef.current) return;
+    const currentLen = messages?.length || 0;
+    const isNewUserMessage = currentLen > prevMessagesLengthRef.current &&
+      messages[messages.length - 1]?.role === 'user';
+    prevMessagesLengthRef.current = currentLen;
+
+    if (isNewUserMessage) {
+      isAtBottomRef.current = true;
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      return;
+    }
+
+    if (isAtBottomRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, loading, selectedAttachment, currentView]);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      isAtBottomRef.current = true;
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [activeSessionId]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -211,13 +366,20 @@ const App: React.FC = () => {
             });
           },
           (remoteData) => {
-            // Merge remote changes with local
+            // Reconcile remote changes into canonical kernel state (P1-09)
             const state = useStore.getState();
+            const { nextKernelEntities, conflicts: newConflicts } = reconcileEntityCollection(
+              state.kernelEntities,
+              remoteData.entities || [],
+              globalPendingMutationQueue
+            );
+            const projectedEntities = projectKernelEntitiesToLegacy(nextKernelEntities);
+
             const merged = mergeData(
-              { entities: state.entities, relationships: state.relationships },
+              { entities: projectedEntities as unknown as Entity[], relationships: state.relationships },
               { entities: remoteData.entities, relationships: remoteData.relationships }
             );
-            const mergedMsgs = remoteData.messages
+            const rawMergedMsgs = remoteData.messages
               ? mergeMessages(state.messages || [], remoteData.messages)
               : state.messages;
 
@@ -225,9 +387,18 @@ const App: React.FC = () => {
               ? mergeChatSessions(state.chatSessions || [], remoteData.chatSessions)
               : (state.chatSessions || []);
 
+            const deletedSessionIds = new Set(
+              mergedChatSessions.filter(s => s.deleted).map(s => s.id)
+            );
+
+            // Strip messages belonging to deleted sessions to prevent zombie resurrects
+            const mergedMsgs = (rawMergedMsgs || []).filter(
+              m => !m.channelId || !deletedSessionIds.has(m.channelId)
+            );
+
             const existingSessionIds = new Set(mergedChatSessions.map(s => s.id));
-            const missingSessions = (mergedMsgs || [])
-              .filter(m => m.channelId && !existingSessionIds.has(m.channelId))
+            const missingSessions: ChatSession[] = (mergedMsgs || [])
+              .filter(m => m.channelId && !existingSessionIds.has(m.channelId) && !deletedSessionIds.has(m.channelId))
               .map(m => {
                 existingSessionIds.add(m.channelId!);
                 return {
@@ -235,17 +406,41 @@ const App: React.FC = () => {
                   title: 'Chat ' + m.channelId!.slice(0, 8),
                   created_at: m.created_at,
                   updated_at: m.created_at,
+                  deleted: false,
                 };
               });
 
             const finalChatSessions = [...mergedChatSessions, ...missingSessions];
+            const activeSessions = getActiveChatSessions(finalChatSessions);
+            const currentActive = state.activeSessionId;
+            const nextActive = (activeSessions.length > 0 && (!currentActive || !activeSessions.some(s => s.id === currentActive)))
+              ? activeSessions[0].id
+              : (activeSessions.length === 0 ? 'general' : currentActive);
+
+            const sessionsUnchanged = (state.chatSessions || []).length === finalChatSessions.length &&
+              (state.chatSessions || []).every((s, i) =>
+                s.id === finalChatSessions[i].id &&
+                s.title === finalChatSessions[i].title &&
+                s.deleted === finalChatSessions[i].deleted &&
+                s.updated_at === finalChatSessions[i].updated_at
+              );
+
+            const messagesUnchanged = (state.messages || []).length === (mergedMsgs || []).length &&
+              (state.messages || []).every((m, i) =>
+                m.id === mergedMsgs[i].id &&
+                m.text === mergedMsgs[i].text &&
+                m.created_at === mergedMsgs[i].created_at
+              );
 
             useStore.setState({
-              entities: merged.entities,
+              kernelEntities: nextKernelEntities,
+              entities: projectedEntities,
               relationships: merged.relationships,
+              conflicts: [...(state.conflicts || []), ...newConflicts],
               universalTags: remoteData.universalTags || state.universalTags,
-              messages: mergedMsgs,
-              chatSessions: finalChatSessions,
+              messages: messagesUnchanged ? state.messages : mergedMsgs,
+              chatSessions: sessionsUnchanged ? state.chatSessions : finalChatSessions,
+              ...(nextActive !== currentActive ? { activeSessionId: nextActive } : {}),
               ...(remoteData.settings ? { settings: { ...state.settings, ...remoteData.settings } } : {}),
             });
           }
@@ -254,21 +449,37 @@ const App: React.FC = () => {
         // Load initial cloud data then start real-time sync
         loadInitialData().then(data => {
           if (data) {
-            // Merge initial data directly (loadFromCloud would double-fetch)
+            // Reconcile initial data into canonical kernel state (P1-09)
             const state = useStore.getState();
+            const { nextKernelEntities, conflicts: newConflicts } = reconcileEntityCollection(
+              state.kernelEntities,
+              data.entities || [],
+              globalPendingMutationQueue
+            );
+            const projectedEntities = projectKernelEntitiesToLegacy(nextKernelEntities);
+
             const merged = mergeData(
-              { entities: state.entities, relationships: state.relationships },
+              { entities: projectedEntities as unknown as Entity[], relationships: state.relationships },
               { entities: data.entities, relationships: data.relationships }
             );
-            const mergedMsgs = mergeMessages(state.messages || [], data.messages || []);
+            const rawMergedMsgs = mergeMessages(state.messages || [], data.messages || []);
 
             const mergedChatSessions = data.chatSessions?.length
               ? mergeChatSessions(state.chatSessions || [], data.chatSessions)
               : (state.chatSessions || []);
 
+            const deletedSessionIds = new Set(
+              mergedChatSessions.filter(s => s.deleted).map(s => s.id)
+            );
+
+            // Strip messages belonging to deleted sessions to prevent zombie resurrects
+            const mergedMsgs = (rawMergedMsgs || []).filter(
+              m => !m.channelId || !deletedSessionIds.has(m.channelId)
+            );
+
             const existingSessionIds = new Set(mergedChatSessions.map(s => s.id));
-            const missingSessions = (mergedMsgs || [])
-              .filter(m => m.channelId && !existingSessionIds.has(m.channelId))
+            const missingSessions: ChatSession[] = (mergedMsgs || [])
+              .filter(m => m.channelId && !existingSessionIds.has(m.channelId) && !deletedSessionIds.has(m.channelId))
               .map(m => {
                 existingSessionIds.add(m.channelId!);
                 return {
@@ -276,17 +487,41 @@ const App: React.FC = () => {
                   title: 'Chat ' + m.channelId!.slice(0, 8),
                   created_at: m.created_at,
                   updated_at: m.created_at,
+                  deleted: false,
                 };
               });
 
             const finalChatSessions = [...mergedChatSessions, ...missingSessions];
+            const activeSessions = getActiveChatSessions(finalChatSessions);
+            const currentActive = state.activeSessionId;
+            const nextActive = (activeSessions.length > 0 && (!currentActive || !activeSessions.some(s => s.id === currentActive)))
+              ? activeSessions[0].id
+              : (activeSessions.length === 0 ? 'general' : currentActive);
+
+            const sessionsUnchanged = (state.chatSessions || []).length === finalChatSessions.length &&
+              (state.chatSessions || []).every((s, i) =>
+                s.id === finalChatSessions[i].id &&
+                s.title === finalChatSessions[i].title &&
+                s.deleted === finalChatSessions[i].deleted &&
+                s.updated_at === finalChatSessions[i].updated_at
+              );
+
+            const messagesUnchanged = (state.messages || []).length === (mergedMsgs || []).length &&
+              (state.messages || []).every((m, i) =>
+                m.id === mergedMsgs[i].id &&
+                m.text === mergedMsgs[i].text &&
+                m.created_at === mergedMsgs[i].created_at
+              );
 
             useStore.setState({
-              entities: merged.entities,
+              kernelEntities: nextKernelEntities,
+              entities: projectedEntities,
               relationships: merged.relationships,
+              conflicts: [...(state.conflicts || []), ...newConflicts],
               universalTags: data.universalTags || state.universalTags,
-              messages: mergedMsgs,
-              chatSessions: finalChatSessions,
+              messages: messagesUnchanged ? state.messages : mergedMsgs,
+              chatSessions: sessionsUnchanged ? state.chatSessions : finalChatSessions,
+              ...(nextActive !== currentActive ? { activeSessionId: nextActive } : {}),
               ...(data.settings ? { settings: { ...state.settings, ...data.settings } } : {}),
               ...(data.foodLogs?.length ? { foodLogs: data.foodLogs } : {}),
               ...(data.subjects?.length ? { subjects: data.subjects } : {}),
@@ -296,7 +531,7 @@ const App: React.FC = () => {
             });
 
             // If local state had entities that aren't on the cloud yet (e.g. initial login on new cloud db), push them up immediately
-            if (merged.entities.length > 0 && (!data.entities || data.entities.length === 0)) {
+            if (merged.entities.length > 0 && (!data.entities || data.entities.length === 0) && !useStore.getState().isDemoMode) {
               console.log('[SyncManager] Seeding local entities to cloud');
               scheduleSync(() => ({
                 entities: merged.entities,
@@ -307,7 +542,9 @@ const App: React.FC = () => {
             }
           }
           // Start real-time listener after initial load
-          startRealtimeSync();
+          if (!useStore.getState().isDemoMode) {
+            startRealtimeSync();
+          }
         });
       } else {
         cleanupSync();
@@ -323,7 +560,6 @@ const App: React.FC = () => {
   useEffect(() => {
     let foodDebounce: ReturnType<typeof setTimeout> | null = null;
     let attDebounce: ReturnType<typeof setTimeout> | null = null;
-    let chatDebounce: ReturnType<typeof setTimeout> | null = null;
     let prevFood = useStore.getState().foodLogs;
     let prevSubjects = useStore.getState().subjects;
     let prevSchedule = useStore.getState().classSchedule;
@@ -333,10 +569,10 @@ const App: React.FC = () => {
     let prevRelationships = useStore.getState().relationships;
     let prevTags = useStore.getState().universalTags;
     let prevSettings = useStore.getState().settings;
-    let prevChatSessions = useStore.getState().chatSessions;
 
     const unsub = useStore.subscribe((state) => {
-      if (!state.currentUser) return;
+      // Demo Mode Isolation: Never trigger auto-sync while exploring demo workspace
+      if (!state.currentUser || state.isDemoMode) return;
 
       // Entities, relationships, tags, or settings changed -> auto-sync to Firestore
       if (
@@ -355,15 +591,6 @@ const App: React.FC = () => {
           universalTags: state.universalTags,
           settings: state.settings,
         }));
-      }
-
-      // Chat sessions changed
-      if (state.chatSessions !== prevChatSessions) {
-        prevChatSessions = state.chatSessions;
-        if (chatDebounce) clearTimeout(chatDebounce);
-        chatDebounce = setTimeout(() => {
-          syncChatSessionsToCloud(state.chatSessions);
-        }, 1500);
       }
 
       // Food logs changed
@@ -398,7 +625,6 @@ const App: React.FC = () => {
       unsub();
       if (foodDebounce) clearTimeout(foodDebounce);
       if (attDebounce) clearTimeout(attDebounce);
-      if (chatDebounce) clearTimeout(chatDebounce);
     };
   }, []);
 
@@ -431,7 +657,7 @@ const App: React.FC = () => {
       setOnline(true);
       // Trigger sync when coming back online
       const state = useStore.getState();
-      if (state.currentUser) {
+      if (state.currentUser && !state.isDemoMode) {
         scheduleSync(() => ({
           entities: state.entities,
           relationships: state.relationships,
@@ -472,7 +698,10 @@ const App: React.FC = () => {
     if (!isHydrated) return;
 
     const syncFromHash = () => {
-      const hash = window.location.hash.replace('#', '') as any;
+      const hash = window.location.hash.replace('#', '');
+      if (hash === 'archive-intelligence') {
+        return;
+      }
       const validViews = [
         'dashboard', 'chat', 'chat_graph', 'analytics', 'goals',
         'projects', 'knowledge', 'calendar', 'timeline', 'schedules',
@@ -481,7 +710,7 @@ const App: React.FC = () => {
       if (validViews.includes(hash)) {
         if (useStore.getState().currentView !== hash) {
           isSyncingHashRef.current = true;
-          setView(hash);
+          setView(hash as any);
         }
       } else if (useStore.getState().currentView) {
         window.history.replaceState(null, '', `#${useStore.getState().currentView}`);
@@ -510,6 +739,9 @@ const App: React.FC = () => {
       return;
     }
     const currentHash = window.location.hash.replace('#', '');
+    if (currentHash === 'archive-intelligence') {
+      return;
+    }
     if (currentHash !== currentView) {
       window.history.replaceState(null, '', `#${currentView}`);
     }
@@ -536,11 +768,7 @@ const App: React.FC = () => {
     );
   }
 
-  const queue = syncQueue || [];
-  const pendingSyncCount = queue.filter(i => i.status === 'pending' || i.status === 'in_progress').length;
-  const isSyncing = pendingSyncCount > 0;
-  const syncStatusLabel = isSyncing ? 'Syncing...' : 'Synced';
-  const safeEntities = entities || [];
+  const safeEntities = getActiveEntities(entities);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -552,7 +780,6 @@ const App: React.FC = () => {
     try {
       const base64 = await processFileAttachment(file);
       setSelectedAttachment(base64);
-      setAttachmentType(file.type.startsWith('audio') ? 'audio' : 'image');
     } catch (err) {
       console.error("File processing failed", err);
       addMessage('assistant', 'Failed to process attachment. Please try a valid image or audio file.');
@@ -561,7 +788,6 @@ const App: React.FC = () => {
 
   const handleRemoveAttachment = () => {
     setSelectedAttachment(null);
-    setAttachmentType(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -585,93 +811,160 @@ const App: React.FC = () => {
     }
   };
 
+  const formatPendingProposalMessage = (rawMessage?: string): string => {
+    if (!rawMessage || !rawMessage.trim()) {
+      return "I've prepared the following action proposal for your review:";
+    }
+    let msg = rawMessage.trim();
+    if (/^scheduled\b/i.test(msg)) {
+      msg = msg.replace(/^scheduled\s+/i, "Prepared event: ");
+    } else if (/^created\b/i.test(msg)) {
+      msg = msg.replace(/^created\s+/i, "Prepared: ");
+    } else if (/^added\b/i.test(msg)) {
+      msg = msg.replace(/^added\s+/i, "Prepared: ");
+    } else if (/^deleted\b/i.test(msg)) {
+      msg = msg.replace(/^deleted\s+/i, "Proposed deletion: ");
+    } else if (/^updated\b/i.test(msg)) {
+      msg = msg.replace(/^updated\s+/i, "Prepared updates: ");
+    }
+    if (!msg.toLowerCase().includes('review') && !msg.toLowerCase().includes('confirm')) {
+      msg = `${msg} (Awaiting your review and confirmation)`;
+    }
+    return msg;
+  };
+
+  useEffect(() => {
+    const turnExecutor: TurnExecutor = async ({
+      branchId,
+      channelId,
+      userMessage,
+      assistantMessageId,
+      signal,
+      onChunk,
+      onMetrics,
+    }) => {
+      setLoading(true);
+      const state = useStore.getState();
+      const snapshot = state.getSnapshot();
+      const currentHistory = resolveBranchHistory(state.messages || [], userMessage.id, channelId);
+
+      let accumulatedText = '';
+      let collectedMetrics: any = {};
+
+      try {
+        const toon = await orchestrateMessage(
+          currentHistory,
+          userMessage.text || (userMessage.attachment ? "Analyze this attachment." : ""),
+          snapshot,
+          userMessage.attachment || undefined,
+          {
+            signal: signal || abortControllerRef.current?.signal,
+            onChunk: (chunk) => {
+              accumulatedText += chunk;
+              if (onChunk) onChunk(chunk);
+              updateMessageText(assistantMessageId, accumulatedText);
+            },
+            onMetrics: (metrics) => {
+              collectedMetrics = { ...collectedMetrics, ...metrics };
+              if (onMetrics) onMetrics(metrics);
+              setLastTurnDiagnostics(collectedMetrics);
+            },
+          }
+        );
+
+        const latestState = useStore.getState();
+        const currentSession = (latestState.chatSessions || []).find(s => s.id === channelId);
+        if (currentSession && currentSession.deleted) {
+          console.warn(`[App] Session ${channelId} was deleted during turn. Discarding reply.`);
+          return;
+        }
+
+        if (toon.ops && toon.ops.length > 0) {
+          setPendingOps(toon.ops, userMessage.id);
+          updateMessageText(assistantMessageId, formatPendingProposalMessage(toon.assistant.message));
+          useStore.setState(s => ({
+            messages: s.messages.map(m => m.id === assistantMessageId ? { ...m, ops_preview: toon.ops } : m)
+          }));
+        } else {
+          const fallbackMessage = toon.assistant.message || accumulatedText ||
+            "I received your message but I'm not sure how to help with that. Try asking me to create a task, schedule an event, or update your goals!";
+          updateMessageText(assistantMessageId, fallbackMessage);
+        }
+
+        updateMessageTurnMetadata(assistantMessageId, {
+          ...collectedMetrics,
+          model: hasAiApiKey() ? settings?.preferred_model : undefined,
+          response_source: hasAiApiKey() ? 'gemini' : 'unavailable',
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    useStore.getState().registerTurnExecutor(turnExecutor);
+    return () => {
+      useStore.getState().registerTurnExecutor(null);
+    };
+  }, [settings?.preferred_model, updateMessageText, updateMessageTurnMetadata, setPendingOps, setLastTurnDiagnostics]);
+
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if ((!input.trim() && !selectedAttachment) || loading) return;
+    if (!input.trim() && !selectedAttachment) return;
 
     const userText = input.trim();
     const attachment = selectedAttachment;
 
-    // Grab history before adding new message
-    const history = messages;
-
     setInput('');
-    setSelectedAttachment(null);
-    setAttachmentType(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-    setLoading(true);
-
-    // Add user message to store
-    const currentChannel = activeSessionId || 'general';
-    const msgId = addMessage('user', userText, undefined, attachment, currentChannel);
-
-    try {
-      const snapshot = getSnapshot();
-      // Pass the previous history and the new message content
-      const channelHistory = history.filter(m => (m.channelId || 'general') === currentChannel);
-      const toon = await orchestrateMessage(channelHistory, userText || (attachment ? "Analyze this attachment." : ""), snapshot, attachment);
-
-      if (toon.ops && toon.ops.length > 0) {
-        setPendingOps(toon.ops, msgId);
-        addMessage('assistant', toon.assistant.message || "I've prepared some updates for your review.", toon.ops, null, currentChannel);
-      } else {
-        // Provide more helpful fallback if LLM didn't return a message
-        const fallbackMessage = toon.assistant.message ||
-          "I received your message but I'm not sure how to help with that. Try asking me to create a task, schedule an event, or update your goals!";
-        addMessage('assistant', fallbackMessage, undefined, null, currentChannel);
-      }
-    } catch (err) {
-      console.error(err);
-      addMessage('assistant', 'Sorry, I encountered an internal error.', undefined, null, currentChannel);
-    } finally {
-      setLoading(false);
-    }
+    await sendDirectMessage(userText, attachment);
   };
 
   // Direct send function for UnifiedChatInput - bypasses state sync issues
-  // Includes rate limiting to prevent API abuse
-  const sendDirectMessage = async (text: string, attachment?: string | null) => {
-    if ((!text.trim() && !attachment) || loading) return;
+  // Includes rate limiting to prevent API abuse while allowing queued follow-ups
+  const sendDirectMessage = (text: string, attachment?: string | null): boolean => {
+    if (!text.trim() && !attachment) return false;
 
-    // Rate limiting: prevent rapid-fire API calls
+    // Rate limiting: prevent rapid-fire API calls within cooldown
     const now = Date.now();
-    if (now - lastApiCallRef.current < API_COOLDOWN_MS) {
-      console.warn('[RateLimit] Chat message blocked - too fast');
-      return;
+    if (hasAiApiKey() && now - lastApiCallRef.current < API_COOLDOWN_MS) {
+      addToast('Please wait a moment before sending again; your draft is retained', 'info');
+      return false;
     }
     lastApiCallRef.current = now;
 
     const userText = text.trim();
-    const history = messages;
-
     setSelectedAttachment(null);
-    setAttachmentType(null);
-    setLoading(true);
+
+    if (!abortControllerRef.current || abortControllerRef.current.signal.aborted) {
+      abortControllerRef.current = new AbortController();
+    }
 
     const currentChannel = activeSessionId || 'general';
-    const msgId = addMessage('user', userText, undefined, attachment || undefined, currentChannel);
+    const effectiveBranchId = activeBranchId || `b_main_${currentChannel}`;
+    const userMsgId = addMessage('user', userText, undefined, attachment || undefined, currentChannel);
+    const userMsg = useStore.getState().messages.find(m => m.id === userMsgId);
 
-    try {
-      const snapshot = getSnapshot();
-      const channelHistory = history.filter(m => (m.channelId || 'general') === currentChannel);
-      const toon = await orchestrateMessage(channelHistory, userText || (attachment ? "Analyze this attachment." : ""), snapshot, attachment || undefined);
+    if (userMsg) {
+      const queueItem: BranchQueueItem = {
+        id: uuidv4(),
+        branch_id: effectiveBranchId,
+        user_message: userMsg,
+        status: 'queued',
+        enqueued_at: Date.now()
+      };
 
-      if (toon.ops && toon.ops.length > 0) {
-        setPendingOps(toon.ops, msgId);
-        addMessage('assistant', toon.assistant.message || "I've prepared some updates for your review.", toon.ops, null, currentChannel);
-      } else {
-        const fallbackMessage = toon.assistant.message ||
-          "I received your message but I'm not sure how to help with that. Try asking me to create a task, schedule an event, or update your goals!";
-        addMessage('assistant', fallbackMessage, undefined, null, currentChannel);
-      }
-    } catch (err) {
-      console.error(err);
-      addMessage('assistant', 'Sorry, I encountered an internal error.', undefined, null, currentChannel);
-    } finally {
-      setLoading(false);
+      useStore.setState(s => ({
+        branchQueues: {
+          ...s.branchQueues,
+          [effectiveBranchId]: [...(s.branchQueues[effectiveBranchId] || []), queueItem]
+        }
+      }));
+
+      void useStore.getState().processBranchQueue(effectiveBranchId);
     }
+    return Boolean(userMsg);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -681,11 +974,32 @@ const App: React.FC = () => {
     }
   };
 
-  const handleConfirmOps = (selectedOps: ToonOperation[]) => {
-    if (selectedOps && selectedOps.length > 0) {
-      applyOperations(selectedOps);
-    }
+  const handleConfirmOps = async (proposal: NonNullable<typeof pendingOps>, confirmedPlan: ConfirmedExecutionPlan): Promise<boolean> => {
+    if (useStore.getState().pendingOps !== proposal || confirmedPlan.plan.validated_mutations.length === 0) return false;
+    const success = await executeConfirmedPlan(confirmedPlan);
+    if (!success) return false;
+    if (useStore.getState().pendingOps === proposal) clearPendingOps();
+    getLatestReviewDraft().then(d => {
+      if (d) deleteReviewDraft(d.id).catch(() => {});
+    }).catch(() => {});
+    const originalMessage = useStore.getState().messages.find(message => message.id === proposal.originalMessageId);
+    addMessage('assistant', 'Confirmed and applied: Successfully executed '+confirmedPlan.plan.validated_mutations.length+' action(s).', undefined, null, originalMessage?.channelId || activeSessionId || 'general');
+    return true;
+  };
+
+  const handleCancelOps = () => {
     clearPendingOps();
+    getLatestReviewDraft().then(d => {
+      if (d) deleteReviewDraft(d.id).catch(() => {});
+    }).catch(() => {});
+    const currentChannel = activeSessionId || 'general';
+    addMessage(
+      'assistant',
+      'Proposal cancelled: No changes were applied.',
+      undefined,
+      null,
+      currentChannel
+    );
   };
 
   const renderMainContent = () => {
@@ -716,13 +1030,18 @@ const App: React.FC = () => {
                   </button>
                   <button
                     onClick={() => {
+                      if (!hasAiApiKey()) {
+                        addToast('Gemini API key required for AI generation. Configure in Settings or create manually.', 'info');
+                        return;
+                      }
                       if (!isChatOpen) setIsChatOpen(true);
                       sendDirectMessage("Create 3 starter goals and tasks for my productivity system");
                     }}
                     className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700/60 text-slate-300 text-xs font-medium transition-all active:scale-95"
+                    title={hasAiApiKey() ? "Generate starter goals and tasks with Gemini" : "Gemini is not configured"}
                   >
-                    <Sparkles size={14} className="text-indigo-400" />
-                    <span>Generate with AI</span>
+                    <Sparkles size={14} className={hasAiApiKey() ? "text-indigo-400" : "text-slate-500"} />
+                    <span>{hasAiApiKey() ? "Generate with AI" : "Generate with AI (Requires Key)"}</span>
                   </button>
                 </div>
               </div>
@@ -734,7 +1053,7 @@ const App: React.FC = () => {
       case 'analytics':
         return <AnalyticsView />;
       case 'goals':
-        return <EntityList kinds={[EntityKind.GOAL]} title="Goals" />;
+        return <EntityList kinds={[EntityKind.GOAL]} schemaId="system/goal" capability="trackable_progress" title="Goals" />;
       case 'projects':
         return <EntityList kinds={[EntityKind.PROJECT]} title="Projects" />;
       case 'knowledge':
@@ -744,11 +1063,9 @@ const App: React.FC = () => {
       case 'timeline':
         return <TimelineView entities={safeEntities} />;
       case 'schedules':
-        return <SchedulesView />;
       case 'food':
-        return <FoodTracker />;
       case 'attendance':
-        return <AttendanceTracker />;
+        return <Dashboard />;
       case 'settings':
         return <SettingsView />;
       case 'chat_graph':
@@ -774,13 +1091,18 @@ const App: React.FC = () => {
                   </button>
                   <button
                     onClick={() => {
+                      if (!hasAiApiKey()) {
+                        addToast('Gemini API key required for AI generation. Configure in Settings or create manually.', 'info');
+                        return;
+                      }
                       if (!isChatOpen) setIsChatOpen(true);
                       sendDirectMessage("Create 3 starter goals and tasks for my productivity system");
                     }}
                     className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700/60 text-slate-300 text-xs font-medium transition-all active:scale-95"
+                    title={hasAiApiKey() ? "Generate starter goals and tasks with Gemini" : "Gemini is not configured"}
                   >
-                    <Sparkles size={14} className="text-indigo-400" />
-                    <span>Generate with AI</span>
+                    <Sparkles size={14} className={hasAiApiKey() ? "text-indigo-400" : "text-slate-500"} />
+                    <span>{hasAiApiKey() ? "Generate with AI" : "Generate with AI (Requires Key)"}</span>
                   </button>
                 </div>
               </div>
@@ -905,7 +1227,7 @@ const App: React.FC = () => {
 
   return (
     <div
-      className={`flex h-[100dvh] w-full bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500/30 overflow-hidden ${isMobile ? 'flex-col' : 'flex-row'}`}
+      className={`flex h-[100dvh] w-full bg-ideapad-base text-ideapad-text font-sans selection:bg-emerald-500/30 selection:text-emerald-200 overflow-hidden ${isMobile ? 'flex-col' : 'flex-row'}`}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
@@ -983,11 +1305,19 @@ const App: React.FC = () => {
           <div
             className="fixed inset-0 bg-black/60 z-40 animate-fade-in"
             onClick={() => setIsMobileSidebarOpen(false)}
+            aria-hidden="true"
           />
-          <div className="fixed left-0 top-0 h-full w-64 bg-slate-900 border-r border-slate-800 z-50 shadow-2xl animate-slide-in-left flex flex-col overflow-hidden">
+          <div
+            ref={mobileSidebarRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mobile navigation"
+            tabIndex={-1}
+            className="fixed left-0 top-0 h-full w-64 bg-slate-900 border-r border-slate-800 z-50 shadow-2xl animate-slide-in-left flex flex-col overflow-hidden"
+          >
             {/* Close Button Header */}
             <div className="p-3 border-b border-slate-800 flex items-center justify-end shrink-0">
-              <button onClick={() => setIsMobileSidebarOpen(false)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400">
+              <button ref={mobileSidebarCloseRef} type="button" aria-label="Close navigation menu" onClick={() => setIsMobileSidebarOpen(false)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400">
                 <X size={20} />
               </button>
             </div>
@@ -1021,17 +1351,7 @@ const App: React.FC = () => {
         <div className="flex flex-col h-full bg-slate-900 border-r border-slate-800 shrink-0 z-20">
           <Sidebar onCreateClick={() => setShowCreateModal(true)} />
           <div className={`p-4 border-t border-slate-800 bg-slate-900/80 ${isZenMode ? 'hidden' : ''}`}>
-            <div className="flex items-center gap-3 text-xs font-medium text-slate-400">
-              {isSyncing ? (
-                <RefreshCw className="w-4 h-4 animate-spin text-indigo-400" />
-              ) : (
-                <Cloud className="w-4 h-4 text-emerald-500" />
-              )}
-              <div className="flex flex-col">
-                <span className={isSyncing ? "text-indigo-400" : "text-emerald-500"}>{syncStatusLabel}</span>
-                <span className="text-[10px] text-slate-600">{queue.length} ops</span>
-              </div>
-            </div>
+            <WorkspaceStatus />
             <div className="mt-3 pt-3 border-t border-slate-800">
               {currentUser ? (
                 <div className="flex items-center justify-between gap-2">
@@ -1054,15 +1374,16 @@ const App: React.FC = () => {
                 </button>
               )}
             </div>
+
           </div>
         </div>
       )}
 
       {/* Desktop Layout: Sidebar + Chat + Content */}
       {!isMobile && (
-        <div className="flex-1 flex flex-row h-full overflow-hidden">
+        <div data-layout="desktop" className="flex-1 flex flex-row h-full overflow-hidden">
           {/* Desktop Chat Panel - Full width when Chat view, otherwise side panel */}
-          {(isChatOpen || currentView === 'chat') && !isZenMode && (
+          {(currentView === 'chat' || (isChatOpen && !isZenMode)) && (
             <div
               className={`flex flex-col bg-slate-900 border-r border-slate-800 shrink-0 h-full relative ${currentView === 'chat' ? 'flex-1' : ''
                 }`}
@@ -1081,10 +1402,39 @@ const App: React.FC = () => {
                 showCloseButton={currentView !== 'chat'}
               />
 
-              <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
+              {restoredDraft && !pendingOps && (
+                <div className="mx-3 my-2 p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-500/40 flex items-center justify-between text-xs animate-fade-in shadow-lg shrink-0">
+                  <div className="flex items-center gap-2 text-indigo-200 min-w-0 mr-2">
+                    <Sparkles size={14} className="text-indigo-400 shrink-0" />
+                    <span className="truncate">
+                      Restored draft ({restoredDraft.ops.length}): <span className="font-semibold text-slate-100">{restoredDraft.ops[0]?.payload?.title || 'Pending Actions'}</span>
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-500/40 text-[10px] text-emerald-400 font-mono shrink-0">
+                      Revalidated
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={handleResumeDraft}
+                      className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] transition-colors"
+                    >
+                      Review
+                    </button>
+                    <button
+                      onClick={handleDiscardDraft}
+                      className="px-2 py-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 text-[11px] transition-colors"
+                    >
+                      Discard
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef} onScroll={handleChatScroll}>
                 {(() => {
                   const currentChannel = activeSessionId || 'general';
-                  const activeMsgs = (messages || []).filter(msg => (msg.channelId || 'general') === currentChannel);
+                  const currentBranch = (branches || []).find(b => b.id === activeBranchId && (b.conversation_id === currentChannel));
+                  const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel);
                   
                   if (activeMsgs.length === 0) {
                     return (
@@ -1117,7 +1467,7 @@ const App: React.FC = () => {
                   }
 
                   return activeMsgs.map((msg) => (
-                    <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                    <div key={msg.id} data-message-id={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                       <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 self-start mt-0.5 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
                         {msg.role === 'user' ? <User size={14} /> : <Bot size={14} />}
                       </div>
@@ -1127,15 +1477,19 @@ const App: React.FC = () => {
                           ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20 rounded-tr-sm'
                           : 'bg-slate-800 border border-slate-700 rounded-tl-sm text-slate-200'
                           }`}>
-                          {msg.text ? <MarkdownText content={msg.text} /> : <em className="text-slate-400">Attachment</em>}
+                          {msg.role === 'assistant' && msg.turn_metadata?.response_source && <p className="text-[10px] text-slate-400 mb-1">{msg.turn_metadata.response_source === 'unavailable' ? 'No AI response · provider not configured' : msg.turn_metadata.response_source === 'local' ? 'Local rules · no AI request' : 'Gemini response'}</p>}
+                          {msg.text ? <MarkdownText content={msg.text} /> : (isStreaming && msg.id === useStore.getState().streamingMessageId ? <span className="text-slate-400 italic">Thinking...</span> : <em className="text-slate-400">Attachment</em>)}
                           {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
                         </div>
-                        <span className="text-[9px] text-slate-600 mt-1">{new Date(msg.created_at).toLocaleTimeString()}</span>
+                        <div className="flex items-center gap-2 mt-1">
+                          <MessageVersionNav message={msg} />
+                          <span className="text-[9px] text-slate-600">{new Date(msg.created_at).toLocaleTimeString()}</span>
+                        </div>
                       </div>
                     </div>
                   ));
                 })()}
-                {loading && (
+                {loading && !isStreaming && (
                   <div className="flex gap-3">
                     <div className="w-7 h-7 rounded-lg bg-slate-700 flex items-center justify-center"><Bot size={14} /></div>
                     <div className="bg-slate-800/50 px-3 py-2 rounded-xl border border-slate-800">
@@ -1153,7 +1507,13 @@ const App: React.FC = () => {
               <div className="p-3 bg-slate-900 border-t border-slate-800 shrink-0">
                 {isLiveMode ? (
                   <Suspense fallback={<div className="p-3 text-center text-xs text-slate-400">Loading Gemini Live...</div>}>
-                    <LiveVoiceModal onClose={() => setIsLiveMode(false)} />
+                    <LiveVoiceModal 
+                      onClose={() => setIsLiveMode(false)} 
+                      onFallbackToChat={(draftText) => {
+                        if (draftText) setInput(draftText);
+                        setIsLiveMode(false);
+                      }}
+                    />
                   </Suspense>
                 ) : (
                   <UnifiedChatInput
@@ -1163,6 +1523,9 @@ const App: React.FC = () => {
                     onSend={(msg) => sendDirectMessage(msg, selectedAttachment)}
                     onAttach={(file) => processFile(file)}
                     onLiveVoice={() => setIsLiveMode(true)}
+                    onStop={handleStopGeneration}
+                    isStreaming={isStreaming}
+                    queueCount={(branchQueues?.[activeBranchId] || []).filter(q => q.status === 'queued' || q.status === 'leased').length}
                     loading={loading}
                     placeholder="Ask AI anything..."
                     attachment={selectedAttachment}
@@ -1199,17 +1562,46 @@ const App: React.FC = () => {
 
       {/* Mobile Layout: Full Content + Persistent Bottom Navigation */}
       {isMobile && (
-        <div className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] overflow-hidden relative">
+        <div data-layout="mobile" className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] overflow-hidden relative">
           {/* Main content or full screen chat */}
           <div className="flex-1 flex flex-col overflow-hidden pb-14">
             {currentView === 'chat' ? (
               <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
                 <ChatSessionBar />
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={!isMobile ? undefined : scrollRef}>
+                {restoredDraft && !pendingOps && (
+                  <div className="mx-3 my-2 p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-500/40 flex items-center justify-between text-xs animate-fade-in shadow-lg shrink-0">
+                    <div className="flex items-center gap-2 text-indigo-200 min-w-0 mr-2">
+                      <Sparkles size={14} className="text-indigo-400 shrink-0" />
+                      <span className="truncate">
+                        Restored draft ({restoredDraft.ops.length}): <span className="font-semibold text-slate-100">{restoredDraft.ops[0]?.payload?.title || 'Pending Actions'}</span>
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-500/40 text-[10px] text-emerald-400 font-mono shrink-0">
+                        Revalidated
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={handleResumeDraft}
+                        className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] transition-colors"
+                      >
+                        Review
+                      </button>
+                      <button
+                        onClick={handleDiscardDraft}
+                        className="px-2 py-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 text-[11px] transition-colors"
+                      >
+                        Discard
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={!isMobile ? undefined : scrollRef} onScroll={handleChatScroll}>
                   {(() => {
                     const currentChannel = activeSessionId || 'general';
-                    const activeMsgs = (messages || []).filter(msg => (msg.channelId || 'general') === currentChannel);
+                    const currentBranch = (branches || []).find(b => b.id === activeBranchId && (b.conversation_id === currentChannel));
+                    const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel);
 
                     if (activeMsgs.length === 0) {
                       return (
@@ -1242,22 +1634,26 @@ const App: React.FC = () => {
                     }
 
                     return activeMsgs.map((msg) => (
-                      <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                      <div key={msg.id} data-message-id={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
                           {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
                         </div>
                         <div className={`flex flex-col max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                           {renderAttachmentPreview(msg)}
                           <div className={`px-3 py-2 rounded-xl text-sm ${msg.role === 'user' ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20' : 'bg-slate-800 border border-slate-700 text-slate-200'}`}>
-                            {msg.text ? <MarkdownText content={msg.text} /> : <em className="text-slate-400">Attachment</em>}
+                            {msg.role === 'assistant' && msg.turn_metadata?.response_source && <p className="text-[10px] text-slate-400 mb-1">{msg.turn_metadata.response_source === 'unavailable' ? 'No AI response · provider not configured' : msg.turn_metadata.response_source === 'local' ? 'Local rules · no AI request' : 'Gemini response'}</p>}
+                          {msg.text ? <MarkdownText content={msg.text} /> : (isStreaming && msg.id === useStore.getState().streamingMessageId ? <span className="text-slate-400 italic">Thinking...</span> : <em className="text-slate-400">Attachment</em>)}
                             {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
                           </div>
-                          <span className="text-[9px] text-slate-600 mt-1">{new Date(msg.created_at).toLocaleTimeString()}</span>
+                          <div className="flex items-center gap-2 mt-1">
+                            <MessageVersionNav message={msg} />
+                            <span className="text-[9px] text-slate-600">{new Date(msg.created_at).toLocaleTimeString()}</span>
+                          </div>
                         </div>
                       </div>
                     ));
                   })()}
-                  {loading && (
+                  {loading && !isStreaming && (
                     <div className="flex gap-3">
                       <div className="w-8 h-8 rounded-lg bg-slate-700 flex items-center justify-center"><Bot size={16} /></div>
                       <div className="bg-slate-800/50 px-3 py-2 rounded-xl border border-slate-800">
@@ -1275,7 +1671,13 @@ const App: React.FC = () => {
                 <div className="p-2.5 bg-slate-900 border-t border-slate-800 shrink-0">
                   {isLiveMode ? (
                     <Suspense fallback={<div className="p-3 text-center text-xs text-slate-400">Loading Gemini Live...</div>}>
-                      <LiveVoiceModal onClose={() => setIsLiveMode(false)} />
+                      <LiveVoiceModal 
+                        onClose={() => setIsLiveMode(false)} 
+                        onFallbackToChat={(draftText) => {
+                          if (draftText) setInput(draftText);
+                          setIsLiveMode(false);
+                        }}
+                      />
                     </Suspense>
                   ) : (
                     <UnifiedChatInput
@@ -1285,6 +1687,9 @@ const App: React.FC = () => {
                       onSend={(msg) => sendDirectMessage(msg, selectedAttachment)}
                       onAttach={(file) => processFile(file)}
                       onLiveVoice={() => setIsLiveMode(true)}
+                      onStop={handleStopGeneration}
+                      isStreaming={isStreaming}
+                      queueCount={(branchQueues?.[activeBranchId] || []).filter(q => q.status === 'queued' || q.status === 'leased').length}
                       loading={loading}
                       placeholder="Message..."
                       attachment={selectedAttachment}
@@ -1310,6 +1715,7 @@ const App: React.FC = () => {
           <nav className="fixed bottom-0 left-0 right-0 h-14 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800/80 flex items-center justify-around px-2 z-30 shadow-2xl safe-area-bottom" aria-label="Mobile Navigation">
             <button
               onClick={() => setView('dashboard')}
+              aria-current={currentView === 'dashboard' ? 'page' : undefined}
               className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
                 currentView === 'dashboard' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -1319,6 +1725,7 @@ const App: React.FC = () => {
             </button>
             <button
               onClick={() => setView('chat')}
+              aria-current={currentView === 'chat' ? 'page' : undefined}
               className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
                 currentView === 'chat' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -1328,6 +1735,7 @@ const App: React.FC = () => {
             </button>
             <button
               onClick={() => setView('chat_graph')}
+              aria-current={currentView === 'chat_graph' ? 'page' : undefined}
               className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
                 currentView === 'chat_graph' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -1337,6 +1745,7 @@ const App: React.FC = () => {
             </button>
             <button
               onClick={() => setView('calendar')}
+              aria-current={currentView === 'calendar' ? 'page' : undefined}
               className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
                 currentView === 'calendar' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -1360,9 +1769,10 @@ const App: React.FC = () => {
 
       {pendingOps && (
         <OpsPreviewForm
+          key={pendingOps.reviewId}
           ops={pendingOps.ops}
-          onConfirm={handleConfirmOps}
-          onCancel={clearPendingOps}
+          onConfirm={(confirmedPlan) => handleConfirmOps(pendingOps, confirmedPlan)}
+          onCancel={handleCancelOps}
         />
       )}
 
@@ -1383,10 +1793,11 @@ const App: React.FC = () => {
         />
       )}
 
-      <CommandPalette />
+      <CommandPalette onSendToChat={text => { const draft = useStore.getState().getUnsentDraft(useStore.getState().activeBranchId); setInput(draft ? draft + '\n' + text : text); setView('chat'); requestAnimationFrame(() => chatInputRef.current?.focus()); }} />
       <FocusTimer />
       <DebugConsole onOpenGraphFixer={() => setShowGraphFixingModal(true)} />
       <ToastNotification />
+      {import.meta.env.DEV && <DeveloperModeDrawer />}
     </div>
   );
 };

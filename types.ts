@@ -102,10 +102,14 @@ export interface CommonMetadata {
   _legacy?: Record<string, any>; // Migration bucket for unrecognized fields
 }
 
+// Flowmate 4.1 — Authoritative Scheduling Certainty
+export type SchedulingCertainty = 'confirmed' | 'tentative' | 'cancelled' | 'unknown';
+
 // Per-kind metadata (extends CommonMetadata at the type level)
 export interface TaskMetadata extends CommonMetadata {
   subtasks?: Subtask[];
   productivity?: ProductivityType;
+  scheduling_certainty?: SchedulingCertainty;
 }
 
 export interface EventMetadata extends CommonMetadata {
@@ -113,6 +117,7 @@ export interface EventMetadata extends CommonMetadata {
   location?: string;
   gcal_id?: string;
   gcal_link?: string;
+  scheduling_certainty?: SchedulingCertainty;
 }
 
 export interface GoalMetadata extends CommonMetadata {
@@ -195,6 +200,10 @@ export interface Entity {
   canonical_tags: string[];
   // Flowmate 3.1: Direct parent reference (replaces PART_OF relationship)
   parent_id?: string | null;
+  // Flowmate 4.0: Canonical subtasks field
+  subtasks?: Subtask[];
+  // Flowmate 4.1: Authoritative scheduling certainty
+  scheduling_certainty?: SchedulingCertainty;
 }
 
 export interface TagDefinition {
@@ -221,7 +230,7 @@ export interface Relationship {
   from: string;
   to: string;
   type: RelationshipType;
-  meta: Record<string, any>;
+  meta: Record<string, unknown>;
   created_at: string;
 }
 
@@ -230,6 +239,9 @@ export interface ChatSession {
   title: string;
   created_at: string;
   updated_at: string;
+  deleted?: boolean;
+  deleted_at?: string;
+  active_branch_id?: string;
 }
 
 export interface Message {
@@ -241,6 +253,109 @@ export interface Message {
   attachment?: string | null; // Base64 encoded image string
   ops_preview?: ToonOperation[];
   structured?: any;
+  // Flowmate 3.3 — Conversation Graph & Persistent Queue Extensions
+  parent_id?: string | null;
+  branch_id?: string;
+  root_id?: string;
+  status?:
+    | 'queued'
+    | 'in_flight'
+    | 'streaming'
+    | 'awaiting_confirmation'
+    | 'completed'
+    | 'interrupted'
+    | 'failed';
+  turn_metadata?: {
+    model?: string;
+    ttft_ms?: number;
+    thinking_ms?: number;
+    total_ms?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    fence_token?: number;
+    tool_calls?: Array<{ name: string; latency_ms: number; success: boolean }>;
+    [key: string]: any;
+  };
+}
+
+export interface ConversationBranch {
+  id: string;
+  conversation_id: string;
+  name?: string;
+  label?: string;
+  root_message_id?: string;
+  head_message_id: string | null;
+  diverged_from_branch_id?: string | null;
+  diverged_from_message_id?: string | null;
+  active?: boolean;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string | null;
+}
+
+export interface BranchQueueItem {
+  id: string;
+  branch_id: string;
+  user_message: Message;
+  status: 'queued' | 'leased' | 'completed' | 'cancelled' | 'failed';
+  enqueued_at: number;
+  lease_token?: string;
+  fence_token?: number;
+  lease_expires_at?: number;
+  error?: string;
+}
+
+export type TurnExecutor = (params: {
+  branchId: string;
+  channelId: string;
+  userMessage: Message;
+  assistantMessageId: string;
+  signal?: AbortSignal;
+  onChunk?: (text: string) => void;
+  onMetrics?: (metrics: any) => void;
+}) => Promise<void>;
+
+export interface BranchExecutionLease {
+  branch_id: string;
+  active_turn_id: string;
+  leased_by: string;
+  fence_token: number;
+  leased_at: string;
+  expires_at: string;
+}
+
+export interface ConversationDraft {
+  text: string;
+  attachment?: string | null;
+  base_revision: number;
+  current_revision: number;
+  client_id: string;
+  updated_at: string;
+  conflict_draft?: {
+    text: string;
+    client_id: string;
+    saved_at: string;
+    base_revision: number;
+  } | null;
+}
+
+export interface DeveloperDiagnostics {
+  activeBranchId: string;
+  activeLease: BranchExecutionLease | null;
+  queueCount: number;
+  lastTurnMetrics?: {
+    turn_id: string;
+    parent_id?: string;
+    branch_id: string;
+    ttft_ms?: number;
+    thinking_ms?: number;
+    total_ms?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    model?: string;
+    fence_token?: number;
+    tool_calls?: Array<{ name: string; latency_ms: number; success: boolean }>;
+  };
 }
 
 // TOON (Token-Oriented Object Notation) Types
@@ -261,7 +376,9 @@ export type ToonOperationType =
   | 'log_to_entity'
   | 'archive_entity'
   // Flowmate 3.0 — Food Tracking
-  | 'log_food';
+  | 'log_food'
+  // Greenfield Kernel — Commitment Evidence
+  | 'record_evidence';
 
 export interface ToonOperation {
   type: ToonOperationType;
@@ -296,11 +413,38 @@ export interface FeatureToggles {
   quick_streaks: boolean;       // Mini streaks widget
 }
 
+export interface TravelPreferences {
+  station_buffer_minutes?: number; // buffer time before train departure (default: 45)
+  airport_buffer_minutes?: number; // buffer time before flight departure (default: 120)
+  default_transit_mode?: 'driving' | 'transit' | 'walking';
+  google_maps_api_key?: string;
+}
+
+export type PrivacyPermissionMode = 'allow' | 'ask' | 'deny';
+
+export interface CapabilityPermissionConfig {
+  read: PrivacyPermissionMode;
+  mutation: PrivacyPermissionMode;
+  revoked?: boolean;
+}
+
+export interface PrivacyPolicySettings {
+  capabilities: {
+    device_location: CapabilityPermissionConfig;
+    google_calendar?: CapabilityPermissionConfig;
+    gmail?: CapabilityPermissionConfig;
+    contacts?: CapabilityPermissionConfig;
+    cloud_files?: CapabilityPermissionConfig;
+  };
+  audit_logging_enabled: boolean;
+}
+
 export interface UserSettings {
   // User Profile
   username?: string;       // Display name for AI interactions
   fullname?: string;       // Full legal name
   nickname?: string;       // Preferred casual name (AI will use this)
+  home_location?: string;  // Default origin/home base (e.g. "Campus 25, KIIT University, Bhubaneswar")
 
   // App Settings
   timezone: string;
@@ -313,6 +457,10 @@ export interface UserSettings {
   productivity_calc_method?: 'LOGGED_TIME' | 'AWAKE_TIME'; // Flowmate 3.2
   // Flowmate 3.0: Food Preferences
   food_preferences?: FoodPreferences;
+  // Flowmate 3.3: Travel & Commute Preferences
+  travel_preferences?: TravelPreferences;
+  // Flowmate 3.4: Privacy & Capability Preferences
+  privacy_preferences?: PrivacyPolicySettings;
 }
 
 

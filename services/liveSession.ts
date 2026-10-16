@@ -3,14 +3,17 @@ import {
   LiveServerMessage, 
   Modality, 
   Type, 
-  FunctionDeclaration
+  FunctionDeclaration,
+  Session
 } from "@google/genai";
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from "../store";
-import { EntityKind } from "../types";
-import { getAiClient } from './ai/client';
+import { EntityKind, ToonOperation, UserSettings } from "../types";
+import { getAiClient, hasAiApiKey, AI_MODELS } from './ai/client';
+import { contextResolver, selectEligibleMemories, isEntityExcludedFromEgress } from './context';
+import { convertOperationsToActionProposal } from './kernel';
 
-const MODEL_NAME = 'gemini-3.8-live';
+const MODEL_NAME = AI_MODELS.LIVE;
 
 // --- Audio Utils (PCM 16kHz/24kHz processing) ---
 
@@ -60,7 +63,84 @@ function pcmToAudioBuffer(
   return buffer;
 }
 
-// --- Tool Definitions ---
+// --- Live Voice Status Definition ---
+
+export type LiveVoiceStatus =
+  | 'idle'
+  | 'initializing'
+  | 'connecting'
+  | 'active'
+  | 'listening'
+  | 'thinking'
+  | 'speaking'
+  | 'confirming_action'
+  | 'interrupted'
+  | 'error'
+  | 'disconnected'
+  | 'offline_fallback';
+
+// --- Tool Argument Interfaces (ZERO any) ---
+
+export interface ScheduleEventArgs {
+  title: string;
+  start_time: string;
+  end_time?: string;
+  description?: string;
+  location?: string;
+  recurrence?: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+}
+
+export interface CreateEntityArgs {
+  title: string;
+  kind?: string;
+  description?: string;
+  start_time?: string;
+  end_time?: string;
+  deadline?: string;
+  duration_minutes?: number;
+  recurrence?: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
+}
+
+export interface LogActivityArgs {
+  title: string;
+  minutes?: number;
+  productivity?: 'PRODUCTIVE' | 'NEUTRAL' | 'UNPRODUCTIVE';
+}
+
+export interface ReadCalendarArgs {
+  start_date: string;
+  end_date: string;
+}
+
+export interface SearchEntitiesArgs {
+  query: string;
+  kind?: string;
+}
+
+export interface SearchMemoryArgs {
+  query?: string;
+  category?: string;
+  include_situational?: boolean;
+  limit?: number;
+}
+
+export interface ProposeMemoryUpdateArgs {
+  content: string;
+  category?: 'preference' | 'fact' | 'project_context' | 'relationship' | 'goal_aspiration' | 'routine';
+  is_situational?: boolean;
+  valid_until?: string;
+  privacy_tier?: 'public' | 'private' | 'sensitive' | 'device_local';
+}
+
+export interface RecordCommitmentEvidenceArgs {
+  entity_id: string;
+  quantity?: number;
+  timestamp?: string;
+  note?: string;
+  user_confirmed?: boolean;
+}
+
+// --- Tool Declarations ---
 
 const scheduleEventTool: FunctionDeclaration = {
   name: 'schedule_event',
@@ -142,6 +222,51 @@ const searchEntitiesTool: FunctionDeclaration = {
   }
 };
 
+const searchMemoryTool: FunctionDeclaration = {
+  name: 'search_memory',
+  description: 'Search user memories, stated preferences, or persistent facts by keyword or category.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      query: { type: Type.STRING, description: 'Keyword to search in memory' },
+      category: { type: Type.STRING, enum: ['preference', 'fact', 'project_context', 'relationship', 'goal_aspiration', 'routine'] },
+      limit: { type: Type.NUMBER, description: 'Max results to return' }
+    }
+  }
+};
+
+const proposeMemoryUpdateTool: FunctionDeclaration = {
+  name: 'propose_memory_update',
+  description: 'Propose saving a durable user preference, belief, or situational context. Stages an action for explicit user confirmation.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      content: { type: Type.STRING, description: 'The preference or fact stated by the user' },
+      category: { type: Type.STRING, enum: ['preference', 'fact', 'project_context', 'relationship', 'goal_aspiration', 'routine'] },
+      is_situational: { type: Type.BOOLEAN, description: 'True if temporary situational state' },
+      valid_until: { type: Type.STRING, description: 'Expiration date for temporary context' },
+      privacy_tier: { type: Type.STRING, enum: ['public', 'private', 'sensitive', 'device_local'] }
+    },
+    required: ['content']
+  }
+};
+
+const recordCommitmentEvidenceTool: FunctionDeclaration = {
+  name: 'record_commitment_evidence',
+  description: 'Record progress or evidence towards a commitment or recurring goal.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      entity_id: { type: Type.STRING, description: 'ID of the target entity' },
+      quantity: { type: Type.NUMBER, description: 'Quantity completed (default 1)' },
+      timestamp: { type: Type.STRING, description: 'ISO timestamp of evidence' },
+      note: { type: Type.STRING, description: 'Note on what was accomplished' },
+      user_confirmed: { type: Type.BOOLEAN, description: 'True if confirmed by user' }
+    },
+    required: ['entity_id']
+  }
+};
+
 // --- Live Manager Class ---
 
 export class LiveManager {
@@ -151,70 +276,101 @@ export class LiveManager {
   private processor: ScriptProcessorNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private nextStartTime = 0;
-  private session: any = null;
+  private session: Session | null = null;
   private stream: MediaStream | null = null;
+  private activeAudioSources: AudioBufferSourceNode[] = [];
   
   // Public Analyser for UI Visualization
   public analyser: AnalyserNode | null = null;
 
-  public onStatusChange: (status: string) => void = () => {};
+  public onStatusChange: (status: LiveVoiceStatus, details?: string) => void = () => {};
   public onTranscription: (text: string, source: 'user' | 'model') => void = () => {};
+  public onPendingOpsChange?: (ops: ToonOperation[]) => void;
 
   // Turn buffers for saving to store messages
   private userTurnBuffer: string = '';
   private modelTurnBuffer: string = '';
-  private turnPendingOps: any[] = [];
+  private turnPendingOps: ToonOperation[] = [];
   private lastTurnMessageId: string = '';
+  private currentStatus: LiveVoiceStatus = 'idle';
 
   constructor() {
     this.ai = getAiClient();
   }
 
+  public getStatus(): LiveVoiceStatus {
+    return this.currentStatus;
+  }
+
+  private setStatus(status: LiveVoiceStatus, details?: string) {
+    this.currentStatus = status;
+    this.onStatusChange(status, details);
+  }
+
+  private handleOnline = () => {
+    if (this.currentStatus === 'offline_fallback') {
+      this.setStatus('idle', 'Network reconnected');
+    }
+  };
+
+  private handleOffline = () => {
+    this.stopAllAudioPlayback();
+    this.setStatus('offline_fallback', 'Network connection lost. Live voice requires an active internet connection.');
+  };
+
   async connect() {
     try {
-      this.onStatusChange('connecting');
+      // 0a. API Key Check
+      if (!hasAiApiKey()) {
+        this.setStatus('offline_fallback', 'Gemini Live requires a Gemini API key. Local workspace features remain available.');
+        return;
+      }
+
+      // 0b. Offline Check
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        this.setStatus('offline_fallback', 'Device is offline. Gemini Live voice requires an active internet connection.');
+        return;
+      }
+
+      this.setStatus('connecting');
+
+      // Bind network listeners
+      if (typeof window !== 'undefined') {
+        window.addEventListener('online', this.handleOnline);
+        window.addEventListener('offline', this.handleOffline);
+      }
 
       // Fetch User Settings & Context
-      const { settings, entities } = useStore.getState();
-      const timezone = settings.timezone || 'Asia/Kolkata';
-      const now = new Date();
-      const localTimeString = now.toLocaleString('en-US', {
-        timeZone: timezone,
-        dateStyle: 'full',
-        timeStyle: 'medium'
-      });
-      const localIsoString = now.toISOString();
+      const settings = useStore.getState().settings || ({} as Partial<UserSettings>);
 
-      // Recent upcoming events for context
-      const upcomingEvents = (entities || [])
-        .filter(e => e.kind === 'EVENT' && e.start_time && new Date(e.start_time) >= now)
-        .slice(0, 5)
-        .map(e => `${e.title} (${e.start_time})`)
-        .join(', ');
+      // P1-07 Unified Context & Memory Engine for Voice Session
+      const resolved = await contextResolver.resolveContext({ source: 'voice_session' });
+      const voiceContextSummary = contextResolver.formatForVoiceSession(resolved);
 
       const customInst = settings.custom_instructions 
         ? `\nImportant User Instructions:\n${settings.custom_instructions}` 
         : "";
       
-      const systemInstructionText = `
-You are Flowmate, a seamless personal productivity and life operating assistant.
-Keep spoken responses concise, natural, conversational, and direct.
-
-CURRENT CONTEXT & TIME:
-- Local Time: ${localTimeString} (${timezone})
-- ISO Timestamp: ${localIsoString}
-${upcomingEvents ? `- Upcoming Events: ${upcomingEvents}` : ''}
+      const systemInstructionText = `${voiceContextSummary}
 
 DOMAIN ARCHITECTURE & CAPABILITIES:
 - Calendar & Scheduling: Flowmate's calendar and daily timeline are directly populated by EVENT entities. When scheduling any event, journey/travel, meeting, or timed block, invoke the \`schedule_event\` tool with precise ISO 8601 \`start_time\` and \`end_time\` calculated in local timezone (+05:30).
-- Actions & Operations: Tool calls generate interactive confirmation previews on the user's screen before persisting changes.
+- Actions & Operations: Tool calls generate interactive confirmation previews on the user's screen before persisting changes. User authority is strictly preserved.
 - Contexts & Projects: Domains or broad life areas (e.g., Work, Academics, Club) are CONTEXT entities. Specific initiatives with deliverables are PROJECT entities.
 - Activity Logging: Track habits and tasks with \`log_activity\` including duration and productivity classification (PRODUCTIVE, NEUTRAL, UNPRODUCTIVE).
+- Memory & Preferences: When user states preferences, routines, or durable facts, invoke \`propose_memory_update\` to stage for user confirmation.
 ${customInst}`;
       
-      // 1. Audio Setup
-      this.inputContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      this.outputContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      // 1. Audio Setup (ZERO any)
+      type WindowWithWebkitAudio = Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
+      const win = window as WindowWithWebkitAudio;
+      const AudioCtx = window.AudioContext || win.webkitAudioContext;
+      if (!AudioCtx) {
+        throw new Error('Web Audio API is not supported in this browser environment');
+      }
+
+      this.inputContext = new AudioCtx({ sampleRate: 16000 });
+      this.outputContext = new AudioCtx({ sampleRate: 24000 });
       
       if (this.inputContext.state === 'suspended') {
         await this.inputContext.resume();
@@ -230,13 +386,18 @@ ${customInst}`;
         model: MODEL_NAME,
         config: {
           responseModalities: [Modality.AUDIO],
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
           tools: [{
             functionDeclarations: [
               scheduleEventTool,
               createEntityTool,
               logActivityTool,
               readCalendarTool,
-              searchEntitiesTool
+              searchEntitiesTool,
+              searchMemoryTool,
+              proposeMemoryUpdateTool,
+              recordCommitmentEvidenceTool
             ]
           }],
           systemInstruction: {
@@ -246,7 +407,7 @@ ${customInst}`;
         callbacks: {
           onopen: () => {
             console.log('[LiveManager] Connected to Gemini Live');
-            this.onStatusChange('active');
+            this.setStatus('active');
           },
           onmessage: async (msg: LiveServerMessage) => {
             this.handleMessage(msg);
@@ -254,13 +415,21 @@ ${customInst}`;
           onclose: (e) => {
             console.log('[LiveManager] Connection closed', e);
             this.flushBuffers();
-            this.onStatusChange('disconnected');
+            if (typeof navigator !== 'undefined' && !navigator.onLine) {
+              this.setStatus('offline_fallback', 'Network disconnected during voice session');
+            } else {
+              this.setStatus('disconnected');
+            }
             this.cleanup();
           },
           onerror: (err) => {
             console.error("[LiveManager] Live Error:", err);
             this.flushBuffers();
-            this.onStatusChange('error');
+            if (typeof navigator !== 'undefined' && !navigator.onLine) {
+              this.setStatus('offline_fallback', 'Network connection interrupted');
+            } else {
+              this.setStatus('error', 'Live connection error occurred');
+            }
             this.cleanup();
           }
         }
@@ -271,7 +440,19 @@ ${customInst}`;
 
     } catch (err) {
       console.error("[LiveManager] Failed to connect:", err);
-      this.onStatusChange('error');
+      let errorMsg = 'Failed to connect to Gemini Live voice service.';
+      if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        errorMsg = 'Microphone access denied. Please grant microphone permissions in browser settings.';
+      } else if (err instanceof DOMException && err.name === 'NotFoundError') {
+        errorMsg = 'No microphone input device found.';
+      } else if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        this.setStatus('offline_fallback', 'Device is offline.');
+        this.cleanup();
+        return;
+      } else if (err instanceof Error) {
+        errorMsg = err.message;
+      }
+      this.setStatus('error', errorMsg);
       this.cleanup();
     }
   }
@@ -313,20 +494,45 @@ ${customInst}`;
     this.processor.connect(this.inputContext.destination);
   }
 
-  private flushUserTurn() {
-    if (this.userTurnBuffer.trim()) {
-      const { addMessage, activeSessionId } = useStore.getState();
-      const msgId = addMessage('user', this.userTurnBuffer.trim(), undefined, null, activeSessionId || 'general');
-      this.lastTurnMessageId = msgId;
-      this.userTurnBuffer = '';
+  public stopAllAudioPlayback() {
+    for (const src of this.activeAudioSources) {
+      try {
+        src.stop();
+        src.disconnect();
+      } catch {
+        // already stopped
+      }
+    }
+    this.activeAudioSources = [];
+    if (this.outputContext) {
+      this.nextStartTime = this.outputContext.currentTime;
+    } else {
+      this.nextStartTime = 0;
     }
   }
 
-  private flushModelTurn() {
-    if (this.modelTurnBuffer.trim()) {
+  public flushUserTurn(): string | null {
+    const text = this.userTurnBuffer.trim();
+    if (text) {
+      const { addMessage, activeSessionId } = useStore.getState();
+      const effectiveSessionId = activeSessionId || 'general';
+      const msgId = addMessage('user', text, undefined, null, effectiveSessionId);
+      this.lastTurnMessageId = msgId;
+      this.userTurnBuffer = '';
+      return msgId;
+    }
+    return null;
+  }
+
+  public flushModelTurn(): string | null {
+    const text = this.modelTurnBuffer.trim();
+    const ops = this.turnPendingOps.length > 0 ? [...this.turnPendingOps] : undefined;
+    
+    if (text || (ops && ops.length > 0)) {
       const { addMessage, setPendingOps, activeSessionId } = useStore.getState();
-      const ops = this.turnPendingOps.length > 0 ? [...this.turnPendingOps] : undefined;
-      const msgId = addMessage('assistant', this.modelTurnBuffer.trim(), ops, null, activeSessionId || 'general');
+      const effectiveSessionId = activeSessionId || 'general';
+      const msgText = text || (ops ? `Prepared ${ops.length} operation(s) for preview.` : '');
+      const msgId = addMessage('assistant', msgText, ops, null, effectiveSessionId);
       
       if (ops && ops.length > 0) {
         setPendingOps(ops, msgId);
@@ -334,19 +540,39 @@ ${customInst}`;
 
       this.modelTurnBuffer = '';
       this.turnPendingOps = [];
+      return msgId;
     }
+    return null;
   }
 
-  private flushBuffers() {
+  public flushBuffers() {
     this.flushUserTurn();
     this.flushModelTurn();
   }
 
-  private async handleMessage(msg: LiveServerMessage) {
-    // 0. Interruption Handling
+  public getUserTurnBuffer(): string {
+    return this.userTurnBuffer;
+  }
+
+  public getModelTurnBuffer(): string {
+    return this.modelTurnBuffer;
+  }
+
+  public getPendingOps(): ToonOperation[] {
+    return [...this.turnPendingOps];
+  }
+
+  public async handleMessage(msg: LiveServerMessage) {
+    // 0. Audio Interruption Handling
     if (msg.serverContent?.interrupted) {
-      this.nextStartTime = 0;
+      this.stopAllAudioPlayback();
       this.flushModelTurn();
+      this.setStatus('interrupted', 'Voice output interrupted by speech');
+      setTimeout(() => {
+        if (this.session && this.currentStatus === 'interrupted') {
+          this.setStatus('listening');
+        }
+      }, 350);
     }
 
     // 1. Audio Output and Inline Text from parts
@@ -363,138 +589,279 @@ ${customInst}`;
           source.connect(this.outputContext.destination);
           source.start(this.nextStartTime);
           
+          this.activeAudioSources.push(source);
+          source.onended = () => {
+            this.activeAudioSources = this.activeAudioSources.filter(s => s !== source);
+          };
+
           this.nextStartTime += buffer.duration;
+          this.setStatus('speaking');
         }
-        if (part.text) {
+        if (part.text && !msg.serverContent?.outputTranscription?.text) {
+          if (this.userTurnBuffer.trim()) {
+            this.flushUserTurn();
+          }
           this.modelTurnBuffer += part.text;
           this.onTranscription(part.text, 'model');
+          this.setStatus('speaking');
         }
       }
     }
 
-    // 2. Transcription
+    // 2. Transcription Handling
+    // A. Output Transcription (Model speech)
     const outTrans = msg.serverContent?.outputTranscription;
     if (outTrans?.text) {
+      if (this.userTurnBuffer.trim()) {
+        this.flushUserTurn();
+      }
       this.modelTurnBuffer += outTrans.text;
       this.onTranscription(outTrans.text, 'model');
+      this.setStatus('speaking');
     }
 
+    // B. Input Transcription (User speech)
     const inTrans = msg.serverContent?.inputTranscription;
     if (inTrans?.text) {
-      // If user starts speaking while previous model turn wasn't flushed, flush it
-      if (this.modelTurnBuffer.trim()) {
+      if (this.modelTurnBuffer.trim() || this.turnPendingOps.length > 0) {
         this.flushModelTurn();
       }
       this.userTurnBuffer += inTrans.text;
       this.onTranscription(inTrans.text, 'user');
+      this.setStatus('listening');
     }
 
     // 3. Turn Complete
     if (msg.serverContent?.turnComplete) {
-      // Ensure user turn was logged before the model turn
       this.flushUserTurn();
       this.flushModelTurn();
+      if (this.turnPendingOps.length === 0) {
+        this.setStatus('active');
+      }
     }
 
-    // 4. Tool Calls
-    if (msg.toolCall?.functionCalls && this.session) {
-      const { setPendingOps, addDebugLog, entities } = useStore.getState();
-      const responses: Array<{ name: string; id?: string; response: Record<string, any> }> = [];
+    // 4. Tool Calls — Two-Phase Cryptographic Confirmation Gate
+    if (msg.toolCall?.functionCalls) {
+      const { setPendingOps, addDebugLog, kernelEntities } = useStore.getState();
+      const activeEntities = useStore.getState().getActiveEntities();
+      const responses: Array<{ name: string; id?: string; response: Record<string, unknown> }> = [];
 
-      // Make sure user's utterance before the tool call is saved
+      // Ensure user's utterance before the tool call is saved
       this.flushUserTurn();
 
       for (const fc of msg.toolCall.functionCalls) {
-        addDebugLog('system', `Live Tool Call: ${fc.name}`, fc.args);
+        addDebugLog('system', `Live Tool Call: ${fc.name}`, fc.args as Record<string, unknown> | undefined);
         
-        let result: Record<string, any> = { status: 'ok' };
+        let result: Record<string, unknown> = { status: 'ok' };
         const id = uuidv4();
+        const rawArgs = (fc.args || {}) as Record<string, unknown>;
 
         if (fc.name === 'schedule_event') {
-          const { title, start_time, end_time, description, location, recurrence } = (fc.args || {}) as any;
-          const op: any = {
+          const scheduleArgs = rawArgs as unknown as ScheduleEventArgs;
+          const op: ToonOperation = {
             type: 'create_entity',
             payload: {
               id,
               kind: EntityKind.EVENT,
-              title: title || 'Scheduled Event',
-              description: description || null,
-              start_time: start_time || null,
-              end_time: end_time || null,
-              recurrence: recurrence || null,
-              metadata: location ? { location } : {}
+              title: scheduleArgs.title || 'Scheduled Event',
+              description: scheduleArgs.description || null,
+              start_time: scheduleArgs.start_time || null,
+              end_time: scheduleArgs.end_time || null,
+              recurrence: scheduleArgs.recurrence || null,
+              metadata: scheduleArgs.location ? { location: scheduleArgs.location } : {}
             }
           };
 
           this.turnPendingOps.push(op);
-          setPendingOps([op], this.lastTurnMessageId || id);
+          this.onPendingOpsChange?.([...this.turnPendingOps]);
+
+          // Compute cryptographic plan fingerprint
+          const proposal = convertOperationsToActionProposal([op], {
+            source: 'ai_agent',
+            intent: `Schedule event: ${scheduleArgs.title}`,
+            currentEntities: kernelEntities
+          });
+
+          setPendingOps([...this.turnPendingOps], this.lastTurnMessageId || id);
+          this.setStatus('confirming_action', `Event "${scheduleArgs.title}" staged for review`);
+
           result = {
             status: 'prepared_for_preview',
+            requires_user_confirmation: true,
+            plan_fingerprint: proposal.id,
             id,
-            title,
-            start_time,
-            end_time,
-            message: `Event "${title}" from ${start_time} to ${end_time} prepared for user review on screen.`
+            title: scheduleArgs.title,
+            start_time: scheduleArgs.start_time,
+            end_time: scheduleArgs.end_time,
+            message: `Event "${scheduleArgs.title}" staged on user screen with cryptographic verification gate. Awaiting explicit user confirmation.`
           };
         } else if (fc.name === 'create_entity') {
-          const { title, kind, description, start_time, end_time, deadline, duration_minutes, recurrence } = (fc.args || {}) as any;
-          const resolvedKind = (kind || 'TASK').toUpperCase();
-          const op: any = {
+          const createArgs = rawArgs as unknown as CreateEntityArgs;
+          const resolvedKind = (createArgs.kind || 'TASK').toUpperCase();
+          const op: ToonOperation = {
             type: 'create_entity',
             payload: {
               id,
-              title,
+              title: createArgs.title,
               kind: resolvedKind,
-              description: description || null,
-              start_time: start_time || null,
-              end_time: end_time || null,
-              deadline: deadline || null,
-              duration_minutes: duration_minutes || null,
-              recurrence: recurrence || null
+              description: createArgs.description || null,
+              start_time: createArgs.start_time || null,
+              end_time: createArgs.end_time || null,
+              deadline: createArgs.deadline || null,
+              duration_minutes: createArgs.duration_minutes || null,
+              recurrence: createArgs.recurrence || null
             }
           };
 
           this.turnPendingOps.push(op);
-          setPendingOps([op], this.lastTurnMessageId || id);
+          this.onPendingOpsChange?.([...this.turnPendingOps]);
+
+          const proposal = convertOperationsToActionProposal([op], {
+            source: 'ai_agent',
+            intent: `Create entity: ${createArgs.title}`,
+            currentEntities: kernelEntities
+          });
+
+          setPendingOps([...this.turnPendingOps], this.lastTurnMessageId || id);
+          this.setStatus('confirming_action', `Entity "${createArgs.title}" staged for review`);
+
           result = {
             status: 'prepared_for_preview',
+            requires_user_confirmation: true,
+            plan_fingerprint: proposal.id,
             id,
-            title,
+            title: createArgs.title,
             kind: resolvedKind,
-            message: `Entity "${title}" prepared for user review on screen.`
+            message: `Entity "${createArgs.title}" staged on user screen with cryptographic verification gate. Awaiting explicit user confirmation.`
           };
         } else if (fc.name === 'log_activity') {
-          const { title, minutes, productivity } = (fc.args || {}) as any;
-          const op: any = {
+          const logArgs = rawArgs as unknown as LogActivityArgs;
+          const op: ToonOperation = {
             type: 'log_activity',
             payload: {
-              title,
-              duration_minutes: minutes,
-              metadata: productivity ? { productivity } : {}
+              title: logArgs.title,
+              duration_minutes: logArgs.minutes,
+              metadata: logArgs.productivity ? { productivity: logArgs.productivity } : {}
             }
           };
 
           this.turnPendingOps.push(op);
-          setPendingOps([op], this.lastTurnMessageId || id);
-          result = { status: 'logged', title, minutes };
+          this.onPendingOpsChange?.([...this.turnPendingOps]);
+
+          setPendingOps([...this.turnPendingOps], this.lastTurnMessageId || id);
+          this.setStatus('confirming_action', `Activity "${logArgs.title}" staged for review`);
+
+          result = {
+            status: 'prepared_for_preview',
+            requires_user_confirmation: true,
+            title: logArgs.title,
+            minutes: logArgs.minutes,
+            message: `Activity "${logArgs.title}" staged for user confirmation.`
+          };
+        } else if (fc.name === 'propose_memory_update') {
+          const memArgs = rawArgs as unknown as ProposeMemoryUpdateArgs;
+          const op: ToonOperation = {
+            type: 'create_entity',
+            payload: {
+              id,
+              schema_id: 'system/memory_item',
+              title: memArgs.content.slice(0, 60),
+              fields: {
+                content: memArgs.content,
+                category: memArgs.category || 'preference',
+                epistemic_status: 'assistant_inferred',
+                user_confirmed: false,
+                confidence_score: 0.85,
+                privacy_tier: memArgs.privacy_tier || 'private',
+                valid_from: new Date().toISOString(),
+                valid_until: memArgs.valid_until || null,
+                source_turn: 1,
+                source_excerpt: memArgs.content,
+                speaker: 'assistant'
+              }
+            }
+          };
+
+          this.turnPendingOps.push(op);
+          this.onPendingOpsChange?.([...this.turnPendingOps]);
+
+          setPendingOps([...this.turnPendingOps], this.lastTurnMessageId || id);
+          this.setStatus('confirming_action', `Memory proposal staged for review`);
+
+          result = {
+            status: 'prepared_for_preview',
+            requires_user_confirmation: true,
+            content: memArgs.content,
+            category: memArgs.category || 'preference',
+            message: `Proposed memory staged for user confirmation.`
+          };
+        } else if (fc.name === 'record_commitment_evidence') {
+          const recArgs = rawArgs as unknown as RecordCommitmentEvidenceArgs;
+          const op: ToonOperation = {
+            type: 'record_evidence',
+            payload: {
+              entity_id: recArgs.entity_id,
+              quantity: recArgs.quantity ?? 1,
+              timestamp: recArgs.timestamp || new Date().toISOString(),
+              note: recArgs.note || null,
+              user_confirmed: recArgs.user_confirmed ?? false
+            }
+          };
+
+          this.turnPendingOps.push(op);
+          this.onPendingOpsChange?.([...this.turnPendingOps]);
+
+          setPendingOps([...this.turnPendingOps], this.lastTurnMessageId || id);
+          this.setStatus('confirming_action', `Commitment evidence staged for review`);
+
+          result = {
+            status: 'prepared_for_preview',
+            requires_user_confirmation: true,
+            entity_id: recArgs.entity_id,
+            quantity: recArgs.quantity ?? 1,
+            message: `Commitment evidence staged for user confirmation.`
+          };
         } else if (fc.name === 'read_calendar') {
-          const { start_date, end_date } = (fc.args || {}) as any;
-          const s = start_date ? new Date(start_date).getTime() : 0;
-          const e = end_date ? new Date(end_date).getTime() : Infinity;
-          const matched = (entities || []).filter(item => {
+          const calArgs = rawArgs as unknown as ReadCalendarArgs;
+          const s = calArgs.start_date ? new Date(calArgs.start_date).getTime() : 0;
+          const e = calArgs.end_date ? new Date(calArgs.end_date).getTime() : Infinity;
+          const matched = (activeEntities || []).filter(item => {
             if (item.kind !== 'EVENT' || !item.start_time) return false;
+            if (isEntityExcludedFromEgress(item)) return false;
             const t = new Date(item.start_time).getTime();
             return t >= s && t <= e;
           }).map(i => ({ id: i.id, title: i.title, start: i.start_time, end: i.end_time }));
           result = { events: matched };
         } else if (fc.name === 'search_entities') {
-          const { query: q, kind } = (fc.args || {}) as any;
-          const qLower = (q || '').toLowerCase();
-          const matched = (entities || []).filter(item => {
-            if (kind && item.kind !== kind) return false;
+          const searchArgs = rawArgs as unknown as SearchEntitiesArgs;
+          const qLower = (searchArgs.query || '').toLowerCase();
+          const matched = (activeEntities || []).filter(item => {
+            if (isEntityExcludedFromEgress(item)) return false;
+            if (searchArgs.kind && item.kind !== searchArgs.kind) return false;
             return item.title.toLowerCase().includes(qLower) || (item.description || '').toLowerCase().includes(qLower);
           }).slice(0, 10).map(i => ({ id: i.id, title: i.title, kind: i.kind }));
           result = { results: matched };
+        } else if (fc.name === 'search_memory') {
+          const searchMemArgs = rawArgs as unknown as SearchMemoryArgs;
+          const kEntities = Object.values(kernelEntities || {});
+          const matched = selectEligibleMemories(kEntities, {
+            query: searchMemArgs.query,
+            category: searchMemArgs.category,
+            limit: searchMemArgs.limit || 10,
+            include_superseded: false, // Voice models strictly never receive superseded beliefs
+            include_situational: false,
+            include_expired: false,    // Expiration bounds strictly enforced
+            allow_device_local: false, // Strict device-local isolation: never transmitted over the wire
+            max_privacy_tier: 'sensitive',
+          });
+          result = {
+            memories: matched.map(m => ({
+              id: m.id,
+              content: m.content,
+              category: m.category,
+              epistemic_status: m.epistemic_status,
+            })),
+          };
         }
 
         responses.push({
@@ -504,18 +871,21 @@ ${customInst}`;
         });
       }
 
-      try {
-        this.session.sendToolResponse({
-          functionResponses: responses
-        });
-      } catch (err) {
-        console.error("[LiveManager] Failed to send tool response:", err);
+      if (this.session) {
+        try {
+          this.session.sendToolResponse({
+            functionResponses: responses
+          });
+        } catch (err) {
+          console.error("[LiveManager] Failed to send tool response:", err);
+        }
       }
     }
   }
 
   disconnect() {
     this.flushBuffers();
+    this.stopAllAudioPlayback();
     if (this.session) {
       try {
         this.session.close();
@@ -525,10 +895,14 @@ ${customInst}`;
       this.session = null;
     }
     this.cleanup();
-    this.onStatusChange('disconnected');
+    this.setStatus('disconnected');
   }
 
   private cleanup() {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('online', this.handleOnline);
+      window.removeEventListener('offline', this.handleOffline);
+    }
     this.stream?.getTracks().forEach(t => t.stop());
     this.processor?.disconnect();
     this.analyser?.disconnect();
@@ -543,4 +917,14 @@ ${customInst}`;
     this.inputContext = null;
     this.outputContext = null;
   }
+}
+
+declare global {
+  interface Window {
+    LiveManager?: typeof LiveManager;
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.LiveManager = LiveManager;
 }

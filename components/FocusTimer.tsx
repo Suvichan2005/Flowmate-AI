@@ -1,24 +1,54 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useStore } from '../store';
-import { Play, Pause, X, CheckCircle2, Timer } from 'lucide-react';
+import { Play, Pause, X, CheckCircle2, Timer, AlertTriangle } from 'lucide-react';
+import { checkFocusSessionConflicts } from '../utils/calendarConflicts';
 
 const FocusTimer: React.FC = () => {
-  const { focusSession, endFocusSession, entities, applyOperations, addMessage } = useStore();
-  const [timeLeft, setTimeLeft] = useState(0);
+  const { focusSession, endFocusSession, entities, applyOperations, addMessage, selectEntity } = useStore();
+  const [timeLeft, setTimeLeft] = useState(() => {
+    if (!focusSession) return 0;
+    const now = new Date();
+    const startTime = new Date(focusSession.startTime);
+    const elapsedSeconds = Math.floor((now.getTime() - startTime.getTime()) / 1000);
+    const totalSeconds = focusSession.durationMinutes * 60;
+    return Math.max(0, totalSeconds - elapsedSeconds);
+  });
   const [isPaused, setIsPaused] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [completed, setCompleted] = useState(false);
+  const hadPositiveTimeRef = useRef(false);
 
-  // Initialize timer
+  const conflictWarning = useMemo(() => {
+    if (!focusSession || timeLeft <= 0) return null;
+    const remainingMinutes = Math.max(1, Math.ceil(timeLeft / 60));
+    return checkFocusSessionConflicts(remainingMinutes, entities, Date.now());
+  }, [focusSession, timeLeft, entities]);
+
+  // Sync timer when focusSession changes
   useEffect(() => {
     if (focusSession) {
       const now = new Date();
       const startTime = new Date(focusSession.startTime);
       const elapsedSeconds = Math.floor((now.getTime() - startTime.getTime()) / 1000);
       const totalSeconds = focusSession.durationMinutes * 60;
-      setTimeLeft(Math.max(0, totalSeconds - elapsedSeconds));
+      const initial = Math.max(0, totalSeconds - elapsedSeconds);
+      setTimeLeft(initial);
+      if (initial > 0) {
+        hadPositiveTimeRef.current = true;
+      }
+      setIsPaused(false);
+      setCompleted(false);
+    } else {
+      hadPositiveTimeRef.current = false;
     }
-  }, [focusSession]);
+  }, [focusSession?.startTime, focusSession?.durationMinutes]);
+
+  // Track positive time
+  useEffect(() => {
+    if (timeLeft > 0) {
+      hadPositiveTimeRef.current = true;
+    }
+  }, [timeLeft]);
 
   // Tick
   useEffect(() => {
@@ -31,9 +61,9 @@ const FocusTimer: React.FC = () => {
     return () => clearInterval(interval);
   }, [focusSession, isPaused, timeLeft]);
 
-  // Auto-complete when timer reaches 0
+  // Auto-complete only after timer has run down to 0 from a positive time
   useEffect(() => {
-    if (focusSession && timeLeft === 0 && !completed) {
+    if (focusSession && hadPositiveTimeRef.current && timeLeft === 0 && !completed) {
       setCompleted(true);
       handleComplete();
     }
@@ -101,10 +131,30 @@ const FocusTimer: React.FC = () => {
                 </button>
             </div>
 
-            <div className="mb-4">
+            <div className="mb-3">
                 <h3 className="text-sm font-medium text-slate-200 truncate">{entity.title}</h3>
                 <p className="text-xs text-slate-500">{entity.kind}</p>
             </div>
+
+            {/* Live Calendar Collision Warning */}
+            {conflictWarning?.hasConflict && conflictWarning.collidingEvent && (
+                <div
+                    onClick={() => conflictWarning.collidingEvent && selectEntity(conflictWarning.collidingEvent.collidingEventId)}
+                    className="mb-3 p-2 rounded-xl bg-amber-950/60 border border-amber-500/40 hover:border-amber-400 transition-colors cursor-pointer group flex items-start gap-2 text-xs"
+                    data-testid="focus-timer-calendar-collision"
+                    title="Click to view colliding event"
+                >
+                    <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-amber-300 truncate group-hover:text-amber-200">
+                            {conflictWarning.isEventOngoing ? 'Event in progress' : `Starts in ${conflictWarning.minutesUntilNextEvent ?? 0}m`}: {conflictWarning.collidingEvent.collidingEventTitle}
+                        </div>
+                        <div className="text-[10px] text-amber-400/70 truncate">
+                            {conflictWarning.collidingEvent.formattedTimeSpan} · {conflictWarning.collidingEvent.sourceAttribution}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <div className="text-4xl font-mono font-bold text-center text-white mb-4 tracking-wider">
                 {formatTime(timeLeft)}

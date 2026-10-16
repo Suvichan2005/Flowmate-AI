@@ -1,5 +1,7 @@
 import { Entity, EntityKind, UserSettings } from "../types";
 import { getGoogleAccessToken, refreshGoogleCalendarToken, setGoogleAccessToken } from "./firebase";
+import { isDemoSyncBlocked } from "./syncManager";
+import { isLegacySyntheticEntity } from "./legacySyntheticEntity";
 
 // Custom error class for authentication failures
 export class GoogleAuthError extends Error {
@@ -83,9 +85,9 @@ export const GoogleCalendarAdapter = {
   /**
    * Create an event in Google Calendar
    */
-  createEvent: async (entity: Entity, settings: UserSettings): Promise<SyncResult> => {
-    if (!settings.sync_enabled) {
-      return { success: true }; // Sync disabled, skip
+  createEvent: async (entity: Entity, settings?: UserSettings): Promise<SyncResult> => {
+    if (isDemoSyncBlocked() || isLegacySyntheticEntity(entity) || !settings?.sync_enabled) {
+      return { success: false, error: 'Google Calendar sync blocked or disabled' };
     }
 
     try {
@@ -178,9 +180,9 @@ export const GoogleCalendarAdapter = {
   /**
    * Update an existing event in Google Calendar
    */
-  updateEvent: async (entity: Entity, externalId: string, settings: UserSettings): Promise<SyncResult> => {
-    if (!settings.sync_enabled) {
-      return { success: true };
+  updateEvent: async (entity: Entity, externalId: string, settings?: UserSettings): Promise<SyncResult> => {
+    if (isDemoSyncBlocked() || isLegacySyntheticEntity(entity) || !settings?.sync_enabled) {
+      return { success: false, error: 'Google Calendar sync blocked or disabled' };
     }
 
     try {
@@ -255,6 +257,9 @@ export const GoogleCalendarAdapter = {
    * Delete an event from Google Calendar
    */
   deleteEvent: async (externalId: string): Promise<SyncResult> => {
+    if (isDemoSyncBlocked()) {
+      return { success: false, error: 'Google Calendar sync blocked in demo mode' };
+    }
     try {
       const response = await makeAuthenticatedRequest(`${CALENDAR_API_BASE}/calendars/primary/events/${externalId}`, {
         method: 'DELETE'
@@ -281,6 +286,9 @@ export const GoogleCalendarAdapter = {
    * Throws GoogleAuthError if authentication fails after retry
    */
   fetchEvents: async (timeMin: string, timeMax: string): Promise<any[]> => {
+    if (isDemoSyncBlocked()) {
+      return [];
+    }
     try {
       const params = new URLSearchParams({
         timeMin,
@@ -453,6 +461,9 @@ export const GoogleCalendarAdapter = {
    * Returns entities that don't already exist in Flowmate
    */
   importFromGoogleCalendar: async (existingEntities: Entity[]): Promise<Partial<Entity>[]> => {
+    if (isDemoSyncBlocked()) {
+      return [];
+    }
     // Fetch events - extend range to catch recurring events with past start dates
     const oneYearAgo = new Date();
     oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);

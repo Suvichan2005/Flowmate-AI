@@ -1,32 +1,35 @@
-// Haptics Service
-// Web-only haptic feedback using the Vibration API
-
-type ImpactStyle = 'light' | 'medium' | 'heavy';
-
 /**
- * Web-based haptic feedback service.
- * Uses the Vibration API on supported mobile browsers.
- * Silently no-ops on unsupported browsers.
+ * Flowmate Haptics Service (P1-08)
+ *
+ * Facade bridging application callers to the active Platform Haptics Adapter.
+ * Pure delegation to getPlatform().haptics, keeping zero-any invariants.
+ *
+ * STRICT INVARIANT: ZERO `any`
  */
+
+import { getPlatform } from './platform/registry';
+import { HapticImpactStyle } from './platform/ports';
+
+export type ImpactStyle = HapticImpactStyle;
+
 export const haptics = {
-    async impact(style: ImpactStyle = 'medium'): Promise<void> {
-        const durations: Record<ImpactStyle, number> = { light: 10, medium: 20, heavy: 40 };
-        navigator.vibrate?.(durations[style]);
-    },
+  async impact(style: ImpactStyle = 'medium'): Promise<void> {
+    return getPlatform().haptics.impact(style);
+  },
 
-    async success(): Promise<void> {
-        navigator.vibrate?.([10, 30, 10]);
-    },
+  async success(): Promise<void> {
+    return getPlatform().haptics.notification('success');
+  },
 
-    async warning(): Promise<void> {
-        navigator.vibrate?.([30, 20, 30]);
-    },
+  async warning(): Promise<void> {
+    return getPlatform().haptics.notification('warning');
+  },
 
-    async error(): Promise<void> {
-        navigator.vibrate?.([50, 30, 50]);
-    },
+  async error(): Promise<void> {
+    return getPlatform().haptics.notification('error');
+  },
 
-    async selectionClick(): Promise<void> {
-        navigator.vibrate?.(5);
-    },
+  async selectionClick(): Promise<void> {
+    return getPlatform().haptics.selectionClick();
+  },
 };

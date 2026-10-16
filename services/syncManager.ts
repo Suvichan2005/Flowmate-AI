@@ -23,13 +23,26 @@ import {
     saveFoodLogs,
     saveAttendanceData,
     saveChatSessions,
+    deleteChannelMessages,
     syncEntities,
     syncRelationships,
     saveUserConfig,
     UserData,
 } from './firestoreSync';
 import { isFirebaseConfigured } from './firebase';
-import type { Message, FoodLogEntry, Subject, ClassSchedule, Holiday, AttendanceLog, UserSettings, ChatSession } from '../types';
+import type {
+    Entity,
+    Relationship,
+    TagDefinition,
+    Message,
+    FoodLogEntry,
+    Subject,
+    ClassSchedule,
+    Holiday,
+    AttendanceLog,
+    UserSettings,
+    ChatSession,
+} from '../types';
 
 // Sync state
 let syncUserId: string | null = null;
@@ -37,6 +50,35 @@ let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let isSyncing = false;
 let realtimeUnsubscribe: (() => void) | null = null;
 let lastSyncTimestamp: string | null = null;
+let isDemoModeActive = false;
+
+/**
+ * Monotonically-incrementing session token.
+ * Bumped on every new initializeSync() call and when demo mode is activated.
+ * The realtime listener closure captures the token at subscription time;
+ * any callback that fires after the token has changed is silently dropped,
+ * preventing both demo-mode race deliveries and cross-account data routing.
+ */
+let syncSessionToken = 0;
+
+/**
+ * Configure demo mode sync blocker to strictly prevent synthetic entities
+ * from propagating to authenticated user cloud accounts.
+ */
+export const setDemoModeSyncBlock = (active: boolean): void => {
+    isDemoModeActive = active;
+    if (active) {
+        // Invalidate any in-flight listener callbacks by bumping the session token
+        syncSessionToken++;
+        if (syncDebounceTimer) {
+            clearTimeout(syncDebounceTimer);
+            syncDebounceTimer = null;
+        }
+        stopRealtimeSync();
+    }
+};
+
+export const isDemoSyncBlocked = (): boolean => isDemoModeActive;
 
 // Track message IDs we've just written to suppress echo from onSnapshot
 const recentlyWrittenMessageIds = new Set<string>();
@@ -45,9 +87,9 @@ const MESSAGE_ECHO_TIMEOUT_MS = 5000;
 // Listeners for store updates (will be connected from store.ts)
 type OnSyncStatusChange = (status: 'idle' | 'syncing' | 'error', error?: string) => void;
 type OnRemoteDataChange = (data: {
-    entities: any[];
-    relationships: any[];
-    universalTags: any[];
+    entities: Entity[];
+    relationships: Relationship[];
+    universalTags: TagDefinition[];
     messages?: Message[];
     chatSessions?: ChatSession[];
     settings?: Partial<UserSettings>;
@@ -74,6 +116,9 @@ export const initializeSync = (
     }
 
     console.log('[SyncManager] Initializing sync for user:', userId);
+    // Bump session token so any listener callbacks captured for the previous
+    // user (or previous session) are invalidated immediately.
+    syncSessionToken++;
     syncUserId = userId;
     onSyncStatusChange = statusCallback;
     onRemoteDataChange = remoteDataCallback;
@@ -84,13 +129,28 @@ export const initializeSync = (
  * Call after initializeSync and initial data load
  */
 export const startRealtimeSync = (): (() => void) | null => {
-    if (!syncUserId || !isFirebaseConfigured()) {
+    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) {
         return null;
     }
 
     console.log('[SyncManager] Starting real-time sync listener');
 
+    // Capture the session token at subscription time.  If the token changes
+    // before the async callback fires (because demo was activated or a new
+    // account signed in), the callback is silently dropped.
+    const capturedToken = syncSessionToken;
+
     realtimeUnsubscribe = subscribeToUserData(syncUserId, (data) => {
+        // Guard: drop this callback if the session has been invalidated
+        if (capturedToken !== syncSessionToken) {
+            console.log('[SyncManager] Dropping stale realtime callback (session token mismatch)');
+            return;
+        }
+        // Guard: drop if demo mode was activated between subscription and delivery
+        if (isDemoModeActive) {
+            console.log('[SyncManager] Dropping realtime callback — demo mode is active');
+            return;
+        }
         // Remote updates must never be dropped while syncing or debouncing
         if (onRemoteDataChange) {
             // Filter out messages we just wrote (echo suppression)
@@ -136,9 +196,9 @@ export const stopRealtimeSync = () => {
  * Call this whenever local state changes
  */
 export const scheduleSync = (
-    getData: () => { entities: any[]; relationships: any[]; universalTags: any[]; settings?: Partial<UserSettings> }
+    getData: () => { entities: Entity[]; relationships: Relationship[]; universalTags: TagDefinition[]; settings?: Partial<UserSettings> }
 ) => {
-    if (!syncUserId || !isFirebaseConfigured()) {
+    if (!syncUserId || !isFirebaseConfigured() || isDemoModeActive) {
         return;
     }
 
@@ -158,9 +218,9 @@ export const scheduleSync = (
  * Use for critical operations like sign-out or page unload
  */
 export const forceSync = async (
-    getData: () => { entities: any[]; relationships: any[]; universalTags: any[]; settings?: Partial<UserSettings> }
+    getData: () => { entities: Entity[]; relationships: Relationship[]; universalTags: TagDefinition[]; settings?: Partial<UserSettings> }
 ): Promise<boolean> => {
-    if (!syncUserId || !isFirebaseConfigured()) {
+    if (!syncUserId || !isFirebaseConfigured() || isDemoModeActive) {
         return false;
     }
 
@@ -179,9 +239,9 @@ export const forceSync = async (
  * Falls back to full save on first sync or error.
  */
 const performSync = async (
-    getData: () => { entities: any[]; relationships: any[]; universalTags: any[]; settings?: Partial<UserSettings> }
+    getData: () => { entities: Entity[]; relationships: Relationship[]; universalTags: TagDefinition[]; settings?: Partial<UserSettings> }
 ): Promise<boolean> => {
-    if (!syncUserId || isSyncing) {
+    if (!syncUserId || isSyncing || isDemoModeActive) {
         return false;
     }
 
@@ -189,16 +249,26 @@ const performSync = async (
     onSyncStatusChange?.('syncing');
 
     try {
-        const data = getData();
+        const rawData = getData();
+        // Defensive isolation: strip any synthetic demo entities that might be present
+        const data = {
+            ...rawData,
+            entities: rawData.entities.filter((e: Entity) =>
+                !e.id.startsWith('recruiter-') &&
+                !e.id.startsWith('demo-') &&
+                !e.id.startsWith('goal-recruiter') &&
+                !e.id.startsWith('task-recruiter')
+            ),
+        };
         const now = new Date().toISOString();
 
         if (lastSyncTimestamp) {
             // Incremental sync: only write entities modified since last sync
-            const changedEntities = data.entities.filter((e: any) => {
+            const changedEntities = data.entities.filter((e: Entity) => {
                 const updatedAt = e.updated_at || e.created_at;
                 return updatedAt && updatedAt > lastSyncTimestamp!;
             });
-            const changedRelationships = data.relationships.filter((r: any) => {
+            const changedRelationships = data.relationships.filter((r: Relationship) => {
                 return r.created_at && r.created_at > lastSyncTimestamp!;
             });
 
@@ -284,8 +354,8 @@ export const loadInitialData = async (): Promise<UserData | null> => {
  * Use when receiving real-time updates
  */
 export const mergeWithLocal = (
-    local: { entities: any[]; relationships: any[] },
-    remote: { entities: any[]; relationships: any[] }
+    local: { entities: Entity[]; relationships: Relationship[] },
+    remote: { entities: Entity[]; relationships: Relationship[] }
 ) => {
     return mergeData(local, remote);
 };
@@ -305,7 +375,7 @@ export const mergeMessagesWithLocal = (
  * Does NOT debounce — messages are written as they arrive.
  */
 export const syncMessage = async (message: Message): Promise<boolean> => {
-    if (!syncUserId || !isFirebaseConfigured()) {
+    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) {
         return false;
     }
 
@@ -328,7 +398,7 @@ export const syncMessage = async (message: Message): Promise<boolean> => {
  * Sync food logs to Firestore
  */
 export const syncFoodLogsToCloud = async (foodLogs: FoodLogEntry[]): Promise<boolean> => {
-    if (!syncUserId || !isFirebaseConfigured()) return false;
+    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
     return saveFoodLogs(syncUserId, foodLogs);
 };
 
@@ -341,7 +411,7 @@ export const syncAttendanceToCloud = async (data: {
     holidays: Holiday[];
     attendanceLogs: AttendanceLog[];
 }): Promise<boolean> => {
-    if (!syncUserId || !isFirebaseConfigured()) return false;
+    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
     return saveAttendanceData(syncUserId, data);
 };
 
@@ -349,8 +419,16 @@ export const syncAttendanceToCloud = async (data: {
  * Sync chat sessions to Firestore
  */
 export const syncChatSessionsToCloud = async (sessions: ChatSession[]): Promise<boolean> => {
-    if (!syncUserId || !isFirebaseConfigured()) return false;
+    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
     return saveChatSessions(syncUserId, sessions);
+};
+
+/**
+ * Delete channel messages from Firestore cloud
+ */
+export const deleteChannelMessagesFromCloud = async (channelId: string): Promise<boolean> => {
+    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
+    return deleteChannelMessages(syncUserId, channelId);
 };
 
 /**

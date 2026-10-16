@@ -7,7 +7,9 @@ import {
     RelationshipType,
     ToonOperationType,
     RecurrenceType,
+    ChatSession,
 } from '../types';
+import type { Entity as KernelEntity } from '../services/kernel';
 
 // --- Payload Normalization ---
 
@@ -16,9 +18,9 @@ import {
  * Handles short aliases (k→kind), common typos (name→title),
  * date aliases (due_date→deadline), and kind validation.
  */
-export const normalizePayload = (type: ToonOperationType, payload: any): any => {
+export const normalizePayload = (type: ToonOperationType, payload: Record<string, unknown> | null | undefined): Record<string, any> => {
     if (!payload) return {};
-    const p = { ...payload };
+    const p: Record<string, any> = { ...payload };
 
     // Short field aliases (token optimization)
     if (p.k && !p.kind) p.kind = p.k;
@@ -31,6 +33,15 @@ export const normalizePayload = (type: ToonOperationType, payload: any): any => 
     if (p.start && !p.start_time) p.start_time = p.start;
     if (p.end && !p.end_time) p.end_time = p.end;
     if (p.due && !p.deadline) p.deadline = p.due;
+    if (p.rec && !p.recurrence) p.recurrence = p.rec;
+    if (p.repeat && !p.recurrence) p.recurrence = p.repeat;
+    if (p.freq && !p.recurrence) p.recurrence = p.freq;
+    if (typeof p.recurrence === 'string') {
+        const upperRec = p.recurrence.toUpperCase();
+        if (['DAILY', 'WEEKLY', 'MONTHLY', 'YEARLY'].includes(upperRec)) {
+            p.recurrence = upperRec;
+        }
+    }
 
     // Common field aliases (LLM hallucination fixes)
     if (p.name && !p.title) p.title = p.name;
@@ -61,6 +72,65 @@ export const normalizePayload = (type: ToonOperationType, payload: any): any => 
             p.end_time = `${p.end_time}T23:59:59+05:30`;
         } else if (!p.end_time.includes('+') && !p.end_time.endsWith('Z')) {
             p.end_time = `${p.end_time}+05:30`;
+        }
+    }
+
+    // Calculate end_time from start_time + duration_minutes if missing
+    if (p.start_time && typeof p.start_time === 'string' && typeof p.duration_minutes === 'number' && p.duration_minutes > 0 && !p.end_time) {
+        const startMs = new Date(p.start_time).getTime();
+        if (!isNaN(startMs)) {
+            const offsetMatch = p.start_time.match(/([+-]\d{2}:\d{2})$/);
+            const offset = offsetMatch ? offsetMatch[1] : (p.start_time.endsWith('Z') ? 'Z' : '+05:30');
+            if (offset === 'Z') {
+                p.end_time = new Date(startMs + p.duration_minutes * 60000).toISOString();
+            } else {
+                const match = offset.match(/([+-])(\d{2}):(\d{2})/);
+                const sign = match && match[1] === '+' ? 1 : -1;
+                const hours = match ? parseInt(match[2], 10) : 5;
+                const mins = match ? parseInt(match[3], 10) : 30;
+                const totalOffsetMs = sign * (hours * 60 + mins) * 60000;
+                const targetMs = startMs + p.duration_minutes * 60000;
+                const localDate = new Date(targetMs + totalOffsetMs);
+                const y = localDate.getUTCFullYear();
+                const mo = String(localDate.getUTCMonth() + 1).padStart(2, '0');
+                const d = String(localDate.getUTCDate()).padStart(2, '0');
+                const hh = String(localDate.getUTCHours()).padStart(2, '0');
+                const mm = String(localDate.getUTCMinutes()).padStart(2, '0');
+                const ss = String(localDate.getUTCSeconds()).padStart(2, '0');
+                p.end_time = `${y}-${mo}-${d}T${hh}:${mm}:${ss}${offset}`;
+            }
+        }
+    }
+
+    // Tags normalization
+    if (Array.isArray(p.tags) && !p.canonical_tags) {
+        p.canonical_tags = p.tags;
+    } else if (Array.isArray(p.canonical_tags) && !p.tags) {
+        p.tags = p.canonical_tags;
+    }
+
+    // Context field normalization into tags
+    if (typeof p.context === 'string' && p.context.trim()) {
+        const ctx = p.context.trim();
+        const currentTags: string[] = Array.isArray(p.tags) ? [...p.tags] : [];
+        if (!currentTags.includes(ctx)) {
+            currentTags.push(ctx);
+        }
+        p.tags = currentTags;
+        p.canonical_tags = currentTags;
+    }
+
+    // Productivity classification normalization
+    if (p.metadata && typeof p.metadata === 'object' && p.metadata.productivity && !p.productivity) {
+        p.productivity = p.metadata.productivity;
+    }
+    if (p.productivity) {
+        const prodUpper = String(p.productivity).toUpperCase();
+        p.productivity = prodUpper;
+        if (!p.metadata || typeof p.metadata !== 'object') {
+            p.metadata = { productivity: prodUpper };
+        } else {
+            p.metadata = { ...p.metadata, productivity: prodUpper };
         }
     }
 
@@ -162,7 +232,7 @@ export const calculateNextDate = (currentDate: string, recurrence: RecurrenceTyp
  * 2. Case-insensitive title match (reverse scan for most-recent)
  * 3. Prefix match for truncated UUIDs from LLM
  */
-export const resolveEntityId = (identifier: string, entities: Entity[]): string | null => {
+export const resolveEntityId = (identifier: string, entities: ReadonlyArray<Readonly<Entity>> | Entity[]): string | null => {
     if (!identifier) return null;
 
     const byId = entities.find(e => e.id === identifier);
@@ -182,10 +252,47 @@ export const resolveEntityId = (identifier: string, entities: Entity[]): string 
     return null;
 };
 
-// --- History Snapshot ---
-
 export interface HistorySnapshot {
     entities: Entity[];
     relationships: Relationship[];
     timestamp: number;
+    kernelEntities?: Record<string, KernelEntity>;
 }
+
+// --- Active Entity Selectors (Exclude Soft-Deleted Tombstones) ---
+
+/**
+ * Returns true if an entity is active and not soft-deleted.
+ */
+export const isEntityActive = (entity: Readonly<Entity> | Entity | undefined | null): boolean => {
+    if (!entity) return false;
+    if (entity.metadata?.deleted) return false;
+    const record = entity as Record<string, unknown>;
+    return !record.deleted;
+};
+
+/**
+ * Filters an array of entities to exclude soft-deleted tombstones.
+ */
+export const getActiveEntities = (entities: ReadonlyArray<Readonly<Entity>> | Entity[] | undefined | null): Entity[] => {
+    if (!Array.isArray(entities)) return [];
+    return entities.filter(isEntityActive) as Entity[];
+};
+
+// --- Active ChatSession Selectors (Exclude Soft-Deleted Tombstones) ---
+
+/**
+ * Returns true if a chat session is active and not soft-deleted.
+ */
+export const isChatSessionActive = (session: ChatSession | undefined | null): boolean => {
+    return !!session && !session.deleted;
+};
+
+/**
+ * Filters an array of chat sessions to exclude soft-deleted tombstones.
+ */
+export const getActiveChatSessions = (sessions: ChatSession[] | undefined | null): ChatSession[] => {
+    if (!Array.isArray(sessions)) return [];
+    return sessions.filter(isChatSessionActive);
+};
+

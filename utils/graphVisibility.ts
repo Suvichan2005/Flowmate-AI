@@ -1,4 +1,5 @@
 import { Entity, EntityKind, EntityStatus, Relationship } from '../types';
+import { isEntityActive } from '../store/helpers';
 
 /**
  * Determines if an entity should be visible in the graph based on smart visibility rules.
@@ -24,6 +25,9 @@ export function shouldShowInGraph(
         completedDaysThreshold = 30,
         pastEventDaysThreshold = 60
     } = options;
+
+    // Always hide if soft-deleted
+    if (!isEntityActive(entity)) return false;
 
     // Always hide if manually hidden
     if (entity.metadata?.hidden) return false;

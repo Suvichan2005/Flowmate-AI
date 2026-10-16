@@ -87,9 +87,10 @@ const RegularText: React.FC<{ text: string }> = ({ text }) => {
             <div key={i} className="space-y-1">
                 {lines.map((line, j) => {
                     const trimmed = line.trim();
-                    if (trimmed.startsWith('### ')) return <h3 key={j} className="text-sm font-bold mt-2 text-indigo-200">{parseInline(trimmed.slice(4))}</h3>;
-                    if (trimmed.startsWith('## ')) return <h2 key={j} className="text-base font-bold mt-3 border-b border-slate-800 pb-1 text-slate-100">{parseInline(trimmed.slice(3))}</h2>;
-                    if (trimmed.startsWith('# ')) return <h1 key={j} className="text-lg font-bold mt-4 mb-2 text-white">{parseInline(trimmed.slice(2))}</h1>;
+                    const toSlug = (str: string) => str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+                    if (trimmed.startsWith('### ')) return <h3 id={toSlug(trimmed.slice(4))} key={j} className="text-sm font-bold mt-2 text-indigo-200">{parseInline(trimmed.slice(4))}</h3>;
+                    if (trimmed.startsWith('## ')) return <h2 id={toSlug(trimmed.slice(3))} key={j} className="text-base font-bold mt-3 border-b border-slate-800 pb-1 text-slate-100">{parseInline(trimmed.slice(3))}</h2>;
+                    if (trimmed.startsWith('# ')) return <h1 id={toSlug(trimmed.slice(2))} key={j} className="text-lg font-bold mt-4 mb-2 text-white">{parseInline(trimmed.slice(2))}</h1>;
                     
                     if (trimmed.startsWith('> ')) {
                         return (

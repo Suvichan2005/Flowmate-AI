@@ -42,9 +42,32 @@ Thumbs.db
 flowmate_backup*.json
 metadata.json
 
-# Internal planning docs (keep local, not public)
+# Internal planning docs, agent coordination, and research tools (keep local, not public)
 docs/FLOWMATE_V4_ARCHITECTURE.md
 docs/07-feature-roadmap.md
 docs/08-ideation-map.md
 docs/*audit*.md
 docs/SYSTEM_AUDIT_REPORT.md
+.agent/
+.agents/
+.bridge/
+.flowmate-supervision/
+FLOWMATE_POST_P1_09_AUDIT/
+tools/
+*.db
+*.sqlite
+docs/competitive-intelligence/
+docs/engineering/
+docs/CHATGPT_ARCHIVES/
+docs/FLOWMATE_KNOWLEDGE_BASE*
+docs/audits/
+docs/internal/
+docs/prototypes/
+phase3_*.png
+scratch*
+
+# Synthetic browser QA artifacts
+qa-evidence/
+browser-results/
+test-results/
+playwright-report/
