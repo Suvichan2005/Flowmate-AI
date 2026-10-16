@@ -15,34 +15,6 @@ Flowmate brings planning into one navigable workspace. Its typed relationships l
 [![Gemini](https://img.shields.io/badge/Gemini-configurable-8e75b2?logo=googlegemini&logoColor=white)](https://ai.google.dev/)
 [![MIT](https://img.shields.io/badge/License-MIT-2f7d5b.svg)](./LICENSE)
 
-## Product tour
-
-The screenshots are from the deployed application built from source commit `8ac628713c37eb645f985e18631381f30ae20405`. Workspace records were created with Flowmate's normal interface in signed-out, synthetic local workspaces. The Dashboard and Gemini Chat captures use six entities and five typed links; the larger Graph, Calendar, Timeline, and mobile captures use 18 entities and 16 links. No personal records or credentials appear.
-
-### Dashboard
-
-![Flowmate Dashboard with workspace activity, task and project counts, goal progress, and no unlinked records](docs/assets/flowmate-dashboard-live.jpg)
-
-### Gemini-powered planning
-
-![Flowmate Chat showing an authentic Gemini 3.8 Flash analysis of saved workspace relationships](docs/assets/flowmate-gemini-chat-live.jpg)
-
-The Chat capture shows a real response from the deployed Flowmate app. It identifies the saved goal, project, event, tasks, and their recorded links, and distinguishes those links from a suggested work sequence. The request was read-only; no operations were proposed or committed.
-
-### Explore connected work
-
-![Flowmate D3 graph with 18 synthetic entities and 16 relationships](docs/assets/flowmate-graph-live.jpg)
-
-### Work across time
-
-![Flowmate calendar showing upcoming tasks and project events](docs/assets/flowmate-calendar-live.jpg)
-
-![Flowmate timeline showing dated synthetic work](docs/assets/flowmate-timeline-live.jpg)
-
-### Designed for a compact screen
-
-![Flowmate Dashboard at a 390 pixel mobile viewport](docs/assets/flowmate-mobile-live.jpg)
-
 ## Why Flowmate
 
 Goals, tasks, schedules, notes, and conversations often live in separate tools. That makes everyday planning questions difficult: which project supports a goal, what work depends on a milestone, and how do a meeting and its follow-up fit together?
