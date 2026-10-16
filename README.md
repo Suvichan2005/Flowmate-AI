@@ -1,57 +1,185 @@
 # Flowmate
 
-Flowmate is a local-first productivity workspace for goals, projects, tasks, events, relationships, focus sessions, and conversational planning. The application can store and use workspace data locally. Optional Firebase and Gemini integrations require configuration and have not been validated against a staging provider in this release work.
+> **A graph-native productivity workspace that connects goals, projects, tasks, time, and the context behind them.**
 
-## What works locally
+Flowmate is built around a simple idea: plans become more useful when the work, deadlines, habits, and conversations around them stay connected. Instead of maintaining separate lists and calendars, Flowmate lets a person build one navigable workspace and follow those relationships across several views.
 
-- Create and edit goals, projects, tasks, events, habits, and relationships.
-- Explore the same entities in Library, Graph, Calendar, Timeline, Dashboard, and Analytics views.
-- Fork conversations into independent branches while keeping the parent history.
-- Use local CRUD, calendar calculations, and the clearly labeled deterministic Dashboard briefing without a provider.
-- When Gemini is not configured, chat explains that it cannot generate an AI response and points to Settings for provider configuration.
-- Choose a saved visual palette in Settings.
+**[Open the live application](https://flowmate-ai.web.app/)** · [Browse the source](https://github.com/Suvichan2005/Flowmate-AI)
 
-Workspace persistence uses browser storage. The production service worker caches the application shell and static assets after a successful online visit. This does not mean provider sync is available or that an uncached route can be loaded offline. Test offline behavior on a production preview, not the Vite development server.
+[![React](https://img.shields.io/badge/React-19-149eca?logo=react&logoColor=white)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-6-646cff?logo=vite&logoColor=white)](https://vite.dev/)
+[![D3.js](https://img.shields.io/badge/D3.js-7-f9a03c?logo=d3&logoColor=white)](https://d3js.org/)
+[![Zustand](https://img.shields.io/badge/Zustand-5-443e38)](https://github.com/pmndrs/zustand)
+[![Firebase](https://img.shields.io/badge/Firebase-optional-ffca28?logo=firebase&logoColor=222)](https://firebase.google.com/)
+[![Gemini](https://img.shields.io/badge/Gemini-optional-8e75b2?logo=googlegemini&logoColor=white)](https://ai.google.dev/)
+[![MIT](https://img.shields.io/badge/License-MIT-2f7d5b.svg)](./LICENSE)
 
-## Integrations and limits
+## Product tour
 
-Firebase sign-in and cloud sync are enabled only when the required browser configuration is present. A successful local build or configured Firebase client does not verify authentication, Firestore rules, ownership isolation, or cloud synchronization. These require a dedicated staging project and synthetic accounts.
+These are authentic screenshots of the deployed release, captured at 8ac628713c37eb645f985e18631381f30ae20405. The showcase data was entered through Flowmate’s ordinary create and relationship controls in a local browser workspace: 18 synthetic entities and 16 links. No fixture mode, injected records, personal account data, or generated AI response was used. The dashboard briefing is explicitly labeled as local rules.
 
-Gemini is optional. A key entered in Settings is held in JavaScript memory for the current tab and sent from the browser to Google's Gemini API when an AI feature is used. It is not stored by this client in local storage. Treat a browser API key as exposed to the user and the browser environment; use a key with suitable restrictions and quotas. No live Gemini calls were made during this QA work. Without a key, local application features continue to work, but chat does not fabricate a provider response.
+### A workspace at a glance
 
-Google Calendar connection and real provider-backed behavior also require separate authorized staging validation. Do not use production accounts or personal data for release testing.
+![Flowmate dashboard with a synthetic project workspace and local briefing](docs/assets/flowmate-dashboard-live.jpg)
+
+### Explore connected work
+
+![Flowmate D3 graph showing 18 synthetic entities and 16 relationships](docs/assets/flowmate-graph-live.jpg)
+
+### Work across time
+
+![Flowmate calendar showing upcoming tasks and project events](docs/assets/flowmate-calendar-live.jpg)
+
+![Flowmate timeline showing dated synthetic work](docs/assets/flowmate-timeline-live.jpg)
+
+### Designed for a compact screen
+
+![Flowmate dashboard at a 390 pixel mobile viewport](docs/assets/flowmate-mobile-live.jpg)
+
+## The problem Flowmate explores
+
+Goals, tasks, schedules, notes, and conversations are usually stored in different tools. That split makes it harder to answer practical questions: Which project supports this goal? What depends on the task I am postponing? Does a meeting belong to the same initiative as the work around it?
+
+Flowmate models useful work as entities connected by typed relationships. The graph is the underlying organizing model; Dashboard, Graph, Calendar, Timeline, Analytics, and Library are different ways to inspect or act on that shared workspace.
+
+## What is implemented
+
+- **Capture and organize:** create and edit goals, projects, tasks, events, habits, and other supported entities.
+- **Relationship-aware workspace:** connect records with typed links and inspect them in the interactive D3 graph.
+- **Dashboard:** review workspace counts, upcoming work, focus information, and an on-demand local briefing calculated from current records.
+- **Calendar and timeline:** inspect dated work in agenda/calendar and timeline views; scheduling conflict checks are available in the client.
+- **Conversation history:** keep multiple conversations, branch alternate paths, and retain drafts per branch.
+- **Analytics and habits:** see habit and productivity summaries derived from workspace records.
+- **Personalize the interface:** switch among four palettes; theme state is persisted locally and synchronized between open tabs.
+- **Work offline:** core workspace operations are local. After the application shell has been cached by a successful online visit, the service worker supports offline reloads.
+
+The removed recruiter demo/sample workspace is not part of the application.
+
+## AI assistance and user control
+
+Flowmate’s optional Gemini integration uses Google’s @google/genai client from the browser. The assistant can receive workspace context and use declared tools to query or propose changes. Proposed mutations are presented for review through the operations preview; the model does not directly commit a state-changing operation without user confirmation.
+
+Gemini is **not required** for local workspace use. Without a runtime key, Flowmate saves the user’s message and explains that it did not generate an AI response. Local briefings are deterministic calculations and are labeled as such.
+
+The deployed build contains no Gemini key. A user who chooses to enable Gemini supplies a key in Settings for the active browser session; the client keeps it in memory and sends requests directly to Google. Do not place personal, privileged, or billing credentials in a VITE_* variable or commit them to this repository. A live Gemini response was not verified for this release, so the screenshots intentionally make no live-AI claim.
+
+## System architecture
+
+The web application is a client-side React app. It has no application server in this release. Local use does not require Firebase or Gemini configuration.
+
+~~~mermaid
+flowchart LR
+  User[User] --> UI[React views]
+  UI --> Store[Zustand store]
+  Store --> Kernel[Domain kernel and validated operations]
+  Kernel --> Projection[Read projections for graph, dashboard, calendar, timeline]
+  Store <--> Local[Browser local storage]
+  Store -. optional signed-in sync .-> Firebase[Firebase Auth and Firestore]
+  UI -. optional user-provided runtime key .-> Gemini[Google Gemini API]
+  Gemini --> Tools[Declared workspace tools]
+  Tools --> Preview[Review proposed changes]
+  Preview -->|user confirms| Kernel
+  Preview -->|user declines| Stop[No mutation]
+  SW[Service worker caches app shell] --> UI
+~~~
+
+Firebase is an optional client integration for authentication and cloud synchronization. The Firebase browser key is public client configuration, not an authorization secret; access to user data depends on Firebase Authentication and backend security rules. Gemini requests are a separate, optional provider path. Local operations continue when either provider is unavailable.
+
+## Data model and cross-view behavior
+
+The kernel is the canonical in-memory domain state. Entities carry schema identity and version, a title, typed attributes, lifecycle information, and provenance where available. Relationships connect entity identifiers using typed edges such as PART_OF, DEPENDS_ON, FULFILLS, PRECEDES, and RELATED_TO.
+
+Validated operations update the workspace store; view-facing projections let Dashboard, Graph, Calendar, Timeline, and Library present the same underlying records for their use. Local persistence is browser storage. When a user signs in and Firebase is configured, the optional sync layer reconciles user-scoped entity and relationship data with Firestore.
+
+The live Hosting preview was smoke-tested with a synthetic Firebase account: email/password account creation succeeded, an entity was created through the UI, and it reappeared after signing in from a clean browser context. This is a bounded integration smoke test, not a claim that every account flow, rules scenario, or production user path has been tested.
+
+## Engineering decisions
+
+- **One connected workspace:** shared entities and typed links let multiple views represent the same work instead of maintaining separate feature-specific copies.
+- **Review before mutation:** provider output is treated as a proposal; the application’s operation pipeline validates and applies only user-confirmed changes.
+- **Local availability first:** core capture and workspace views do not depend on a model call or remote account.
+- **Explicit provider boundaries:** Firebase sync and Gemini assistance are optional network integrations with separate configuration and failure behavior.
+- **Evidence over feature claims:** the screenshots use real app controls and generated synthetic records; unverified provider behavior is called out instead of implied.
+
+## Technology
+
+| Area | Technologies |
+| --- | --- |
+| Application | React 19, TypeScript, Vite |
+| State and domain | Zustand, Flowmate domain kernel, typed entity relationships |
+| Visualization | D3.js, Recharts |
+| Styling and icons | Tailwind CSS 4, Lucide |
+| Optional cloud | Firebase Authentication, Cloud Firestore |
+| Optional AI | Google Gemini via @google/genai |
+| Verification | Vitest, Testing Library, Playwright, TypeScript, project invariants |
+
+## Repository map
+
+~~~text
+App.tsx                  Application shell and route composition
+components/              Workspace views and user interactions
+services/kernel/         Canonical domain operations and validation
+services/ai/             Gemini client, context, tools, and orchestration
+services/sync/           Optional cloud synchronization
+services/storage/        Local persistence adapters
+store.ts                 Zustand application state
+store/kernelProjection.ts View projections over kernel entities
+utils/calendarConflicts.ts Calendar interval conflict checks
+browser-tests/           Browser acceptance journeys
+tests/                   Unit and integration coverage
+docs/assets/             Deployed application screenshots
+~~~
 
 ## Run locally
 
-1. Install Node.js and npm.
-2. Run `npm ci`.
-3. Run `npm run dev -- --host 127.0.0.1` for local development.
-4. Open the loopback URL printed by Vite.
+### Requirements
 
-No Firebase or Gemini configuration is required for local workspace storage, calendar, graph, and CRUD functionality. AI responses require an authorized Gemini provider key configured in Settings. Never put Firebase service-account credentials, owner keys, or billing credentials in Vite `VITE_*` variables; browser build variables are downloadable by users. Firebase client configuration is public application configuration and must be protected by Authentication and correctly scoped Firestore Security Rules.
+- Node.js 20 or a current supported LTS release
+- npm
 
-## Verify
+### Start the local application
 
-- `npm run check:types`
-- `npm run test:run`
-- `npm run check:invariants`
-- `npm run build`
-- `npm run release:scan`
+~~~bash
+git clone https://github.com/Suvichan2005/Flowmate-AI.git
+cd Flowmate-AI
+npm ci
+npm run dev -- --host 127.0.0.1
+~~~
 
-The tests cover deterministic local behavior. They do not replace authorized Firebase/Gemini staging tests, production hosting verification, or browser testing on a production build.
+Open the local URL printed by Vite (the project config uses port 3000).
 
-## Screenshots
+The workspace runs without secrets or provider setup. Optional Firebase configuration uses the public client values in .env.local; start from .env.example. Never commit .env.local. Gemini can be configured at runtime through Settings when a suitable restricted key is available; do not place it in the build environment.
 
-These screenshots show synthetic local workspace data with no connected account or provider credentials.
+## Verification
 
-![Flowmate dashboard with deterministic local briefing](docs/assets/flowmate-dashboard.png)
+Run the checks from the repository root:
 
-![Flowmate graph with synthetic entities and relationship](docs/assets/flowmate-graph.png)
+~~~bash
+npm run test:release
+npm run check:types
+npm run check:invariants
+npm run check:themes
+npm run build
+~~~
 
-## Technology and architecture
+The release acceptance pass also exercised the deployed site in Chromium: workspace CRUD and cross-view persistence, conversations and branching controls, keyless provider messaging, service-worker offline reload, responsive layouts, and all four themes. Firebase Authentication and Firestore were smoke-tested on the isolated Hosting preview with synthetic data. The production deployment was then verified at the live Hosting URL.
 
-The client is built with React 19, TypeScript, and Vite. Zustand maintains the canonical browser workspace state; D3 renders the relationship graph. Firebase Web SDK integrations are optional and are only enabled when a deployment supplies its public web-client configuration. The app has no custom application server in this repository. Vitest covers deterministic state and component behavior, while Playwright exercises production-build browser journeys.
+These checks do not establish live Gemini behavior, Google sign-in, Google Calendar integration, every Firebase security-rule case, or multi-user collaboration.
 
-## Release verification scope
+## Security and limitations
 
-The published portfolio experience is intended to work keyless with local synthetic or user-entered workspace data. Firebase authentication and cloud synchronization, Gemini responses, and Google Calendar provider behavior require separate authorized staging validation. The screenshots and local browser checks do not establish those provider-backed guarantees.
+- Browser-delivered Firebase configuration and Gemini runtime keys are visible to the browser; do not treat them as server secrets.
+- Firebase data access must be protected by the project’s Authentication and Security Rules. A Hosting preview pointed at the production Firebase project still uses that backend, so provider tests should use synthetic accounts and records.
+- Gemini requires a user-supplied runtime key and an active network connection. No Gemini response was generated or verified during this deployment.
+- Google sign-in and Google Calendar behavior were not included in this release acceptance pass.
+- Local browser storage is device- and browser-profile-specific until optional cloud sync is configured.
+- This release is a personal productivity workspace, not a hosted team collaboration service.
+
+## Future direction: Flowmate Next
+
+Flowmate Next is a research and product direction, not a capability claim about this deployed web release. Areas under exploration include richer contextual memory, deeper connections between ongoing work and user intent, and more capable reviewable assistance. The live Flowmate Web application remains the feature set described and verified above.
+
+## License
+
+Flowmate is available under the MIT License. See [LICENSE](LICENSE).
