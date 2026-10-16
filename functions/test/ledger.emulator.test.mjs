@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import test, { after, before } from 'node:test';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { RequestFailure, monthKey } from '../lib/policy.js';
+import { RequestFailure, monthKey, validateGenerationBody } from '../lib/policy.js';
 import { failTurn, finishTurn, reserveGenerationCall, reserveTurn, turnLedgerRefs } from '../lib/ledger.js';
 
 const host = process.env.FIRESTORE_EMULATOR_HOST;
@@ -12,6 +12,17 @@ const app = initializeApp({ projectId: 'demo-flowmate-managed-ai-test' }, 'ledge
 const db = getFirestore(app);
 db.settings({ host, ssl: false });
 const uid = () => 'test_' + randomUUID().replaceAll('-', '');
+
+test('managed requests reject caller-supplied UID, owner, entity, or workspace authority fields', () => {
+  const valid = {
+    turnId: 'turn_ownership_0001', callId: 'call_ownership_0001',
+    contents: [{ role: 'user', parts: [{ text: 'hello' }] }], config: { systemInstruction: '' },
+  };
+  for (const key of ['uid', 'ownerUid', 'ownerId', 'entityIds', 'workspaceSnapshot']) {
+    assert.throws(() => validateGenerationBody({ ...valid, [key]: 'other-user' }), error =>
+      error instanceof RequestFailure && error.code === 'INVALID_REQUEST');
+  }
+});
 
 before(async () => { await db.doc('system/managedAi').set({ enabled: true }); });
 after(async () => { await db.terminate(); });

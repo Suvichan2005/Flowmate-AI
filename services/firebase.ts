@@ -13,7 +13,7 @@
 // VITE_FIREBASE_MEASUREMENT_ID=your_measurement_id
 
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { getToken as getAppCheckToken, initializeAppCheck, ReCaptchaV3Provider, type AppCheck } from 'firebase/app-check';
+import { getToken as getAppCheckToken, initializeAppCheck, ReCaptchaEnterpriseProvider, type AppCheck } from 'firebase/app-check';
 import {
     getAuth,
     signInWithEmailAndPassword,
@@ -79,7 +79,7 @@ if (hasValidConfig) {
     if (appCheckSiteKey && typeof window !== 'undefined') {
         try {
             appCheck = initializeAppCheck(app, {
-                provider: new ReCaptchaV3Provider(appCheckSiteKey),
+                provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey),
                 isTokenAutoRefreshEnabled: true,
             });
         } catch {

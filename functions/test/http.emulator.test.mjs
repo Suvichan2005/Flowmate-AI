@@ -14,6 +14,7 @@ db.settings({ host: firestoreHost, ssl: false });
 const endpoint = `http://127.0.0.1:5001/${projectId}/asia-south1/managedGemini`;
 const appCheckRequired = process.env.APP_CHECK_REQUIRED === 'true';
 let idToken;
+let testUid;
 
 before(async () => {
   await db.doc('system/managedAi').delete(); // absent kill switch must fail closed
@@ -23,6 +24,8 @@ before(async () => {
   });
   assert.equal(response.status, 200, 'test identity must come from Firebase Auth Emulator');
   idToken = (await response.json()).idToken;
+  const tokenPayload = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64url').toString('utf8'));
+  testUid = tokenPayload.user_id || tokenPayload.sub;
 });
 after(async () => { await db.terminate(); });
 
@@ -41,7 +44,27 @@ test('rejects requests without a verified Firebase identity', async () => {
   assert.equal((await response.json()).error.code, 'AUTH_REQUIRED');
 });
 
+test('rejects caller-supplied ownership and workspace identifiers before usage reservation', { skip: appCheckRequired }, async () => {
+  const monthlyBefore = await db.collection('managedAiMonthly').get();
+  const callsBefore = monthlyBefore.docs.reduce((sum, doc) => sum + Number(doc.get('callsReserved') || 0), 0);
+  const response = await fetch(endpoint, {
+    method: 'POST', headers: {
+      Origin: 'https://flowmate-ai.web.app', Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json',
+    }, body: JSON.stringify({
+      turnId: 'turn_owner_reject_0001', callId: 'call_owner_reject_0001', ownerUid: 'victim-user',
+      contents: [{ role: 'user', parts: [{ text: 'This must not call Gemini' }] }], config: { systemInstruction: 'test' },
+    }),
+  });
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error.code, 'INVALID_REQUEST');
+  assert.equal((await db.doc(`managedAiUsers/${testUid}`).get()).exists, false);
+  const monthlyAfter = await db.collection('managedAiMonthly').get();
+  assert.equal(monthlyAfter.docs.reduce((sum, doc) => sum + Number(doc.get('callsReserved') || 0), 0), callsBefore);
+});
+
 test('verified identities are blocked by App Check enforcement or the default-off kill switch', async () => {
+  const monthlyBefore = await db.collection('managedAiMonthly').get();
+  const callsBefore = monthlyBefore.docs.reduce((sum, doc) => sum + Number(doc.get('callsReserved') || 0), 0);
   const response = await fetch(endpoint, {
     method: 'POST', headers: {
       Origin: 'https://flowmate-ai.web.app', Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json',
@@ -53,6 +76,7 @@ test('verified identities are blocked by App Check enforcement or the default-of
   });
   assert.equal(response.status, appCheckRequired ? 401 : 503);
   assert.equal((await response.json()).error.code, appCheckRequired ? 'APP_CHECK_REQUIRED' : 'MANAGED_AI_DISABLED');
-  assert.equal((await db.collection('managedAiUsers').get()).size, 0);
-  assert.equal((await db.collection('managedAiMonthly').get()).size, 0);
+  assert.equal((await db.doc(`managedAiUsers/${testUid}`).get()).exists, false);
+  const monthlyAfter = await db.collection('managedAiMonthly').get();
+  assert.equal(monthlyAfter.docs.reduce((sum, doc) => sum + Number(doc.get('callsReserved') || 0), 0), callsBefore);
 });
