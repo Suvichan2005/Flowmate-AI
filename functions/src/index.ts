@@ -107,6 +107,13 @@ export const managedGemini = onRequest({
       usageMetadata: response.usageMetadata || null,
     };
     const complete = isCompletedUserTurn(payload);
+    logger.info('Managed AI generation completed', {
+      model: MODEL,
+      responseTextLength: payload.text.length,
+      candidateCount: payload.candidates.length,
+      functionCallCount: payload.functionCalls.length,
+      completedUserTurn: complete,
+    });
     await finishTurn(db, refs, complete);
     res.status(200).json(payload);
   } catch (error) {
