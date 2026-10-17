@@ -5,8 +5,9 @@ import { orchestrateMessage, generateContextualSuggestions, getInstantContextual
 import { hasAiApiKey, hasAiProviderAvailable } from './services/ai/client';
 import { processFileAttachment } from './utils/imageProcessing';
 import { completeGoogleRedirectSignIn, onAuthChange, signOut } from './services/firebase';
-import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
+import { initializeSync, setWorkspaceCloudSyncConsent as setSyncWorkspaceCloudSyncConsent, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
 import { mergeData, mergeMessages, mergeChatSessions, mergeCloudSettings } from './services/firestoreSync';
+import { hasWorkspaceCloudSyncConsent, subscribeToWorkspaceCloudSyncConsent } from './services/workspaceSyncConsent';
 import { preventDoubleClick } from './utils/debounce';
 import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers, Sparkles, LayoutDashboard, Settings } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -538,6 +539,10 @@ const App: React.FC = () => {
             });
           },
           (remoteData) => {
+            if (remoteData.initialReadFailed) {
+              useStore.setState({ syncStatus: 'error', syncError: 'Could not load cloud workspace' });
+              return;
+            }
             // Reconcile remote changes into canonical kernel state (P1-09)
             const state = useStore.getState();
             const { nextKernelEntities, conflicts: newConflicts } = reconcileEntityCollection(
@@ -614,110 +619,28 @@ const App: React.FC = () => {
               chatSessions: sessionsUnchanged ? state.chatSessions : finalChatSessions,
               ...(nextActive !== currentActive ? { activeSessionId: nextActive } : {}),
               ...(remoteData.settings ? { settings: mergeCloudSettings(state.settings, remoteData.settings) as typeof state.settings } : {}),
-            });
-          }
-        );
-
-        // Load initial cloud data then start real-time sync
-        loadInitialData().then(data => {
-          if (data) {
-            // Reconcile initial data into canonical kernel state (P1-09)
-            const state = useStore.getState();
-            const { nextKernelEntities, conflicts: newConflicts } = reconcileEntityCollection(
-              state.kernelEntities,
-              data.entities || [],
-              globalPendingMutationQueue
-            );
-            const projectedEntities = projectKernelEntitiesToLegacy(nextKernelEntities);
-
-            const merged = mergeData(
-              { entities: projectedEntities as unknown as Entity[], relationships: state.relationships },
-              { entities: data.entities, relationships: data.relationships }
-            );
-            const rawMergedMsgs = mergeMessages(state.messages || [], data.messages || []);
-
-            const mergedChatSessions = data.chatSessions?.length
-              ? mergeChatSessions(state.chatSessions || [], data.chatSessions)
-              : (state.chatSessions || []);
-
-            const deletedSessionIds = new Set(
-              mergedChatSessions.filter(s => s.deleted).map(s => s.id)
-            );
-
-            // Strip messages belonging to deleted sessions to prevent zombie resurrects
-            const mergedMsgs = (rawMergedMsgs || []).filter(
-              m => !m.channelId || !deletedSessionIds.has(m.channelId)
-            );
-
-            const existingSessionIds = new Set(mergedChatSessions.map(s => s.id));
-            const missingSessions: ChatSession[] = (mergedMsgs || [])
-              .filter(m => m.channelId && !existingSessionIds.has(m.channelId) && !deletedSessionIds.has(m.channelId))
-              .map(m => {
-                existingSessionIds.add(m.channelId!);
-                return {
-                  id: m.channelId!,
-                  title: 'Chat ' + m.channelId!.slice(0, 8),
-                  created_at: m.created_at,
-                  updated_at: m.created_at,
-                  deleted: false,
-                };
-              });
-
-            const finalChatSessions = [...mergedChatSessions, ...missingSessions];
-            const activeSessions = getActiveChatSessions(finalChatSessions);
-            const currentActive = state.activeSessionId;
-            const nextActive = (activeSessions.length > 0 && (!currentActive || !activeSessions.some(s => s.id === currentActive)))
-              ? activeSessions[0].id
-              : (activeSessions.length === 0 ? 'general' : currentActive);
-
-            const sessionsUnchanged = (state.chatSessions || []).length === finalChatSessions.length &&
-              (state.chatSessions || []).every((s, i) =>
-                s.id === finalChatSessions[i].id &&
-                s.title === finalChatSessions[i].title &&
-                s.deleted === finalChatSessions[i].deleted &&
-                s.updated_at === finalChatSessions[i].updated_at
-              );
-
-            const messagesUnchanged = (state.messages || []).length === (mergedMsgs || []).length &&
-              (state.messages || []).every((m, i) =>
-                m.id === mergedMsgs[i].id &&
-                m.text === mergedMsgs[i].text &&
-                m.created_at === mergedMsgs[i].created_at
-              );
-
-            useStore.setState({
-              kernelEntities: nextKernelEntities,
-              entities: projectedEntities,
-              relationships: merged.relationships,
-              conflicts: [...(state.conflicts || []), ...newConflicts],
-              universalTags: data.universalTags || state.universalTags,
-              messages: messagesUnchanged ? state.messages : mergedMsgs,
-              chatSessions: sessionsUnchanged ? state.chatSessions : finalChatSessions,
-              ...(nextActive !== currentActive ? { activeSessionId: nextActive } : {}),
-              ...(data.settings ? { settings: mergeCloudSettings(state.settings, data.settings) as typeof state.settings } : {}),
-              ...(data.foodLogs?.length ? { foodLogs: data.foodLogs } : {}),
-              ...(data.subjects?.length ? { subjects: data.subjects } : {}),
-              ...(data.classSchedule?.length ? { classSchedule: data.classSchedule } : {}),
-              ...(data.holidays?.length ? { holidays: data.holidays } : {}),
-              ...(data.attendanceLogs?.length ? { attendanceLogs: data.attendanceLogs } : {}),
+              ...(remoteData.foodLogs?.length ? { foodLogs: remoteData.foodLogs } : {}),
+              ...(remoteData.subjects?.length ? { subjects: remoteData.subjects } : {}),
+              ...(remoteData.classSchedule?.length ? { classSchedule: remoteData.classSchedule } : {}),
+              ...(remoteData.holidays?.length ? { holidays: remoteData.holidays } : {}),
+              ...(remoteData.attendanceLogs?.length ? { attendanceLogs: remoteData.attendanceLogs } : {}),
             });
 
-            // If local state had entities that aren't on the cloud yet (e.g. initial login on new cloud db), push them up immediately
-            if (merged.entities.length > 0 && (!data.entities || data.entities.length === 0) && !useStore.getState().isDemoMode) {
-              console.log('[SyncManager] Seeding local entities to cloud');
+            // Only an explicit opt-in permits initial cloud reads or a seed
+            // upload. If this is a genuinely empty account, preserve the old
+            // local-first merge behavior and seed through the same gated queue.
+            if (remoteData.isInitialLoad && !useStore.getState().isDemoMode &&
+                (!remoteData.entities || remoteData.entities.length === 0) && merged.entities.length > 0) {
               scheduleSync(() => ({
                 entities: merged.entities,
                 relationships: merged.relationships,
-                universalTags: data.universalTags || state.universalTags,
+                universalTags: remoteData.universalTags || state.universalTags,
                 settings: state.settings,
               }));
             }
-          }
-          // Start real-time listener after initial load
-          if (!useStore.getState().isDemoMode) {
-            startRealtimeSync();
-          }
-        });
+          },
+          hasWorkspaceCloudSyncConsent(user.uid),
+        );
       } else {
         cleanupSync();
       }
@@ -727,6 +650,14 @@ const App: React.FC = () => {
       cleanupSync();
     };
   }, [setCurrentUser, loadFromCloud, addToast]);
+
+  // Consent changes are local, identity-scoped events. Revoke stops listeners
+  // and debounced uploads immediately; enabling triggers a gated initial read.
+  useEffect(() => subscribeToWorkspaceCloudSyncConsent(({ uid, enabled }) => {
+    if (useStore.getState().currentUser?.uid !== uid) return;
+    setSyncWorkspaceCloudSyncConsent(enabled);
+    useStore.setState({ syncError: null, syncStatus: enabled ? 'syncing' : 'idle' });
+  }), []);
 
   const onboardingIdentity = currentUser?.uid || 'guest';
   useEffect(() => {
@@ -801,8 +732,17 @@ const App: React.FC = () => {
       }
     });
 
+    const unsubscribeConsent = subscribeToWorkspaceCloudSyncConsent(({ uid, enabled }) => {
+      if (enabled || useStore.getState().currentUser?.uid !== uid) return;
+      if (foodDebounce) clearTimeout(foodDebounce);
+      if (attDebounce) clearTimeout(attDebounce);
+      foodDebounce = null;
+      attDebounce = null;
+    });
+
     return () => {
       unsub();
+      unsubscribeConsent();
       if (foodDebounce) clearTimeout(foodDebounce);
       if (attDebounce) clearTimeout(attDebounce);
     };

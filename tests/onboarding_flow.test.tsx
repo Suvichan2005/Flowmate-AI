@@ -10,6 +10,8 @@ describe('adaptive first-run onboarding', () => {
     const signIn = vi.fn();
     render(<OnboardingFlow identity="guest" onClose={vi.fn()} onSignIn={signIn} onContinueInChat={vi.fn()} />);
     expect(screen.getByRole('dialog', { name: /make flowmate yours/i })).toBeInTheDocument();
+    expect(screen.getByText(/workspace cloud sync starts off/i)).toBeInTheDocument();
+    expect(screen.getByText(/not end-to-end encrypted/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /already have an account/i }));
     expect(signIn).toHaveBeenCalledOnce();
   });

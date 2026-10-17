@@ -1,6 +1,7 @@
 import WorkspaceStatus from './WorkspaceStatus';
 import AppearanceSettings from './AppearanceSettings';
 import React, { useRef, useState, useEffect } from 'react';
+import { useFocusTrap } from '../utils/accessibility';
 import { useStore } from '../store';
 import { AlertTriangle, Download, Upload, FileText, Trash2, Bot, EyeOff, MapPin, Navigation, RefreshCw, Shield, Activity, Brain, Clock, Plus } from 'lucide-react';
 import { exportToMarkdown, downloadMarkdown } from '../utils/exportMarkdown';
@@ -22,6 +23,7 @@ import ManagedAiAdminPanel from './ManagedAiAdminPanel';
 import AiModelSelector from './AiModelSelector';
 import ManagedAiUsagePanel from './ManagedAiUsagePanel';
 import { clearOnboardingProfile } from '../services/onboardingProfile';
+import { hasWorkspaceCloudSyncConsent, setWorkspaceCloudSyncConsentForUser, subscribeToWorkspaceCloudSyncConsent } from '../services/workspaceSyncConsent';
 
 const DEFAULT_FEATURE_TOGGLES: FeatureToggles = {
   food_tracking: true,
@@ -50,6 +52,79 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
   const [apiKeyInput, setApiKeyInput] = useState<string>(() => getEphemeralApiKey() || '');
   const [keySavedToast, setKeySavedToast] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
+  const [workspaceSyncEnabled, setWorkspaceSyncEnabled] = useState(() => hasWorkspaceCloudSyncConsent(currentUser?.uid));
+  const [showWorkspaceSyncConsent, setShowWorkspaceSyncConsent] = useState(false);
+  const [workspaceSyncConsentAcknowledged, setWorkspaceSyncConsentAcknowledged] = useState(false);
+  const [workspaceSyncMessage, setWorkspaceSyncMessage] = useState('');
+  const workspaceSyncDialogRef = useRef<HTMLElement>(null);
+  const workspaceSyncTriggerRef = useRef<HTMLButtonElement>(null);
+  const workspaceSyncFocusReturnRef = useRef<HTMLElement | null>(null);
+
+  useFocusTrap(workspaceSyncDialogRef, showWorkspaceSyncConsent);
+
+  useEffect(() => {
+    if (!showWorkspaceSyncConsent) return;
+    workspaceSyncFocusReturnRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setShowWorkspaceSyncConsent(false);
+      setWorkspaceSyncConsentAcknowledged(false);
+    };
+    document.addEventListener('keydown', dismiss);
+    return () => {
+      document.removeEventListener('keydown', dismiss);
+      const target = workspaceSyncFocusReturnRef.current;
+      requestAnimationFrame(() => {
+        if (target?.isConnected) target.focus();
+        else workspaceSyncTriggerRef.current?.focus();
+      });
+    };
+  }, [showWorkspaceSyncConsent]);
+
+  useEffect(() => {
+    setWorkspaceSyncEnabled(hasWorkspaceCloudSyncConsent(currentUser?.uid));
+    setWorkspaceSyncMessage('');
+    setShowWorkspaceSyncConsent(false);
+    setWorkspaceSyncConsentAcknowledged(false);
+  }, [currentUser?.uid]);
+
+  useEffect(() => subscribeToWorkspaceCloudSyncConsent(({ uid, enabled }) => {
+    if (uid !== currentUser?.uid) return;
+    setWorkspaceSyncEnabled(enabled);
+    setWorkspaceSyncMessage(enabled
+      ? 'Cloud sync is enabled for this account on this device.'
+      : 'Cloud sync is off on this device. Existing cloud data was not deleted.');
+  }), [currentUser?.uid]);
+
+  const disableWorkspaceCloudSync = () => {
+    if (!currentUser || !setWorkspaceCloudSyncConsentForUser(currentUser.uid, false)) {
+      setWorkspaceSyncMessage('Could not save this privacy choice. Your workspace remains local until consent can be saved.');
+      return;
+    }
+    setWorkspaceSyncEnabled(false);
+    setWorkspaceSyncMessage('Cloud sync is off on this device. Existing cloud data was not deleted. A write already in flight may finish.');
+  };
+
+  const enableWorkspaceCloudSync = () => {
+    if (!currentUser || !workspaceSyncConsentAcknowledged) return;
+    if (!setWorkspaceCloudSyncConsentForUser(currentUser.uid, true)) {
+      setWorkspaceSyncMessage('Could not save this privacy choice. Cloud sync remains off.');
+      return;
+    }
+    setWorkspaceSyncEnabled(true);
+    setShowWorkspaceSyncConsent(false);
+    setWorkspaceSyncConsentAcknowledged(false);
+    setWorkspaceSyncMessage('Cloud sync is enabled for this account on this device. Other devices require their own choice.');
+  };
+
+  const closeWorkspaceSyncConsent = () => {
+    setShowWorkspaceSyncConsent(false);
+    setWorkspaceSyncConsentAcknowledged(false);
+  };
 
   const memoryEntities = Object.values(kernelEntities || {})
     .filter(e => e.schema_id === 'system/memory_item' && e.lifecycle.deleted_at === null)
@@ -839,8 +914,41 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
 
         {/* Sync Settings */}
         <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-4">Sync & Backup</h2>
+          <h2 className="text-lg font-semibold text-slate-200 mb-4">Privacy, Sync & Backup</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+            <div className="rounded-lg border border-slate-700 bg-slate-950/50 p-4 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-200">Workspace cloud sync</label>
+                  <p className="mt-1 text-xs text-slate-400 leading-relaxed">
+                    {workspaceSyncEnabled
+                      ? 'Enabled for this account on this device. Flowmate stores workspace content in its Firebase project.'
+                      : 'Off by default. Signing in or using managed AI does not upload your workspace.'}
+                  </p>
+                </div>
+                {currentUser ? (
+                  workspaceSyncEnabled ? (
+                    <button ref={workspaceSyncTriggerRef} type="button" onClick={disableWorkspaceCloudSync}
+                      className="shrink-0 rounded-lg border border-slate-600 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800">
+                      Turn off cloud sync
+                    </button>
+                  ) : (
+                    <button ref={workspaceSyncTriggerRef} type="button" onClick={() => setShowWorkspaceSyncConsent(true)}
+                      className="shrink-0 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200 hover:bg-emerald-500/20">
+                      Review and enable
+                    </button>
+                  )
+                ) : (
+                  <span className="shrink-0 rounded-full bg-slate-800 px-3 py-1.5 text-[11px] text-slate-300">Local only</span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Standard Flowmate cloud sync is not end-to-end encrypted. Authorized Firebase project administrators can technically access stored content. This choice is separate from AI, Google Calendar and sign-in.
+              </p>
+              {workspaceSyncMessage && <p role="status" className="text-xs text-slate-300">{workspaceSyncMessage}</p>}
+              {!currentUser && <p className="text-xs text-slate-400">Sign in only if you want to review cloud sync. You can keep using this device locally.</p>}
+            </div>
+
             <div className="flex items-center justify-between">
               <div>
                 <label className="block text-sm font-medium text-slate-200">Google Calendar Sync</label>
@@ -870,7 +978,9 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Data Management</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
             <p className="text-sm text-slate-400 mb-4">
-              Your data is stored locally in your browser. Create backups regularly.
+              {workspaceSyncEnabled
+                ? 'Your workspace is stored locally and synchronized to standard Flowmate cloud storage on this device. Create backups regularly.'
+                : 'Your workspace is stored locally in this browser. Create backups regularly.'}
             </p>
             <div className="grid grid-cols-2 gap-3 mb-6">
               <button
@@ -1104,6 +1214,33 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </section>
 
       </div>
+      {showWorkspaceSyncConsent && currentUser && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" onMouseDown={event => {
+          if (event.target === event.currentTarget) closeWorkspaceSyncConsent();
+        }}>
+          <section ref={workspaceSyncDialogRef} role="dialog" aria-modal="true" aria-labelledby="workspace-sync-consent-title"
+            className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+            <h2 id="workspace-sync-consent-title" className="text-lg font-semibold text-slate-100">Enable workspace cloud sync?</h2>
+            <p className="mt-3 text-sm leading-relaxed text-slate-300">
+              Flowmate will read and sync this device's workspace with the signed-in account. This can include goals, projects, tasks, relationships, conversations, profile settings and activity records. Existing cloud content will be merged with local content.
+            </p>
+            <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-100">
+              This is standard Firestore storage, not end-to-end encryption. Authorized administrators of the Flowmate Firebase project can technically read stored workspace content. Your AI provider and Google Calendar choices remain separate.
+            </p>
+            <label className="mt-4 flex items-start gap-3 text-sm text-slate-200">
+              <input type="checkbox" checked={workspaceSyncConsentAcknowledged}
+                onChange={event => setWorkspaceSyncConsentAcknowledged(event.target.checked)} className="mt-1" />
+              <span>I understand this device will upload and read workspace content in standard Flowmate cloud storage.</span>
+            </label>
+            <div className="mt-6 flex justify-end gap-3">
+              <button type="button" onClick={closeWorkspaceSyncConsent}
+                className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Keep local</button>
+              <button type="button" disabled={!workspaceSyncConsentAcknowledged} onClick={enableWorkspaceCloudSync}
+                className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white enabled:hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50">Enable on this device</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 };

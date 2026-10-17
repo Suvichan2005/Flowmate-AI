@@ -139,7 +139,10 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ identity, onClose, onSi
         <button type="button" onClick={() => setStep(1)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 font-semibold text-slate-950 hover:bg-emerald-400"><ArrowRight size={18} /> Continue as a guest</button>
         <button type="button" onClick={saveThenSignIn} className="w-full rounded-xl border border-slate-700 px-4 py-3 font-medium text-slate-100 hover:bg-slate-800">Already have an account? Sign in</button>
         <button type="button" onClick={() => saveAndClose()} className="w-full px-4 py-2 text-sm text-slate-400 hover:text-slate-200">Skip setup for now</button>
-        <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-slate-400"><LockKeyhole size={15} className="mt-0.5 shrink-0" /> Your answers stay in this browser. Flowmate uses them in AI requests only if you explicitly turn that on.</p>
+        <div className="mt-4 space-y-2 text-xs leading-5 text-slate-400">
+          <p className="flex items-start gap-2"><LockKeyhole size={15} className="mt-0.5 shrink-0" /> Your answers stay in this browser. Flowmate uses them in AI requests only if you explicitly turn that on.</p>
+          <p>Workspace cloud sync starts off; signing in does not enable it. If you later opt in from Settings, standard Firestore storage is not end-to-end encrypted and authorized Firebase project administrators can technically access it. AI context sharing is a separate choice.</p>
+        </div>
       </div>}
 
       {step === 1 && <div className="mt-6 space-y-4">

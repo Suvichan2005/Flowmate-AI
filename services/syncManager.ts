@@ -51,6 +51,9 @@ let isSyncing = false;
 let realtimeUnsubscribe: (() => void) | null = null;
 let lastSyncTimestamp: string | null = null;
 let isDemoModeActive = false;
+// Firebase identity alone is not workspace-sync consent. This is populated
+// only from the explicit per-account/per-device local consent record.
+let workspaceCloudSyncEnabled = false;
 
 /**
  * Monotonically-incrementing session token.
@@ -93,7 +96,15 @@ type OnRemoteDataChange = (data: {
     messages?: Message[];
     chatSessions?: ChatSession[];
     settings?: Partial<UserSettings>;
+    foodLogs?: FoodLogEntry[];
+    subjects?: Subject[];
+    classSchedule?: ClassSchedule[];
+    holidays?: Holiday[];
+    attendanceLogs?: AttendanceLog[];
+    isInitialLoad?: boolean;
+    initialReadFailed?: boolean;
 }) => void;
+
 
 let onSyncStatusChange: OnSyncStatusChange | null = null;
 let onRemoteDataChange: OnRemoteDataChange | null = null;
@@ -108,11 +119,23 @@ const SYNC_DEBOUNCE_MS = 2000;
 export const initializeSync = (
     userId: string,
     statusCallback: OnSyncStatusChange,
-    remoteDataCallback: OnRemoteDataChange
+    remoteDataCallback: OnRemoteDataChange,
+    hasWorkspaceCloudSyncConsent = false,
 ) => {
     if (!isFirebaseConfigured()) {
         console.warn('[SyncManager] Firebase not configured, sync disabled');
         return;
+    }
+
+    const accountChanged = syncUserId !== userId;
+    if (accountChanged) {
+        syncSessionToken++;
+        if (syncDebounceTimer) {
+            clearTimeout(syncDebounceTimer);
+            syncDebounceTimer = null;
+        }
+        stopRealtimeSync();
+        lastSyncTimestamp = null;
     }
 
     console.log('[SyncManager] Initializing sync for user:', userId);
@@ -122,6 +145,51 @@ export const initializeSync = (
     syncUserId = userId;
     onSyncStatusChange = statusCallback;
     onRemoteDataChange = remoteDataCallback;
+    workspaceCloudSyncEnabled = hasWorkspaceCloudSyncConsent;
+
+    if (workspaceCloudSyncEnabled) activateWorkspaceSync();
+    else stopRealtimeSync();
+};
+
+/** Apply or revoke this device's explicit workspace-cloud consent at runtime. */
+export const setWorkspaceCloudSyncConsent = (enabled: boolean): void => {
+    if (workspaceCloudSyncEnabled === enabled) return;
+    workspaceCloudSyncEnabled = enabled;
+    syncSessionToken++;
+
+    if (syncDebounceTimer) {
+        clearTimeout(syncDebounceTimer);
+        syncDebounceTimer = null;
+    }
+
+    if (!enabled) {
+        stopRealtimeSync();
+        return;
+    }
+
+    activateWorkspaceSync();
+};
+
+const activateWorkspaceSync = (): void => {
+    if (!workspaceCloudSyncEnabled || !syncUserId || isDemoModeActive) return;
+    const userId = syncUserId;
+    const capturedToken = syncSessionToken;
+
+    // Read existing cloud state before listening. The caller reconciles this
+    // data through the same store/kernel path used during normal sign-in.
+    void loadUserData(userId).then(data => {
+        if (!workspaceCloudSyncEnabled || capturedToken !== syncSessionToken || userId !== syncUserId) return;
+        if (data) onRemoteDataChange?.({ ...data, isInitialLoad: true });
+        else onRemoteDataChange?.({
+            entities: [], relationships: [], universalTags: [],
+            isInitialLoad: true, initialReadFailed: true,
+        });
+        if (!isDemoModeActive && startRealtimeSync()) onSyncStatusChange?.('idle');
+    }).catch(error => {
+        if (capturedToken !== syncSessionToken) return;
+        console.error('[SyncManager] Initial cloud read failed:', error);
+        onSyncStatusChange?.('error', 'Could not load cloud workspace');
+    });
 };
 
 /**
@@ -129,7 +197,7 @@ export const initializeSync = (
  * Call after initializeSync and initial data load
  */
 export const startRealtimeSync = (): (() => void) | null => {
-    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) {
+    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoSyncBlocked()) {
         return null;
     }
 
@@ -198,7 +266,7 @@ export const stopRealtimeSync = () => {
 export const scheduleSync = (
     getData: () => { entities: Entity[]; relationships: Relationship[]; universalTags: TagDefinition[]; settings?: Partial<UserSettings> }
 ) => {
-    if (!syncUserId || !isFirebaseConfigured() || isDemoModeActive) {
+    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoModeActive) {
         return;
     }
 
@@ -220,7 +288,7 @@ export const scheduleSync = (
 export const forceSync = async (
     getData: () => { entities: Entity[]; relationships: Relationship[]; universalTags: TagDefinition[]; settings?: Partial<UserSettings> }
 ): Promise<boolean> => {
-    if (!syncUserId || !isFirebaseConfigured() || isDemoModeActive) {
+    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoModeActive) {
         return false;
     }
 
@@ -241,7 +309,7 @@ export const forceSync = async (
 const performSync = async (
     getData: () => { entities: Entity[]; relationships: Relationship[]; universalTags: TagDefinition[]; settings?: Partial<UserSettings> }
 ): Promise<boolean> => {
-    if (!syncUserId || isSyncing || isDemoModeActive) {
+    if (!syncUserId || !workspaceCloudSyncEnabled || isSyncing || isDemoModeActive) {
         return false;
     }
 
@@ -332,7 +400,7 @@ const performSync = async (
  * Returns full data: entities, relationships, tags, messages, food, attendance
  */
 export const loadInitialData = async (): Promise<UserData | null> => {
-    if (!syncUserId || !isFirebaseConfigured()) {
+    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured()) {
         return null;
     }
 
@@ -375,7 +443,7 @@ export const mergeMessagesWithLocal = (
  * Does NOT debounce — messages are written as they arrive.
  */
 export const syncMessage = async (message: Message): Promise<boolean> => {
-    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) {
+    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoSyncBlocked()) {
         return false;
     }
 
@@ -398,7 +466,7 @@ export const syncMessage = async (message: Message): Promise<boolean> => {
  * Sync food logs to Firestore
  */
 export const syncFoodLogsToCloud = async (foodLogs: FoodLogEntry[]): Promise<boolean> => {
-    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
+    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
     return saveFoodLogs(syncUserId, foodLogs);
 };
 
@@ -411,7 +479,7 @@ export const syncAttendanceToCloud = async (data: {
     holidays: Holiday[];
     attendanceLogs: AttendanceLog[];
 }): Promise<boolean> => {
-    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
+    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
     return saveAttendanceData(syncUserId, data);
 };
 
@@ -419,7 +487,7 @@ export const syncAttendanceToCloud = async (data: {
  * Sync chat sessions to Firestore
  */
 export const syncChatSessionsToCloud = async (sessions: ChatSession[]): Promise<boolean> => {
-    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
+    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
     return saveChatSessions(syncUserId, sessions);
 };
 
@@ -427,7 +495,7 @@ export const syncChatSessionsToCloud = async (sessions: ChatSession[]): Promise<
  * Delete channel messages from Firestore cloud
  */
 export const deleteChannelMessagesFromCloud = async (channelId: string): Promise<boolean> => {
-    if (!syncUserId || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
+    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
     return deleteChannelMessages(syncUserId, channelId);
 };
 
@@ -454,6 +522,7 @@ export const cleanupSync = () => {
     recentlyWrittenMessageIds.clear();
     lastSyncTimestamp = null;
     syncUserId = null;
+    workspaceCloudSyncEnabled = false;
     onSyncStatusChange = null;
     onRemoteDataChange = null;
     isSyncing = false;
@@ -463,9 +532,9 @@ export const cleanupSync = () => {
 /**
  * Check if sync is currently active
  */
-export const isSyncActive = () => !!syncUserId;
+export const isSyncActive = () => !!syncUserId && workspaceCloudSyncEnabled;
 
 /**
  * Get current sync user ID
  */
-export const getSyncUserId = () => syncUserId;
+export const getSyncUserId = () => workspaceCloudSyncEnabled ? syncUserId : null;
