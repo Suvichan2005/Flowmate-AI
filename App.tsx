@@ -1104,9 +1104,9 @@ const App: React.FC = () => {
       case 'chat_graph':
       default:
         return (
-          <div className="flex-1 flex flex-col bg-slate-950 p-4 relative h-full">
+          <div className="flex-1 flex flex-col bg-slate-950 relative h-full min-w-0">
             {safeEntities.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center p-8 border border-dashed border-slate-800/80 rounded-2xl m-2 bg-slate-900/20 backdrop-blur-sm">
+              <div className="flex-1 flex flex-col items-center justify-center text-center p-8 border border-dashed border-slate-800/80 bg-slate-900/20 backdrop-blur-sm">
                 <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4 text-indigo-400 shadow-inner">
                   <Layers className="w-7 h-7" />
                 </div>
@@ -1363,11 +1363,11 @@ const App: React.FC = () => {
               />
             </div>
             {/* Fixed Bottom Auth Section */}
-            <div className={`p-4 border-t border-slate-800 shrink-0 ${isZenMode ? 'hidden' : ''}`}>
+            <div className={`w-full min-w-0 overflow-hidden p-4 border-t border-slate-800 shrink-0 ${isZenMode ? 'hidden' : ''}`}>
               {currentUser ? (
-                <div className="flex items-center gap-2 text-xs text-slate-400">
-                  <UserCircle size={16} />
-                  <span className="truncate">{currentUser.email}</span>
+                <div className="flex w-full min-w-0 items-center gap-2 overflow-hidden text-xs text-slate-400">
+                  <UserCircle size={16} className="shrink-0" />
+                  <span className="block min-w-0 flex-1 truncate" title={currentUser.email || undefined}>{currentUser.email}</span>
                 </div>
               ) : (
                 <button onClick={() => { setShowAuthModal(true); setIsMobileSidebarOpen(false); }} className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors">
@@ -1381,16 +1381,16 @@ const App: React.FC = () => {
 
       {/* Desktop Sidebar */}
       {!isMobile && (
-        <div className="flex flex-col h-full bg-slate-900 border-r border-slate-800 shrink-0 z-20">
+        <div className="flex w-56 min-w-0 flex-col h-full bg-slate-900 border-r border-slate-800 shrink-0 z-20">
           <Sidebar onCreateClick={() => setShowCreateModal(true)} />
-          <div className={`p-4 border-t border-slate-800 bg-slate-900/80 ${isZenMode ? 'hidden' : ''}`}>
+          <div className={`w-full min-w-0 overflow-hidden p-4 border-t border-slate-800 bg-slate-900/80 ${isZenMode ? 'hidden' : ''}`}>
             <WorkspaceStatus />
             <div className="mt-3 pt-3 border-t border-slate-800">
               {currentUser ? (
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
+                <div className="flex w-full min-w-0 items-center justify-between gap-2 overflow-hidden">
+                  <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
                     <UserCircle size={14} className="text-slate-400 shrink-0" />
-                    <span className="text-[10px] text-slate-400 truncate">{currentUser.email}</span>
+                    <span className="block min-w-0 flex-1 truncate text-[10px] text-slate-400" title={currentUser.email || undefined}>{currentUser.email}</span>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <button onClick={syncToCloud} className="p-1 hover:bg-slate-800 rounded text-slate-500 hover:text-indigo-400 transition-all" title="Sync">
