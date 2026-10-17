@@ -6,6 +6,8 @@ import Sidebar from '../components/Sidebar';
 import { useStore } from '../store';
 import { ViewType } from '../types';
 
+const initialCurrentView = useStore.getState().currentView;
+
 describe('Navigation accessibility and active route semantics', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -16,6 +18,10 @@ describe('Navigation accessibility and active route semantics', () => {
       relationships: [],
       isDemoMode: false,
     });
+  });
+
+  it('starts in the Home dashboard when there is no explicit route', () => {
+    expect(initialCurrentView).toBe('dashboard');
   });
 
   afterEach(() => {

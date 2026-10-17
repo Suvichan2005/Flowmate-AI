@@ -26,6 +26,7 @@ vi.mock('firebase/auth', () => ({
   getAuth: vi.fn(app => app.name === 'flowmate-managed-ai-guest' ? authMocks.guestAuth : authMocks.primaryAuth),
   initializeAuth: vi.fn(app => app.name === 'flowmate-managed-ai-guest' ? authMocks.guestAuth : authMocks.primaryAuth),
   browserLocalPersistence: 'browser-local-persistence',
+  browserPopupRedirectResolver: 'browser-popup-redirect-resolver',
   setPersistence: vi.fn().mockResolvedValue(undefined),
   signInAnonymously: authMocks.signInAnonymously,
   signInWithEmailAndPassword: vi.fn().mockResolvedValue({ user: { uid: 'test-user' } }),
@@ -62,7 +63,7 @@ describe('Firebase App Check provider wiring', () => {
     vi.stubEnv('VITE_FIREBASE_APPCHECK_SITE_KEY', 'public-test-site-key');
 
     const { initializeAppCheck, ReCaptchaEnterpriseProvider } = await import('firebase/app-check');
-    const { initializeAuth, browserLocalPersistence } = await import('firebase/auth');
+    const { initializeAuth, browserLocalPersistence, browserPopupRedirectResolver } = await import('firebase/auth');
     await import('../services/firebase');
 
     expect(initializeAppCheck).toHaveBeenCalledOnce();
@@ -71,7 +72,10 @@ describe('Firebase App Check provider wiring', () => {
     expect((options.provider as unknown as { siteKey: string }).siteKey).toBe('public-test-site-key');
     expect(options.isTokenAutoRefreshEnabled).toBe(true);
     expect(initializeAuth).toHaveBeenCalledOnce();
-    expect(vi.mocked(initializeAuth).mock.calls[0][1]).toEqual({ persistence: browserLocalPersistence });
+    expect(vi.mocked(initializeAuth).mock.calls[0][1]).toEqual({
+      persistence: browserLocalPersistence,
+      popupRedirectResolver: browserPopupRedirectResolver,
+    });
   });
 
   it('sets browser-local persistence before completing an email sign-in', async () => {

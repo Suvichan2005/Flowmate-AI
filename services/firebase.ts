@@ -18,6 +18,7 @@ import {
     getAuth,
     initializeAuth,
     browserLocalPersistence,
+    browserPopupRedirectResolver,
     setPersistence,
     signInAnonymously,
     signInWithEmailAndPassword,
@@ -96,7 +97,10 @@ if (hasValidConfig) {
 
     // Export services
     try {
-        auth = initializeAuth(app, { persistence: browserLocalPersistence });
+        auth = initializeAuth(app, {
+            persistence: browserLocalPersistence,
+            popupRedirectResolver: browserPopupRedirectResolver,
+        });
     } catch {
         // Preserve the existing instance during HMR; on a fresh load this makes
         // the intended cross-reload Auth persistence explicit.

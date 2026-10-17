@@ -347,7 +347,7 @@ export const useStore = create<FlowmateState>()(
             unsentDrafts: {},
             pendingOps: null,
             syncQueue: [],
-            currentView: 'chat_graph',
+            currentView: 'dashboard',
             selectedEntityId: null,
             settings: {
                 timezone: 'Asia/Kolkata', // Force IST
