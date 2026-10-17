@@ -616,7 +616,7 @@ export const generateBriefing = async (
     const response = await withRetry(
       () => generateManagedContent(
         [{ role: 'user', parts: [{ text: prompt }] }],
-        { temperature: 0.7 },
+        { temperature: 0.7, maxOutputTokens: 512 },
         turnId,
         callId,
         undefined,

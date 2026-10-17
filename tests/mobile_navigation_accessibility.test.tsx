@@ -9,8 +9,6 @@ import { mobileGestureThreshold, resolveMobileGestureIntent } from '../utils/mob
 
 const initialCurrentView = useStore.getState().currentView;
 
-const initialCurrentView = useStore.getState().currentView;
-
 describe('Navigation accessibility and active route semantics', () => {
   beforeEach(() => {
     localStorage.clear();
