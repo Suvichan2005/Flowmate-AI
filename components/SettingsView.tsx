@@ -303,7 +303,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-950 p-6 md:p-8">
+    <div className="flex-1 w-full min-w-0 overflow-y-auto bg-slate-950 p-6 md:p-8">
       <header className="mb-8 border-b border-slate-800 pb-6 pl-14">
         <h1 className="text-2xl font-bold text-slate-100">Settings</h1>
         <p className="text-slate-400 text-sm mt-1">
@@ -311,7 +311,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </p>
       </header>
 
-      <div className="max-w-2xl space-y-8">
+      <div data-testid="settings-content" className="w-full min-w-0 space-y-8">
 
         <WorkspaceStatus detailed />
         <AppearanceSettings />
