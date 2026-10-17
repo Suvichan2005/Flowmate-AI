@@ -138,7 +138,7 @@ export const initializeSync = (
         lastSyncTimestamp = null;
     }
 
-    console.log('[SyncManager] Initializing sync for user:', userId);
+    console.log('[SyncManager] Initializing workspace sync');
     // Bump session token so any listener callbacks captured for the previous
     // user (or previous session) are invalidated immediately.
     syncSessionToken++;
@@ -185,9 +185,9 @@ const activateWorkspaceSync = (): void => {
             isInitialLoad: true, initialReadFailed: true,
         });
         if (!isDemoModeActive && startRealtimeSync()) onSyncStatusChange?.('idle');
-    }).catch(error => {
+    }).catch(() => {
         if (capturedToken !== syncSessionToken) return;
-        console.error('[SyncManager] Initial cloud read failed:', error);
+        console.error('[SyncManager] Initial cloud read failed');
         onSyncStatusChange?.('error', 'Could not load cloud workspace');
     });
 };
@@ -301,6 +301,45 @@ export const forceSync = async (
     return await performSync(getData);
 };
 
+/** Run the explicit full-workspace sync action through the same consent gate. */
+export const syncWorkspaceNow = async (
+    data: Parameters<typeof saveUserData>[1],
+): Promise<boolean> => {
+    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoModeActive || isSyncing) {
+        return false;
+    }
+
+    if (syncDebounceTimer) {
+        clearTimeout(syncDebounceTimer);
+        syncDebounceTimer = null;
+    }
+
+    const userId = syncUserId;
+    const capturedToken = syncSessionToken;
+    isSyncing = true;
+    onSyncStatusChange?.('syncing');
+
+    try {
+        const success = await saveUserData(userId, data);
+        if (capturedToken !== syncSessionToken || userId !== syncUserId || !workspaceCloudSyncEnabled) return false;
+        if (!success) {
+            onSyncStatusChange?.('error', 'Cloud save did not complete');
+            return false;
+        }
+        lastSyncTimestamp = new Date().toISOString();
+        onSyncStatusChange?.('idle');
+        return true;
+    } catch {
+        if (capturedToken === syncSessionToken) {
+            console.error('[SyncManager] Explicit full sync failed');
+            onSyncStatusChange?.('error', 'Cloud save failed');
+        }
+        return false;
+    } finally {
+        isSyncing = false;
+    }
+};
+
 /**
  * Perform the actual sync operation.
  * Incremental: only writes entities/relationships changed since lastSyncTimestamp.
@@ -386,9 +425,9 @@ const performSync = async (
                 return false;
             }
         }
-    } catch (error) {
-        console.error('[SyncManager] Sync error:', error);
-        onSyncStatusChange?.('error', String(error));
+    } catch {
+        console.error('[SyncManager] Sync operation failed');
+        onSyncStatusChange?.('error', 'Cloud sync failed');
         return false;
     } finally {
         isSyncing = false;
@@ -400,7 +439,7 @@ const performSync = async (
  * Returns full data: entities, relationships, tags, messages, food, attendance
  */
 export const loadInitialData = async (): Promise<UserData | null> => {
-    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured()) {
+    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoModeActive) {
         return null;
     }
 
@@ -411,11 +450,15 @@ export const loadInitialData = async (): Promise<UserData | null> => {
             return data;
         }
         return null;
-    } catch (error) {
-        console.error('[SyncManager] Failed to load initial data:', error);
+    } catch {
+        console.error('[SyncManager] Failed to load initial data');
         return null;
     }
 };
+
+/** Read-only state helper for presenting the explicit sync action accurately. */
+export const isWorkspaceCloudSyncActiveFor = (userId: string | null | undefined): boolean =>
+    Boolean(userId && userId === syncUserId && workspaceCloudSyncEnabled && isFirebaseConfigured() && !isDemoModeActive);
 
 /**
  * Merge remote data with local data
@@ -455,8 +498,8 @@ export const syncMessage = async (message: Message): Promise<boolean> => {
 
     try {
         return await saveMessageToFirestore(syncUserId, message);
-    } catch (error) {
-        console.error('[SyncManager] Message sync failed:', error);
+    } catch {
+        console.error('[SyncManager] Message sync failed');
         recentlyWrittenMessageIds.delete(message.id);
         return false;
     }

@@ -4,8 +4,8 @@ import { asyncStorage } from './services/storage';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleCalendarAdapter } from './services/googleSync';
 import { generateBriefing } from './services/ai';
-import { saveUserData, loadUserData, mergeData, mergeMessages, mergeCloudSettings } from './services/firestoreSync';
-import { scheduleSync, syncMessage, syncFoodLogsToCloud, syncAttendanceToCloud, syncChatSessionsToCloud, deleteChannelMessagesFromCloud, setDemoModeSyncBlock } from './services/syncManager';
+import { mergeData, mergeMessages, mergeCloudSettings } from './services/firestoreSync';
+import { scheduleSync, syncMessage, syncFoodLogsToCloud, syncAttendanceToCloud, syncChatSessionsToCloud, deleteChannelMessagesFromCloud, setDemoModeSyncBlock, syncWorkspaceNow, loadInitialData, isWorkspaceCloudSyncActiveFor } from './services/syncManager';
 import { AuthenticatedIdentity, getPlatform } from './services/platform';
 import { validatePersistedState, validateOperations } from './utils/validation';
 import {
@@ -634,10 +634,14 @@ export const useStore = create<FlowmateState>()(
                     addToast('Sign in to sync to cloud', 'info');
                     return;
                 }
+                if (!isWorkspaceCloudSyncActiveFor(currentUser.uid)) {
+                    addToast('Enable workspace cloud sync in Settings before syncing personal data.', 'info');
+                    return;
+                }
 
                 try {
                     set({ syncStatus: 'syncing', syncError: null });
-                    const success = await saveUserData(currentUser.uid, {
+                    const success = await syncWorkspaceNow({
                         entities,
                         relationships,
                         universalTags,
@@ -657,9 +661,9 @@ export const useStore = create<FlowmateState>()(
                         set({ syncStatus: 'error', syncError: 'Cloud save did not complete' });
                         addToast('Cloud save did not complete; local data is retained', 'error');
                     }
-                } catch (err) {
+                } catch {
                     set({ syncStatus: 'error', syncError: 'Cloud save failed' });
-                    console.error('Cloud sync failed:', err);
+                    console.error('Cloud sync failed');
                     addToast('Cloud sync failed', 'error');
                 }
             },
@@ -671,9 +675,13 @@ export const useStore = create<FlowmateState>()(
                     return;
                 }
                 if (!currentUser) return;
+                if (!isWorkspaceCloudSyncActiveFor(currentUser.uid)) {
+                    addToast('Enable workspace cloud sync in Settings before loading personal cloud data.', 'info');
+                    return;
+                }
 
                 try {
-                    const data = await loadUserData(currentUser.uid);
+                    const data = await loadInitialData();
                     if (data) {
                         // Reconcile entities into canonical kernelEntities using deterministic P1-09 engine
                         const { nextKernelEntities, conflicts: newConflicts } = reconcileEntityCollection(
@@ -712,9 +720,11 @@ export const useStore = create<FlowmateState>()(
                             messagesCount: mergedMsgs.length,
                         });
                         addToast('Synced with cloud', 'success');
+                    } else {
+                        addToast('No cloud workspace was available; local data was left unchanged.', 'info');
                     }
-                } catch (err) {
-                    console.error('Cloud load failed:', err);
+                } catch {
+                    console.error('Cloud load failed');
                     addToast('Failed to load from cloud', 'error');
                 }
             },
