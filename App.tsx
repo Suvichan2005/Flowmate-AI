@@ -8,7 +8,7 @@ import { onAuthChange, signOut } from './services/firebase';
 import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
 import { mergeData, mergeMessages, mergeChatSessions } from './services/firestoreSync';
 import { preventDoubleClick } from './utils/debounce';
-import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers, Sparkles, LayoutDashboard } from 'lucide-react';
+import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers, Sparkles, LayoutDashboard, Settings } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import OpsPreviewForm from './components/OpsPreviewForm';
 import Dashboard from './components/Dashboard';
@@ -35,6 +35,7 @@ import { reconcileEntityCollection, globalPendingMutationQueue } from './service
 import { projectKernelEntitiesToLegacy } from './store/kernelProjection';
 import { setupCrossTabSync } from './services/storage';
 import { getLatestReviewDraft, deleteReviewDraft, revalidateReviewDraft, type ReviewDraft } from './services/action-review';
+import { resolveMobileGestureIntent } from './utils/mobileNavigationGestures';
 
 // Helper to safely load dynamic chunks across deployments
 function lazyWithRetry<T extends React.ComponentType<any>>(
@@ -168,6 +169,15 @@ const App: React.FC = () => {
   const mobileSidebarRef = useRef<HTMLDivElement>(null);
   const mobileSidebarCloseRef = useRef<HTMLButtonElement>(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [mobileGestureOffset, setMobileGestureOffset] = useState({ x: 0, y: 0 });
+  const [isMobileRefreshing, setIsMobileRefreshing] = useState(false);
+  const mobileTouchStartRef = useRef<{
+    x: number;
+    y: number;
+    startX: number;
+    startedAtTop: boolean;
+    canNavigateToChat: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (!isMobileSidebarOpen) return;
@@ -231,6 +241,110 @@ const App: React.FC = () => {
   const API_COOLDOWN_MS = 1000; // Minimum 1 second between API calls
 
   const { currentUser, setCurrentUser, loadFromCloud, syncToCloud } = useStore();
+
+  const handleMobileTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (!isMobile || isMobileSidebarOpen) return;
+    if (event.touches.length !== 1) {
+      mobileTouchStartRef.current = null;
+      setMobileGestureOffset({ x: 0, y: 0 });
+      return;
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+    if (
+      !target ||
+      target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="dialog"], [data-mobile-gesture-lock]')
+    ) return;
+
+    const touch = event.touches[0];
+    const scrollContainer = target.closest<HTMLElement>('[data-mobile-scroll]');
+    mobileTouchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      startX: touch.clientX,
+      startedAtTop: !scrollContainer || scrollContainer.scrollTop <= 0,
+      canNavigateToChat: currentView !== 'chat',
+    };
+  };
+
+  const handleMobileTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = mobileTouchStartRef.current;
+    if (!start) return;
+    if (event.touches.length !== 1) {
+      mobileTouchStartRef.current = null;
+      setMobileGestureOffset({ x: 0, y: 0 });
+      return;
+    }
+
+    const touch = event.touches[0];
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    const isHorizontal = Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
+    const isPullingDown = deltaY > 0 && Math.abs(deltaY) > Math.abs(deltaX) * 1.2 && start.startedAtTop;
+
+    if (isHorizontal && ((deltaX < 0 && start.canNavigateToChat) || (deltaX > 0 && start.startX <= 28))) {
+      setMobileGestureOffset({ x: Math.max(-120, Math.min(120, deltaX * 0.55)), y: 0 });
+    } else if (isPullingDown && !loading && !isStreaming && !isLiveMode) {
+      setMobileGestureOffset({ x: 0, y: Math.min(88, deltaY * 0.42) });
+    } else {
+      setMobileGestureOffset({ x: 0, y: 0 });
+    }
+  };
+
+  const finishMobileGesture = (deltaX: number, deltaY: number) => {
+    const start = mobileTouchStartRef.current;
+    mobileTouchStartRef.current = null;
+    if (!start) {
+      setMobileGestureOffset({ x: 0, y: 0 });
+      return;
+    }
+
+    const intent = resolveMobileGestureIntent({
+      deltaX,
+      deltaY,
+      startX: start.startX,
+      startedAtTop: start.startedAtTop,
+      canNavigateToChat: start.canNavigateToChat,
+    });
+
+    setMobileGestureOffset({ x: 0, y: 0 });
+    if (intent === 'open-menu') setIsMobileSidebarOpen(true);
+    if (intent === 'open-chat') setView('chat');
+    if (intent === 'refresh' && !loading && !isStreaming && !isLiveMode) {
+      try {
+        if (input.trim()) sessionStorage.setItem('flowmate-mobile-refresh-draft', input);
+        else sessionStorage.removeItem('flowmate-mobile-refresh-draft');
+      } catch {
+        // Refresh can still proceed when browser storage is unavailable.
+      }
+      setIsMobileRefreshing(true);
+      window.setTimeout(() => window.location.reload(), 240);
+    }
+  };
+
+  const handleMobileTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = mobileTouchStartRef.current;
+    const touch = event.changedTouches[0];
+    if (start && touch) finishMobileGesture(touch.clientX - start.x, touch.clientY - start.y);
+    else setMobileGestureOffset({ x: 0, y: 0 });
+  };
+
+  const handleMobileTouchCancel = () => {
+    mobileTouchStartRef.current = null;
+    setMobileGestureOffset({ x: 0, y: 0 });
+  };
+
+  useEffect(() => {
+    try {
+      const savedDraft = sessionStorage.getItem('flowmate-mobile-refresh-draft');
+      if (savedDraft !== null) {
+        setInput(savedDraft);
+        sessionStorage.removeItem('flowmate-mobile-refresh-draft');
+      }
+    } catch {
+      // Draft restoration is best effort when browser storage is unavailable.
+    }
+  }, [setInput]);
 
   useEffect(() => {
     if (!managedAiLimit) return;
@@ -1597,7 +1711,31 @@ const App: React.FC = () => {
       {isMobile && (
         <div data-layout="mobile" className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] overflow-hidden relative">
           {/* Main content or full screen chat */}
-          <div className="flex-1 flex flex-col overflow-hidden pb-14">
+          <div
+            className="flex-1 flex flex-col overflow-hidden pb-14"
+            onTouchStart={handleMobileTouchStart}
+            onTouchMove={handleMobileTouchMove}
+            onTouchEnd={handleMobileTouchEnd}
+            onTouchCancel={handleMobileTouchCancel}
+            style={{
+              touchAction: 'pan-y',
+              transform: `translate3d(${mobileGestureOffset.x}px, ${mobileGestureOffset.y}px, 0)`,
+              transition: mobileTouchStartRef.current
+                ? 'none'
+                : window.matchMedia('(prefers-reduced-motion: reduce)').matches
+                  ? 'transform 0ms'
+                  : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
+              willChange: mobileTouchStartRef.current ? 'transform' : 'auto',
+            }}
+            data-testid="mobile-gesture-surface"
+          >
+            {mobileGestureOffset.y > 18 || isMobileRefreshing ? (
+              <div className="absolute top-1 left-1/2 z-40 -translate-x-1/2 rounded-full border border-slate-700 bg-slate-900/95 px-3 py-1.5 text-[11px] text-slate-300 shadow-lg pointer-events-none">
+                {isMobileRefreshing ? (
+                  <span className="flex items-center gap-2"><RefreshCw size={12} className="animate-spin" />Refreshing</span>
+                ) : mobileGestureOffset.y >= 42 ? 'Release to refresh' : 'Pull to refresh'}
+              </div>
+            ) : null}
             {currentView === 'chat' ? (
               <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
                 <ChatSessionBar />
@@ -1630,7 +1768,7 @@ const App: React.FC = () => {
                   </div>
                 )}
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={!isMobile ? undefined : scrollRef} onScroll={handleChatScroll}>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4" data-mobile-scroll ref={!isMobile ? undefined : scrollRef} onScroll={handleChatScroll}>
                   {(() => {
                     const currentChannel = activeSessionId || 'general';
                     const currentBranch = (branches || []).find(b => b.id === activeBranchId && (b.conversation_id === currentChannel));
@@ -1735,7 +1873,7 @@ const App: React.FC = () => {
             ) : (
               /* Mobile Main Content - Show regular views */
               <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-                <div className="flex-1 overflow-auto">
+                <div className="flex-1 overflow-auto" data-mobile-scroll>
                   <Suspense fallback={<LazyLoadFallback />}>
                     {renderMainContent()}
                   </Suspense>
@@ -1749,6 +1887,7 @@ const App: React.FC = () => {
             <button
               onClick={() => setView('dashboard')}
               aria-current={currentView === 'dashboard' ? 'page' : undefined}
+              aria-label="Open Home"
               className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
                 currentView === 'dashboard' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -1759,6 +1898,7 @@ const App: React.FC = () => {
             <button
               onClick={() => setView('chat')}
               aria-current={currentView === 'chat' ? 'page' : undefined}
+              aria-label="Open Chat"
               className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
                 currentView === 'chat' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -1769,6 +1909,7 @@ const App: React.FC = () => {
             <button
               onClick={() => setView('chat_graph')}
               aria-current={currentView === 'chat_graph' ? 'page' : undefined}
+              aria-label="Open Graph"
               className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
                 currentView === 'chat_graph' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -1779,6 +1920,7 @@ const App: React.FC = () => {
             <button
               onClick={() => setView('calendar')}
               aria-current={currentView === 'calendar' ? 'page' : undefined}
+              aria-label="Open Calendar"
               className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
                 currentView === 'calendar' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
               }`}
@@ -1787,11 +1929,15 @@ const App: React.FC = () => {
               <span className="mt-0.5">Calendar</span>
             </button>
             <button
-              onClick={() => setIsMobileSidebarOpen(true)}
-              className="flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium text-slate-400 hover:text-slate-200 transition-all active:scale-95"
+              onClick={() => setView('settings')}
+              aria-current={currentView === 'settings' ? 'page' : undefined}
+              aria-label="Open Settings"
+              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
+                currentView === 'settings' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
+              }`}
             >
-              <Menu size={18} />
-              <span className="mt-0.5">More</span>
+              <Settings size={18} className={currentView === 'settings' ? 'stroke-[2.5]' : ''} />
+              <span className="mt-0.5">Settings</span>
             </button>
           </nav>
         </div>
