@@ -55,11 +55,13 @@ export const managedGemini = onRequest({
   if (req.method !== 'POST') { res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return; }
 
   let uid: string;
+  let email: string | undefined;
   try {
     const authorization = req.get('authorization') || '';
     if (!authorization.startsWith('Bearer ')) throw new RequestFailure('AUTH_REQUIRED', 401);
     const decoded = await getAuth().verifyIdToken(authorization.slice(7), true);
     uid = decoded.uid;
+    email = decoded.email;
   } catch (error) {
     sendError(res, error instanceof RequestFailure ? error : new RequestFailure('AUTH_REQUIRED', 401));
     return;
@@ -77,7 +79,7 @@ export const managedGemini = onRequest({
   catch (error) { sendError(res, error); return; }
 
   const currentTime = nowMs();
-  const refs = turnLedgerRefs(db, uid, input.turnId, input.callId, new Date(currentTime));
+  const refs = turnLedgerRefs(db, uid, input.turnId, input.callId, new Date(currentTime), email);
   let turnReserved = false;
   let callReserved = false;
 

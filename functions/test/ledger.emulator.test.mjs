@@ -27,16 +27,17 @@ test('managed requests reject caller-supplied UID, owner, entity, or workspace a
 before(async () => { await db.doc('system/managedAi').set({ enabled: true, mode: 'general' }); });
 after(async () => { await db.terminate(); });
 
-test('test mode allows only explicit synthetic UIDs and fails closed for others', async () => {
+test('test mode allows only explicit synthetic UIDs or exact synthetic email claims', async () => {
   const allowedUid = uid();
   const blockedUid = uid();
-  await db.doc('system/managedAi').set({ enabled: true, mode: 'test', allowedTestUids: [allowedUid] });
+  const allowedEmail = 'flowmate-managed-ai-smoke@example.com';
+  await db.doc('system/managedAi').set({ enabled: true, mode: 'test', allowedTestEmails: [allowedEmail] });
 
-  const allowed = turnLedgerRefs(db, allowedUid, 'turn_allowlisted_0001', 'call_allowlisted_00001');
+  const allowed = turnLedgerRefs(db, allowedUid, 'turn_allowlisted_0001', 'call_allowlisted_00001', new Date(), allowedEmail);
   await reserveTurn(db, allowed);
   assert.equal((await db.doc(`managedAiUsers/${allowedUid}`).get()).exists, true);
 
-  const blocked = turnLedgerRefs(db, blockedUid, 'turn_blocked_uid_0001', 'call_blocked_uid_00001');
+  const blocked = turnLedgerRefs(db, blockedUid, 'turn_blocked_uid_0001', 'call_blocked_uid_00001', new Date(), 'unapproved@example.com');
   await assert.rejects(reserveTurn(db, blocked), error => error.code === 'MANAGED_AI_DISABLED');
   await assert.rejects(reserveGenerationCall(db, blocked), error => error.code === 'MANAGED_AI_DISABLED');
   assert.equal((await db.doc(`managedAiUsers/${blockedUid}`).get()).exists, false);
