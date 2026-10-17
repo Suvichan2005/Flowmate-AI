@@ -20,7 +20,8 @@ vi.mock('firebase/auth', () => ({
   getAuth: vi.fn(() => ({})),
   initializeAuth: vi.fn(() => ({})),
   browserLocalPersistence: 'browser-local-persistence',
-  signInWithEmailAndPassword: vi.fn(),
+  setPersistence: vi.fn().mockResolvedValue(undefined),
+  signInWithEmailAndPassword: vi.fn().mockResolvedValue({ user: { uid: 'test-user' } }),
   createUserWithEmailAndPassword: vi.fn(),
   signInWithPopup: vi.fn(),
   GoogleAuthProvider: class { addScope() {} },
@@ -59,5 +60,22 @@ describe('Firebase App Check provider wiring', () => {
     expect(options.isTokenAutoRefreshEnabled).toBe(true);
     expect(initializeAuth).toHaveBeenCalledOnce();
     expect(vi.mocked(initializeAuth).mock.calls[0][1]).toEqual({ persistence: browserLocalPersistence });
+  });
+
+  it('sets browser-local persistence before completing an email sign-in', async () => {
+    vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
+    vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
+
+    const { setPersistence, signInWithEmailAndPassword, browserLocalPersistence } = await import('firebase/auth');
+    const { signInWithEmail } = await import('../services/firebase');
+    const result = await signInWithEmail('test@example.test', 'test-password');
+
+    expect(result.error).toBeNull();
+    expect(setPersistence).toHaveBeenCalledWith(expect.any(Object), browserLocalPersistence);
+    expect(vi.mocked(setPersistence).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(signInWithEmailAndPassword).mock.invocationCallOrder[0],
+    );
   });
 });

@@ -18,6 +18,7 @@ import {
     getAuth,
     initializeAuth,
     browserLocalPersistence,
+    setPersistence,
     signInAnonymously,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
@@ -220,6 +221,7 @@ export const refreshGoogleCalendarToken = async (): Promise<string | null> => {
 export const signInWithEmail = async (email: string, password: string) => {
     if (!auth) return { user: null, error: 'Firebase not configured' };
     try {
+        await setPersistence(auth, browserLocalPersistence);
         const result = await signInWithEmailAndPassword(auth, email, password);
         return { user: result.user, error: null };
     } catch (error: any) {
@@ -230,6 +232,7 @@ export const signInWithEmail = async (email: string, password: string) => {
 export const signUpWithEmail = async (email: string, password: string) => {
     if (!auth) return { user: null, error: 'Firebase not configured' };
     try {
+        await setPersistence(auth, browserLocalPersistence);
         const result = await createUserWithEmailAndPassword(auth, email, password);
         try {
             await sendEmailVerification(result.user);
@@ -267,6 +270,7 @@ export const refreshEmailVerification = async () => {
 export const signInWithGoogle = async () => {
     if (!auth || !googleProvider) return { user: null, error: 'Firebase not configured', accessToken: null };
     try {
+        await setPersistence(auth, browserLocalPersistence);
         const result = await signInWithPopup(auth, googleProvider);
 
         // Extract OAuth access token for Google Calendar API
