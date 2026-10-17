@@ -1761,9 +1761,12 @@ export const useStore = create<FlowmateState>()(
                     };
                 });
 
-                if (!get().isDemoMode) {
-                    syncMessage(assistantMsg).catch(err => console.warn('[Store] Sync assistant message failed:', err));
-                }
+                const placeholderSync = !get().isDemoMode
+                    ? syncMessage(assistantMsg).catch(err => {
+                        console.warn('[Store] Sync assistant placeholder failed:', err);
+                        return false;
+                    })
+                    : Promise.resolve(false);
 
                 try {
                     if (registeredTurnExecutor) {
@@ -1800,6 +1803,19 @@ export const useStore = create<FlowmateState>()(
                             streamingMessageId: null
                         };
                     });
+
+                    // The initial empty placeholder is written before generation. Wait for
+                    // that write, then persist the completed response so a remote snapshot
+                    // cannot replace the visible answer with the empty placeholder.
+                    if (!get().isDemoMode) {
+                        await placeholderSync;
+                        const completedAssistantMsg = get().messages.find(message => message.id === assistantMsgId);
+                        if (completedAssistantMsg) {
+                            await syncMessage(completedAssistantMsg).catch(err => {
+                                console.warn('[Store] Sync completed assistant message failed:', err);
+                            });
+                        }
+                    }
                 } catch (err: any) {
                     console.error('[Store] Turn execution failed on branch:', branchId, err);
                     set(state => {
