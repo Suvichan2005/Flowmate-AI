@@ -1,8 +1,9 @@
-import { auth, getFirebaseAppCheckToken } from '../firebase';
+import { auth, getFirebaseAppCheckToken, getManagedAiUser, isFirebaseConfigured } from '../firebase';
 
 export type ManagedAiFailureCode =
-  | 'TURN_ALLOWANCE_EXHAUSTED' | 'GLOBAL_LIMIT_REACHED' | 'MANAGED_AI_DISABLED'
+  | 'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED' | 'GLOBAL_LIMIT_REACHED' | 'MANAGED_AI_DISABLED'
   | 'AUTH_REQUIRED' | 'APP_CHECK_REQUIRED' | 'RATE_LIMITED' | 'INPUT_TOKEN_LIMIT'
+  | 'EMAIL_VERIFICATION_REQUIRED'
   | 'GENERATION_FAILED' | 'MANAGED_AI_NOT_CONFIGURED' | 'USER_CALL_IN_PROGRESS' | 'REQUEST_ALREADY_PROCESSED'
   | 'TURN_ALREADY_COMPLETE' | 'TURN_CALL_LIMIT' | 'INVALID_REQUEST';
 
@@ -29,7 +30,7 @@ const configuredManagedEndpoint = (): string => {
     : '');
 };
 
-export const hasManagedAiIdentity = (): boolean => Boolean(auth?.currentUser && configuredManagedEndpoint());
+export const hasManagedAiIdentity = (): boolean => Boolean(isFirebaseConfigured() && configuredManagedEndpoint());
 
 export async function generateManagedContent(
   contents: unknown[],
@@ -38,13 +39,13 @@ export async function generateManagedContent(
   callId: string,
   signal?: AbortSignal,
 ): Promise<ManagedGenerationResponse> {
-  const user = auth?.currentUser;
+  const user = await getManagedAiUser();
   const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
   if (!user || !projectId) throw new ManagedAiError('AUTH_REQUIRED', 401);
 
   const endpoint = configuredManagedEndpoint();
   if (!endpoint) throw new ManagedAiError('MANAGED_AI_NOT_CONFIGURED', 503);
-  const token = await user.getIdToken();
+  const token = await user.getIdToken(user.emailVerified);
   const appCheckToken = await getFirebaseAppCheckToken();
   const headers: Record<string, string> = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   if (appCheckToken) headers['X-Firebase-AppCheck'] = appCheckToken;

@@ -6,6 +6,8 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 export interface TurnLedgerRefs {
   uid: string;
   email?: string;
+  allowance: 'guest' | 'account';
+  turnLimit: number;
   user: DocumentReference;
   turn: DocumentReference;
   call: DocumentReference;
@@ -13,11 +15,13 @@ export interface TurnLedgerRefs {
   month: DocumentReference;
 }
 
-export function turnLedgerRefs(db: Firestore, uid: string, turnId: string, callId: string, date = new Date(), email?: string): TurnLedgerRefs {
+export function turnLedgerRefs(db: Firestore, uid: string, turnId: string, callId: string, date = new Date(), email?: string, allowance: 'guest' | 'account' = 'account'): TurnLedgerRefs {
   return {
     uid,
     email: email?.trim().toLowerCase(),
-    user: db.doc(`managedAiUsers/${uid}`),
+    allowance,
+    turnLimit: allowance === 'guest' ? 3 : 10,
+    user: db.doc(`${allowance === 'guest' ? 'managedAiGuests' : 'managedAiUsers'}/${uid}`),
     turn: db.doc(`managedAiTurns/${hash(`${uid}:${turnId}`)}`),
     call: db.doc(`managedAiCalls/${hash(`${uid}:${turnId}:${callId}`)}`),
     control: db.doc('system/managedAi'),
@@ -52,8 +56,8 @@ export async function reserveTurn(db: Firestore, refs: TurnLedgerRefs, now = Dat
     const reservationsExpired = Number(userData.reservationsExpireAtMs || 0) <= now;
     let reservedTurns = reservationsExpired ? 0 : Number(userData.reservedTurns || 0);
     if (turnExpired && !reservationsExpired) reservedTurns = Math.max(0, reservedTurns - 1);
-    if (isNewTurn && Number(userData.successfulTurns || 0) + reservedTurns >= USER_TURN_LIMIT) {
-      throw new RequestFailure('TURN_ALLOWANCE_EXHAUSTED', 402);
+    if (isNewTurn && Number(userData.successfulTurns || 0) + reservedTurns >= refs.turnLimit) {
+      throw new RequestFailure(refs.allowance === 'guest' ? 'GUEST_TURN_ALLOWANCE_EXHAUSTED' : 'TURN_ALLOWANCE_EXHAUSTED', 402);
     }
     if (turn.exists && turnData.status === 'complete') throw new RequestFailure('TURN_ALREADY_COMPLETE', 409);
     if (turn.exists && turnData.status === 'pending' && !turnExpired && Number(turnData.callsReserved || 0) >= MAX_CALLS_PER_TURN) {

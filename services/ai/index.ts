@@ -20,6 +20,7 @@ import { useStore } from "../../store";
 import { withRetry } from "../../utils/apiRetry";
 
 import { getAiClient, hasAiApiKey, GEMINI_RETRY_CONFIG, DEFAULT_MODEL, MAX_FUNCTION_TURNS } from "./client";
+import { hasManagedAiIdentity } from "./managedClient";
 import { FLOWMATE_TOOLS, ACTIVE_AI_TOOLS } from "./tools";
 import { dispatchToolCall, calculateRelevance } from "./executors";
 import {
@@ -58,7 +59,7 @@ const MANAGED_AI_TOOL_NAMES = new Set(MANAGED_AI_TOOLS.flatMap(tool => tool.func
 
 export interface OrchestrationCallbacks {
   onChunk?: (chunk: string) => void;
-  onManagedAiLimit?: (code: 'TURN_ALLOWANCE_EXHAUSTED' | 'GLOBAL_LIMIT_REACHED') => void;
+  onManagedAiLimit?: (code: 'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED' | 'GLOBAL_LIMIT_REACHED') => void;
   onThinking?: (thinkingText: string) => void;
   onToolCall?: (tool: { name: string; latency_ms: number; success: boolean }) => void;
   onMetrics?: (metrics: {
@@ -83,7 +84,7 @@ export const orchestrateMessage = async (
   const customInstructions = settings?.custom_instructions || '';
 
   // Never present deterministic local rules as generated AI output.
-  const useManagedAi = !hasAiApiKey() && Boolean(auth?.currentUser);
+  const useManagedAi = !hasAiApiKey() && hasManagedAiIdentity();
   if (!hasAiApiKey() && !useManagedAi) {
     const unavailableMessage = 'Gemini is not configured, so Flowmate did not generate an AI response. Your message is saved in this conversation. Configure an authorized provider in Settings to use AI assistance; your local workspace remains available.';
     callbacks?.onChunk?.(unavailableMessage);
@@ -455,10 +456,12 @@ export const orchestrateMessage = async (
       };
     }
 
-    if (error instanceof ManagedAiError && (error.code === 'TURN_ALLOWANCE_EXHAUSTED' || error.code === 'GLOBAL_LIMIT_REACHED')) {
-      const message = error.code === 'TURN_ALLOWANCE_EXHAUSTED'
-        ? 'Your 10 lifetime included Flowmate AI turns have been used. Add your own Gemini API key in Settings to continue with AI.'
-        : 'Flowmate’s included AI capacity is temporarily exhausted. Add your own Gemini API key in Settings to continue with AI.';
+    if (error instanceof ManagedAiError && (error.code === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' || error.code === 'TURN_ALLOWANCE_EXHAUSTED' || error.code === 'GLOBAL_LIMIT_REACHED')) {
+      const message = error.code === 'GUEST_TURN_ALLOWANCE_EXHAUSTED'
+        ? 'You have used your 3 guest AI turns. Sign in for 10 included turns or add your own Gemini API key in Settings.'
+        : error.code === 'TURN_ALLOWANCE_EXHAUSTED'
+          ? 'Your 10 lifetime included Flowmate AI turns have been used. Add your own Gemini API key in Settings to continue with AI.'
+          : 'Flowmate’s included AI capacity is temporarily exhausted. Add your own Gemini API key in Settings to continue with AI.';
       callbacks?.onManagedAiLimit?.(error.code);
       callbacks?.onChunk?.(message);
       return { ops: [], assistant: { message, tone: 'neutral', follow_up: ['Open Gemini settings'] }, provider: 'managed-limited' };

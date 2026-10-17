@@ -16,6 +16,9 @@ import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getToken as getAppCheckToken, initializeAppCheck, ReCaptchaEnterpriseProvider, type AppCheck } from 'firebase/app-check';
 import {
     getAuth,
+    initializeAuth,
+    browserLocalPersistence,
+    signInAnonymously,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     signInWithPopup,
@@ -65,6 +68,7 @@ const hasValidConfig = !!(
 // Initialize Firebase only if config is valid
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
+let managedAiGuestAuth: Auth | null = null;
 let db: Firestore | null = null;
 let googleProvider: GoogleAuthProvider | null = null;
 let appCheck: AppCheck | null = null;
@@ -114,6 +118,43 @@ if (hasValidConfig) {
 }
 
 export { auth, db };
+
+/**
+ * Guest AI identity is deliberately isolated from the app's signed-in Auth
+ * instance. App.tsx uses that primary instance to start workspace cloud sync;
+ * an anonymous AI identity must never trigger that sync implicitly.
+ */
+const getManagedAiGuestAuth = (): Auth | null => {
+    if (!app) return null;
+    if (managedAiGuestAuth) return managedAiGuestAuth;
+    try {
+        const guestApp = getApps().find(candidate => candidate.name === 'flowmate-managed-ai-guest')
+            || initializeApp(firebaseConfig, 'flowmate-managed-ai-guest');
+        try {
+            managedAiGuestAuth = initializeAuth(guestApp, { persistence: browserLocalPersistence });
+        } catch {
+            // HMR may preserve the named app/Auth instance between module evaluations.
+            managedAiGuestAuth = getAuth(guestApp);
+        }
+        return managedAiGuestAuth;
+    } catch {
+        return null;
+    }
+};
+
+/** Returns the verified account identity or silently creates a persistent guest identity for AI only. */
+export const getManagedAiUser = async (): Promise<User | null> => {
+    const signedInUser = auth?.currentUser;
+    if (signedInUser?.emailVerified) return signedInUser;
+    const guestAuth = getManagedAiGuestAuth();
+    if (!guestAuth) return null;
+    if (guestAuth.currentUser) return guestAuth.currentUser;
+    try {
+        return (await signInAnonymously(guestAuth)).user;
+    } catch {
+        return null;
+    }
+};
 
 /** Returns a short-lived App Check token when this app has been configured. */
 export const getFirebaseAppCheckToken = async (): Promise<string | null> => {

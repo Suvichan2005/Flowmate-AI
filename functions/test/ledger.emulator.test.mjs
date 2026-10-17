@@ -74,6 +74,26 @@ test('failed requests release the user slot; exactly ten successes consume lifet
   assert.equal((await db.doc('managedAiUsers/' + userId).get()).get('successfulTurns'), 10);
 });
 
+test('anonymous guest identities receive exactly three successful turns, separate from account allowance', async () => {
+  const guestId = uid();
+  for (let index = 0; index < 3; index += 1) {
+    const suffix = String(index).padStart(8, '0');
+    const refs = turnLedgerRefs(db, guestId, 'guest_success_' + suffix, 'guest_call_' + suffix, new Date(), undefined, 'guest');
+    await reserveTurn(db, refs);
+    await reserveGenerationCall(db, refs);
+    await finishTurn(db, refs, true);
+  }
+  const guestDoc = db.doc(`managedAiGuests/${guestId}`);
+  assert.equal((await guestDoc.get()).get('successfulTurns'), 3);
+  const nextGuestTurn = turnLedgerRefs(db, guestId, 'guest_success_00000003', 'guest_call_00000003', new Date(), undefined, 'guest');
+  await assert.rejects(reserveTurn(db, nextGuestTurn), error => error.code === 'GUEST_TURN_ALLOWANCE_EXHAUSTED');
+
+  const accountRefs = turnLedgerRefs(db, guestId, 'account_success_00000000', 'account_call_00000000');
+  await reserveTurn(db, accountRefs);
+  assert.equal((await db.doc(`managedAiUsers/${guestId}`).get()).get('reservedTurns'), 1);
+  await failTurn(db, accountRefs, false);
+});
+
 test('billable generation attempts remain charged even when the user turn fails', async () => {
   const userId = uid();
   const refs = turnLedgerRefs(db, userId, 'turn_billable_00001', 'call_billable_000001', new Date('2099-01-02T00:00:00.000Z'));

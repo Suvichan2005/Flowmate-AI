@@ -56,12 +56,17 @@ export const managedGemini = onRequest({
 
   let uid: string;
   let email: string | undefined;
+  let allowance: 'guest' | 'account';
   try {
     const authorization = req.get('authorization') || '';
     if (!authorization.startsWith('Bearer ')) throw new RequestFailure('AUTH_REQUIRED', 401);
     const decoded = await getAuth().verifyIdToken(authorization.slice(7), true);
     uid = decoded.uid;
     email = decoded.email;
+    allowance = decoded.firebase?.sign_in_provider === 'anonymous' ? 'guest' : 'account';
+    if (allowance === 'account' && decoded.email_verified !== true) {
+      throw new RequestFailure('EMAIL_VERIFICATION_REQUIRED', 403);
+    }
   } catch (error) {
     sendError(res, error instanceof RequestFailure ? error : new RequestFailure('AUTH_REQUIRED', 401));
     return;
@@ -79,7 +84,7 @@ export const managedGemini = onRequest({
   catch (error) { sendError(res, error); return; }
 
   const currentTime = nowMs();
-  const refs = turnLedgerRefs(db, uid, input.turnId, input.callId, new Date(currentTime), email);
+  const refs = turnLedgerRefs(db, uid, input.turnId, input.callId, new Date(currentTime), email, allowance);
   let turnReserved = false;
   let callReserved = false;
 

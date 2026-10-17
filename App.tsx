@@ -160,7 +160,7 @@ const App: React.FC = () => {
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [managedAiLimit, setManagedAiLimit] = useState<'TURN_ALLOWANCE_EXHAUSTED' | 'GLOBAL_LIMIT_REACHED' | null>(null);
+  const [managedAiLimit, setManagedAiLimit] = useState<'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED' | 'GLOBAL_LIMIT_REACHED' | null>(null);
   const managedAiDialogRef = useRef<HTMLElement | null>(null);
   const [chatWidth, setChatWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
@@ -1831,16 +1831,19 @@ const App: React.FC = () => {
           <section ref={managedAiDialogRef} role="dialog" aria-modal="true" aria-labelledby="managed-ai-limit-title" className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">Gemini access</p>
             <h2 id="managed-ai-limit-title" className="mt-2 text-xl font-semibold text-slate-100">
-              {managedAiLimit === 'TURN_ALLOWANCE_EXHAUSTED' ? 'Your included AI turns are used' : 'Included AI capacity is temporarily full'}
+              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' ? 'Your guest AI turns are used' : managedAiLimit === 'TURN_ALLOWANCE_EXHAUSTED' ? 'Your included AI turns are used' : 'Included AI capacity is temporarily full'}
             </h2>
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              {managedAiLimit === 'TURN_ALLOWANCE_EXHAUSTED'
-                ? 'Your account has used its 10 lifetime included AI turns. Your conversation and workspace are still here. Add your own Gemini API key to continue.'
-                : 'The owner-funded Gemini limit has been reached for this month. Your conversation and workspace are preserved. You can continue with your own Gemini API key.'}
+              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED'
+                ? 'You have used your 3 free guest AI turns. Your conversation and local workspace are still here. Sign in for 10 lifetime included turns, or add your own Gemini API key.'
+                : managedAiLimit === 'TURN_ALLOWANCE_EXHAUSTED'
+                  ? 'Your account has used its 10 lifetime included AI turns. Your conversation and workspace are still here. Add your own Gemini API key to continue.'
+                  : 'The owner-funded Gemini limit has been reached for this month. Your conversation and workspace are preserved. You can continue with your own Gemini API key.'}
             </p>
-            <div className="mt-6 flex justify-end gap-3">
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
               <button type="button" onClick={() => setManagedAiLimit(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Later</button>
-              <button type="button" onClick={() => { setManagedAiLimit(null); setView('settings'); }} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">Open Gemini settings</button>
+              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' && <button type="button" onClick={() => { setManagedAiLimit(null); setShowAuthModal(true); }} className="rounded-lg border border-emerald-700 px-4 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-950">Sign in for 10 turns</button>}
+              <button type="button" onClick={() => { setManagedAiLimit(null); setView('settings'); }} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">Add your Gemini key</button>
             </div>
           </section>
         </div>

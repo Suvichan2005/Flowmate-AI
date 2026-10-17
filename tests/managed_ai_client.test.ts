@@ -1,17 +1,29 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { auth, getFirebaseAppCheckToken } from '../services/firebase';
+import { getFirebaseAppCheckToken, getManagedAiUser, isFirebaseConfigured } from '../services/firebase';
 import { generateManagedContent, hasManagedAiIdentity, ManagedAiError } from '../services/ai/managedClient';
 
+const mocked = vi.hoisted(() => ({ user: null as { emailVerified: boolean; getIdToken: (forceRefresh?: boolean) => Promise<string> } | null }));
+
 vi.mock('../services/firebase', () => ({
-  auth: { currentUser: null },
+  auth: { get currentUser() { return mocked.user; } },
+  getManagedAiUser: vi.fn(async () => mocked.user),
+  isFirebaseConfigured: vi.fn(() => true),
   getFirebaseAppCheckToken: vi.fn().mockResolvedValue(null),
 }));
 
-const mockedAuth = auth as unknown as { currentUser: { getIdToken: () => Promise<string> } | null };
+const mockedManagedUser = vi.mocked(getManagedAiUser);
+const mockedFirebaseConfigured = vi.mocked(isFirebaseConfigured);
 const mockedAppCheck = vi.mocked(getFirebaseAppCheckToken);
 
 describe('managed AI browser client', () => {
-  afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); mockedAuth.currentUser = null; mockedAppCheck.mockResolvedValue(null); });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    mocked.user = null;
+    mockedManagedUser.mockImplementation(async () => mocked.user as never);
+    mockedFirebaseConfigured.mockReturnValue(true);
+    mockedAppCheck.mockResolvedValue(null);
+  });
 
   it('requires Firebase identity before sending a request', async () => {
     vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
@@ -26,21 +38,21 @@ describe('managed AI browser client', () => {
     vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
     vi.stubEnv('VITE_MANAGED_AI_ENDPOINT', '');
     vi.stubEnv('PROD', false);
-    mockedAuth.currentUser = { getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
+    mocked.user = { emailVerified: true, getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
     expect(hasManagedAiIdentity()).toBe(false);
   });
 
   it('derives the managed endpoint from project and region in production', () => {
     vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
     vi.stubEnv('PROD', true);
-    mockedAuth.currentUser = { getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
+    mocked.user = { emailVerified: true, getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
     expect(hasManagedAiIdentity()).toBe(true);
   });
 
   it('sends verified identity, optional App Check, fixed endpoint, and no caller UID or key', async () => {
     vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
     vi.stubEnv('VITE_MANAGED_AI_ENDPOINT', 'https://asia-south1-flowmate-ai.cloudfunctions.net/managedGemini');
-    mockedAuth.currentUser = { getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
+    mocked.user = { emailVerified: true, getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
     mockedAppCheck.mockResolvedValue('unit-test-app-check');
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true, status: 200,
@@ -67,16 +79,22 @@ describe('managed AI browser client', () => {
   it('preserves typed quota errors for the exhaustion experience', async () => {
     vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
     vi.stubEnv('VITE_MANAGED_AI_ENDPOINT', 'https://asia-south1-flowmate-ai.cloudfunctions.net/managedGemini');
-    mockedAuth.currentUser = { getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
+    mocked.user = { emailVerified: true, getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false, status: 402, json: async () => ({ error: { code: 'TURN_ALLOWANCE_EXHAUSTED' } }),
     }));
-    try {
-      await generateManagedContent([], { systemInstruction: 'x' }, 'turn_0000000000000001', 'call_00000000000001');
-      throw new Error('expected quota rejection');
-    } catch (error) {
-      expect(error).toBeInstanceOf(ManagedAiError);
-      expect(error).toMatchObject({ code: 'TURN_ALLOWANCE_EXHAUSTED', status: 402 });
-    }
+    await expect(generateManagedContent([], { systemInstruction: 'x' }, 'turn_0000000000000001', 'call_00000000000001'))
+      .rejects.toMatchObject({ code: 'TURN_ALLOWANCE_EXHAUSTED', status: 402 });
+  });
+
+  it('preserves the guest-specific exhaustion code for the sign-in offer', async () => {
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_MANAGED_AI_ENDPOINT', 'https://asia-south1-flowmate-ai.cloudfunctions.net/managedGemini');
+    mocked.user = { emailVerified: false, getIdToken: vi.fn().mockResolvedValue('unit-test-guest-token') };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, status: 402, json: async () => ({ error: { code: 'GUEST_TURN_ALLOWANCE_EXHAUSTED' } }),
+    }));
+    await expect(generateManagedContent([], { systemInstruction: 'x' }, 'turn_0000000000000002', 'call_00000000000002'))
+      .rejects.toMatchObject({ code: 'GUEST_TURN_ALLOWANCE_EXHAUSTED', status: 402 });
   });
 });
