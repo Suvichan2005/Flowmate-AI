@@ -15,7 +15,7 @@ import { SkeletonDashboard } from './Skeleton';
 import { CommitmentCard } from './CommitmentCard';
 import { InterruptedDayRecovery } from './InterruptedDayRecovery';
 import { extractMemoryItem } from '../services/context/resolver';
-import { hasAiApiKey } from '../services/ai/client';
+import { hasAiProviderAvailable } from '../services/ai/client';
 
 interface StatCardProps {
     icon: React.ReactNode;
@@ -128,8 +128,12 @@ const InsightModal: React.FC<InsightModalProps> = ({ title, items, onClose, onSe
     );
 };
 
-interface DashboardProps { onOpenGraphFixer?: () => void }
-const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
+type ManagedAiLimit = 'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED' | 'GLOBAL_LIMIT_REACHED';
+interface DashboardProps {
+    onOpenGraphFixer?: () => void;
+    onManagedAiLimit?: (code: ManagedAiLimit) => void;
+}
+const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimit }) => {
     const { entities: rawEntities, kernelEntities, relationships, selectEntity, dailyBriefing, refreshDailyBriefing, setView, addMessage, addToast, setPendingOrchestration, applyOperations, settings, isHydrated } = useStore();
     const entities = useMemo(() => getActiveEntities(rawEntities), [rawEntities]);
     const commitmentEntityIds = useMemo(() => {
@@ -220,8 +224,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
 
     const handleGenerateBriefing = async () => {
         setBriefingLoading(true);
-        await refreshDailyBriefing();
-        setBriefingLoading(false);
+        try {
+            const errorCode = await refreshDailyBriefing();
+            if (errorCode === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' || errorCode === 'TURN_ALLOWANCE_EXHAUSTED' || errorCode === 'GLOBAL_LIMIT_REACHED') {
+                onManagedAiLimit?.(errorCode);
+            } else if (errorCode) {
+                addToast?.('The briefing could not be generated. No local fallback was used; your workspace is unchanged.', 'error');
+            }
+        } finally {
+            setBriefingLoading(false);
+        }
     };
 
     const today = new Date().toISOString().split('T')[0];
@@ -416,9 +428,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                                     return 'Working late?';
                                 })()}
                             </h2>
-                            {!hasAiApiKey() && (
+                            {(dailyBriefing
+                                ? dailyBriefing.source !== 'managed' && dailyBriefing.source !== 'byok'
+                                : !hasAiProviderAvailable()) && (
                                 <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-ideapad-elevated text-ideapad-muted border border-ideapad-border">
-                                    Local rules — not AI generated
+                                    Local summary
                                 </span>
                             )}
                         </div>
@@ -428,9 +442,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                             className="flex items-center justify-center gap-2 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 shadow-lg shadow-emerald-900/40 w-full sm:w-auto self-start sm:self-auto"
                         >
                             {briefingLoading ? <RefreshCw className="animate-spin w-3 h-3" /> : <RefreshCw className="w-3 h-3" />}
-                            {!hasAiApiKey()
+                            {!hasAiProviderAvailable()
                                 ? (dailyBriefing ? "Update Local Briefing" : "Generate Local Briefing")
-                                : (dailyBriefing ? "Regenerate" : "Generate")}
+                                : (dailyBriefing ? "Update Briefing" : "Generate Briefing")}
                         </button>
                     </div>
 
@@ -457,7 +471,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer }) => {
                                 <div className="text-sm">
                                     <p className="text-slate-300 font-medium">Ready to start?</p>
                                     <p className="text-xs mt-0.5">
-                                        {hasAiApiKey()
+                                        {hasAiProviderAvailable()
                                             ? "Generate a briefing to prioritize tasks and review your schedule."
                                             : "Generate a local offline briefing summarizing active tasks and scheduled events."}
                                     </p>

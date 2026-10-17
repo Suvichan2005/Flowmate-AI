@@ -485,6 +485,7 @@ export interface DailyBriefing {
   content: string; // Markdown supported
   timestamp: string;
   generated_for_date: string;
+  source?: 'local' | 'managed' | 'byok';
 }
 
 export interface Toast {

@@ -211,7 +211,7 @@ export interface FlowmateState {
     endFocusSession: () => void;
 
     // AI Actions
-    refreshDailyBriefing: () => Promise<void>;
+    refreshDailyBriefing: () => Promise<string | null>;
 
     // Quick CRUD helpers for the Orchestrator
     findEntityByTitle: (title: string) => Entity | undefined;
@@ -1962,16 +1962,19 @@ export const useStore = create<FlowmateState>()(
                 const today = new Date().toISOString().split('T')[0];
 
                 try {
-                    const content = await generateBriefing({ entities, relationships });
+                    const briefing = await generateBriefing({ entities, relationships });
                     set({
                         dailyBriefing: {
-                            content,
+                            content: briefing.content,
+                            source: briefing.source,
                             timestamp: new Date().toISOString(),
                             generated_for_date: today
                         }
                     });
+                    return null;
                 } catch (err) {
                     console.error("Failed to generate briefing", err);
+                    return (err as { code?: string })?.code || 'GENERATION_FAILED';
                 }
             },
 

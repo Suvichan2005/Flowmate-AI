@@ -502,23 +502,30 @@ export const orchestrateMessage = async (
 // generateBriefing
 // ---------------------------------------------------------------------------
 
+export interface GeneratedBriefing {
+  content: string;
+  source: 'local' | 'managed' | 'byok';
+}
+
 export const generateBriefing = async (
   snapshot: { entities: Entity[]; relationships: Relationship[] },
-): Promise<string> => {
+): Promise<GeneratedBriefing> => {
   const { settings } = useStore.getState();
   const modelName = settings?.preferred_model || DEFAULT_MODEL;
   const timezone = settings.timezone || 'Asia/Kolkata';
   const now = new Date();
+  const useManagedAi = !hasAiApiKey() && hasManagedAiIdentity();
 
-  if (!hasAiApiKey()) {
+  if (!hasAiApiKey() && !useManagedAi) {
     const activeTasks = snapshot.entities.filter(e => e.kind === EntityKind.TASK && e.status === EntityStatus.ACTIVE);
     const eventsToday = snapshot.entities.filter(
       e => e.kind === EntityKind.EVENT && e.start_time && new Date(e.start_time).toDateString() === now.toDateString(),
     );
-    return `Local briefing: you have ${activeTasks.length} active task${activeTasks.length === 1 ? '' : 's'} and ${eventsToday.length} scheduled event${eventsToday.length === 1 ? '' : 's'} today. Calculated from your current workspace, without an AI request.`;
+    return {
+      content: `Local briefing: you have ${activeTasks.length} active task${activeTasks.length === 1 ? '' : 's'} and ${eventsToday.length} scheduled event${eventsToday.length === 1 ? '' : 's'} today. Calculated from your current workspace, without an AI request.`,
+      source: 'local',
+    };
   }
-
-  const ai = getAiClient();
 
   const timeContext = now.toLocaleString('en-US', {
     weekday: 'long',
@@ -554,6 +561,26 @@ export const generateBriefing = async (
     eventsToday: eventsToday.map(e => ({ title: e.title, time: e.start_time })),
   });
 
+  if (useManagedAi) {
+    const turnId = uuidv4();
+    const response = await withRetry(
+      () => generateManagedContent(
+        [{ role: 'user', parts: [{ text: prompt }] }],
+        { temperature: 0.7, maxOutputTokens: 512 },
+        turnId,
+        uuidv4(),
+      ),
+      GEMINI_RETRY_CONFIG,
+      (attempt, error, delay) => {
+        console.warn(`[Managed Gemini Briefing] Retry ${attempt} after ${delay}ms:`, error?.message);
+      },
+    );
+    const content = response.text.trim();
+    if (!content) throw new ManagedAiError('GENERATION_FAILED', 502);
+    return { content, source: 'managed' };
+  }
+
+  const ai = getAiClient();
   try {
     const response = await withRetry(
       () =>
@@ -567,10 +594,12 @@ export const generateBriefing = async (
         console.warn(`[Gemini Briefing] Retry ${attempt} after ${delay}ms`);
       },
     );
-    return response.text || 'Could not generate briefing.';
+    const content = response.text?.trim();
+    if (!content) throw new Error('Gemini returned an empty briefing.');
+    return { content, source: 'byok' };
   } catch (err) {
     console.error('Briefing generation failed:', err);
-    return 'Unable to connect to AI for briefing.';
+    throw err;
   }
 };
 
