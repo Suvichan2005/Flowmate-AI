@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
-import { getFirestore, Timestamp, type Firestore, type DocumentReference } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp, type Firestore, type DocumentData, type DocumentReference } from 'firebase-admin/firestore';
 import { RequestFailure, MAX_CALLS_PER_TURN, MONTHLY_GENERATION_LIMIT, RATE_LIMIT_PER_MINUTE, TURN_RESERVATION_TTL_MS, USER_TURN_LIMIT, monthKey } from './policy.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export interface TurnLedgerRefs {
+  uid: string;
   user: DocumentReference;
   turn: DocumentReference;
   call: DocumentReference;
@@ -13,6 +14,7 @@ export interface TurnLedgerRefs {
 
 export function turnLedgerRefs(db: Firestore, uid: string, turnId: string, callId: string, date = new Date()): TurnLedgerRefs {
   return {
+    uid,
     user: db.doc(`managedAiUsers/${uid}`),
     turn: db.doc(`managedAiTurns/${hash(`${uid}:${turnId}`)}`),
     call: db.doc(`managedAiCalls/${hash(`${uid}:${turnId}:${callId}`)}`),
@@ -21,12 +23,20 @@ export function turnLedgerRefs(db: Firestore, uid: string, turnId: string, callI
   };
 }
 
+function isManagedAiEnabledForUid(control: DocumentData | undefined, uid: string): boolean {
+  if (control?.enabled !== true) return false;
+  if (control.mode === 'general') return true;
+  return control.mode === 'test'
+    && Array.isArray(control.allowedTestUids)
+    && control.allowedTestUids.includes(uid);
+}
+
 export async function reserveTurn(db: Firestore, refs: TurnLedgerRefs, now = Date.now()): Promise<void> {
   await db.runTransaction(async transaction => {
     const [control, user, turn, call] = await Promise.all([
       transaction.get(refs.control), transaction.get(refs.user), transaction.get(refs.turn), transaction.get(refs.call),
     ]);
-    if (control.get('enabled') !== true) throw new RequestFailure('MANAGED_AI_DISABLED', 503);
+    if (!isManagedAiEnabledForUid(control.data(), refs.uid)) throw new RequestFailure('MANAGED_AI_DISABLED', 503);
     if (call.exists) throw new RequestFailure('REQUEST_ALREADY_PROCESSED', 409);
     const userData = user.data() || {};
     const turnData = turn.data() || {};
@@ -67,7 +77,7 @@ export async function reserveGenerationCall(db: Firestore, refs: TurnLedgerRefs)
     const [control, monthly, call] = await Promise.all([
       transaction.get(refs.control), transaction.get(refs.month), transaction.get(refs.call),
     ]);
-    if (control.get('enabled') !== true) throw new RequestFailure('MANAGED_AI_DISABLED', 503);
+    if (!isManagedAiEnabledForUid(control.data(), refs.uid)) throw new RequestFailure('MANAGED_AI_DISABLED', 503);
     if (call.exists) throw new RequestFailure('REQUEST_ALREADY_PROCESSED', 409);
     const callsReserved = Number(monthly.get('callsReserved') || 0);
     if (callsReserved >= MONTHLY_GENERATION_LIMIT) throw new RequestFailure('GLOBAL_LIMIT_REACHED', 429);

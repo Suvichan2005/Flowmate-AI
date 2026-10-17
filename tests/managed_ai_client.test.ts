@@ -24,6 +24,7 @@ describe('managed AI browser client', () => {
 
   it('does not route local development to the production managed endpoint by default', () => {
     vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_MANAGED_AI_ENDPOINT', '');
     vi.stubEnv('PROD', false);
     mockedAuth.currentUser = { getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
     expect(hasManagedAiIdentity()).toBe(false);

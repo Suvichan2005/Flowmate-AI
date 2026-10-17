@@ -52,7 +52,7 @@ describe('Firebase App Check provider wiring', () => {
     expect(initializeAppCheck).toHaveBeenCalledOnce();
     const options = vi.mocked(initializeAppCheck).mock.calls[0][1];
     expect(options.provider).toBeInstanceOf(ReCaptchaEnterpriseProvider);
-    expect((options.provider as InstanceType<typeof ReCaptchaEnterpriseProvider>).siteKey).toBe('public-test-site-key');
+    expect((options.provider as unknown as { siteKey: string }).siteKey).toBe('public-test-site-key');
     expect(options.isTokenAutoRefreshEnabled).toBe(true);
   });
 });

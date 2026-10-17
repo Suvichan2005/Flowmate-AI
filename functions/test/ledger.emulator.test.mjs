@@ -24,8 +24,25 @@ test('managed requests reject caller-supplied UID, owner, entity, or workspace a
   }
 });
 
-before(async () => { await db.doc('system/managedAi').set({ enabled: true }); });
+before(async () => { await db.doc('system/managedAi').set({ enabled: true, mode: 'general' }); });
 after(async () => { await db.terminate(); });
+
+test('test mode allows only explicit synthetic UIDs and fails closed for others', async () => {
+  const allowedUid = uid();
+  const blockedUid = uid();
+  await db.doc('system/managedAi').set({ enabled: true, mode: 'test', allowedTestUids: [allowedUid] });
+
+  const allowed = turnLedgerRefs(db, allowedUid, 'turn_allowlisted_0001', 'call_allowlisted_00001');
+  await reserveTurn(db, allowed);
+  assert.equal((await db.doc(`managedAiUsers/${allowedUid}`).get()).exists, true);
+
+  const blocked = turnLedgerRefs(db, blockedUid, 'turn_blocked_uid_0001', 'call_blocked_uid_00001');
+  await assert.rejects(reserveTurn(db, blocked), error => error.code === 'MANAGED_AI_DISABLED');
+  await assert.rejects(reserveGenerationCall(db, blocked), error => error.code === 'MANAGED_AI_DISABLED');
+  assert.equal((await db.doc(`managedAiUsers/${blockedUid}`).get()).exists, false);
+  await failTurn(db, allowed, false);
+  await db.doc('system/managedAi').set({ enabled: true, mode: 'general' });
+});
 
 test('only one overlapping reservation succeeds for a UID', async () => {
   const userId = uid();

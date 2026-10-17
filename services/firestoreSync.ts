@@ -670,7 +670,7 @@ export async function saveUserConfig(
 
     try {
         await setDoc(userDoc(userId), {
-            ...config,
+            ...sanitizeForFirestore(config),
             lastSyncedAt: serverTimestamp(),
             schemaVersion: 2,
         }, { merge: true });
