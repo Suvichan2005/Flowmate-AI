@@ -87,6 +87,16 @@ test('unverified email/password accounts are rejected before any usage reservati
   assert.equal((await db.doc(`managedAiUsers/${unverifiedAccountUid}`).get()).exists, false);
 });
 
+test('admin access route rejects guests before reading or changing privileged records', { skip: appCheckRequired }, async () => {
+  const response = await fetch(`${endpoint}/admin/access`, {
+    method: 'GET', headers: {
+      Origin: 'https://flowmate-ai.web.app', Authorization: `Bearer ${anonymousIdToken}`,
+    },
+  });
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).error.code, 'ADMIN_REQUIRED');
+});
+
 test('anonymous identity with missing or invalid App Check remains unreserved', { skip: !appCheckRequired }, async () => {
   const body = JSON.stringify({
     turnId: 'turn_guest_appcheck_0001', callId: 'call_guest_appcheck_0001',

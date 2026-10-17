@@ -151,10 +151,26 @@ const getManagedAiGuestAuth = (): Auth | null => {
 
 /** Returns the verified account identity or silently creates a persistent guest identity for AI only. */
 export const getManagedAiUser = async (): Promise<User | null> => {
-    const signedInUser = auth?.currentUser;
+    // Firebase restores browser-persistent Auth asynchronously after page load.
+    // Wait for that first state before deciding this visitor needs an isolated
+    // anonymous AI identity; otherwise a verified session can race guest creation.
+    if (!auth) return null;
+    try {
+        await auth.authStateReady();
+    } catch {
+        return null;
+    }
+    const signedInUser = auth.currentUser;
     if (signedInUser?.emailVerified) return signedInUser;
     const guestAuth = getManagedAiGuestAuth();
     if (!guestAuth) return null;
+    try {
+        // Apply the same hydration barrier to the separate guest app so an ordinary
+        // reload reuses its persisted UID instead of racing a second anonymous login.
+        await guestAuth.authStateReady();
+    } catch {
+        return null;
+    }
     if (guestAuth.currentUser) return guestAuth.currentUser;
     try {
         return (await signInAnonymously(guestAuth)).user;

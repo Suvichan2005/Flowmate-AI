@@ -24,14 +24,19 @@ test('managed requests reject caller-supplied UID, owner, entity, or workspace a
   }
 });
 
-before(async () => { await db.doc('system/managedAi').set({ enabled: true, mode: 'general' }); });
+before(async () => {
+  for (const collection of await db.listCollections()) {
+    for (const document of await collection.listDocuments()) await document.delete();
+  }
+  await db.doc('system/managedAi').set({ enabled: true, mode: 'general' });
+});
 after(async () => { await db.terminate(); });
 
-test('test mode allows only explicit synthetic UIDs or exact synthetic email claims', async () => {
+test('test mode never grants access based on email alone', async () => {
   const allowedUid = uid();
   const blockedUid = uid();
   const allowedEmail = 'flowmate-managed-ai-smoke@example.com';
-  await db.doc('system/managedAi').set({ enabled: true, mode: 'test', allowedTestEmails: [allowedEmail] });
+  await db.doc('system/managedAi').set({ enabled: true, mode: 'test', allowedTestUids: [allowedUid] });
 
   const allowed = turnLedgerRefs(db, allowedUid, 'turn_allowlisted_0001', 'call_allowlisted_00001', new Date(), allowedEmail);
   await reserveTurn(db, allowed);
@@ -43,6 +48,48 @@ test('test mode allows only explicit synthetic UIDs or exact synthetic email cla
   assert.equal((await db.doc(`managedAiUsers/${blockedUid}`).get()).exists, false);
   await failTurn(db, allowed, false);
   await db.doc('system/managedAi').set({ enabled: true, mode: 'general' });
+});
+
+test('privileged UID access bypasses lifetime turns, records usage, and revocation applies immediately', async () => {
+  const privilegedUid = uid();
+  const email = 'owner-approved@example.test';
+  await db.doc('system/managedAi').set({ enabled: true, mode: 'general' });
+  await db.doc(`managedAiAllowlist/${privilegedUid}`).set({ uid: privilegedUid, emailLower: email, status: 'active' });
+
+  for (let index = 0; index < 11; index += 1) {
+    const suffix = String(index).padStart(8, '0');
+    const refs = turnLedgerRefs(db, privilegedUid, `privileged_turn_${suffix}`, `privileged_call_${suffix}`, new Date(), email, 'account', 50);
+    await reserveTurn(db, refs);
+    await reserveGenerationCall(db, refs);
+    await finishTurn(db, refs, true);
+  }
+  assert.equal((await db.doc(`managedAiPrivilegedUsers/${privilegedUid}`).get()).get('successfulTurns'), 11);
+  assert.equal((await db.doc(`managedAiUsers/${privilegedUid}`).get()).exists, false);
+
+  await db.doc(`managedAiAllowlist/${privilegedUid}`).set({ status: 'revoked' }, { merge: true });
+  const revoked = turnLedgerRefs(db, privilegedUid, 'privileged_revoked_0001', 'privileged_revoked_00001', new Date(), email, 'account', 50);
+  await reserveTurn(db, revoked);
+  assert.equal(revoked.isPrivileged, false);
+  assert.equal((await db.doc(`managedAiUsers/${privilegedUid}`).get()).get('reservedTurns'), 1);
+  await failTurn(db, revoked, false);
+});
+
+test('privileged monthly safety budget admits exactly 50 actual-call reservations', async () => {
+  const monthRef = db.doc('managedAiPrivilegedMonthly/' + monthKey(new Date()));
+  await monthRef.set({ callsReserved: 49 });
+  const refsList = await Promise.all(Array.from({ length: 12 }, async (_, index) => {
+    const userId = uid();
+    const email = `budget-owner-${index}@example.test`;
+    await db.doc(`managedAiAllowlist/${userId}`).set({ uid: userId, emailLower: email, status: 'active' });
+    const suffix = String(index).padStart(8, '0');
+    const refs = turnLedgerRefs(db, userId, `privileged_budget_turn_${suffix}`, `privileged_budget_call_${suffix}`, new Date(), email, 'account', 50);
+    await reserveTurn(db, refs);
+    return refs;
+  }));
+  const attempts = await Promise.allSettled(refsList.map(refs => reserveGenerationCall(db, refs)));
+  assert.equal(attempts.filter(attempt => attempt.status === 'fulfilled').length, 1);
+  assert.equal(attempts.filter(attempt => attempt.status === 'rejected' && attempt.reason.code === 'GLOBAL_LIMIT_REACHED').length, 11);
+  assert.equal((await monthRef.get()).get('callsReserved'), 50);
 });
 
 test('only one overlapping reservation succeeds for a UID', async () => {

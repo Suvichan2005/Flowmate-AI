@@ -18,6 +18,7 @@ import {
 import { UserSettings, FeatureToggles } from '../types';
 import { getEphemeralApiKey, setEphemeralApiKey, hasAiApiKey } from '../services/ai/client';
 import { hasManagedAiIdentity } from '../services/ai/managedClient';
+import ManagedAiAdminPanel from './ManagedAiAdminPanel';
 
 const DEFAULT_FEATURE_TOGGLES: FeatureToggles = {
   food_tracking: true,
@@ -319,6 +320,8 @@ const SettingsView: React.FC = () => {
             </div>
           </div>
         </section>
+
+        <ManagedAiAdminPanel />
 
         {/* Feature Toggles */}
         <section>

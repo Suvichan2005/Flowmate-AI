@@ -4,17 +4,19 @@ import { getAuth } from 'firebase-admin/auth';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { GoogleGenAI, type Content } from '@google/genai';
-import { defineBoolean, defineString, defineSecret } from 'firebase-functions/params';
+import { defineBoolean, defineInt, defineString, defineSecret } from 'firebase-functions/params';
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
 import type { Request, Response } from 'express';
 import { MAX_INPUT_TOKENS, MODEL, RequestFailure, isCompletedUserTurn, managedGenerationConfig, sanitizeManagedCandidates, validateGenerationBody } from './policy.js';
 import { failTurn, finishTurn, reserveGenerationCall, reserveTurn, turnLedgerRefs } from './ledger.js';
+import { handleManagedAiAdmin } from './admin.js';
 
 if (getApps().length === 0) initializeApp();
 const db = getFirestore();
 const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
 const APP_CHECK_REQUIRED = defineBoolean('APP_CHECK_REQUIRED', { default: false });
+const PRIVILEGED_MONTHLY_LIMIT = defineInt('FLOWMATE_PRIVILEGED_MONTHLY_LIMIT', { default: 50 });
 const ALLOWED_ORIGINS = defineString('FLOWMATE_ALLOWED_ORIGINS', {
   default: 'https://flowmate-ai.web.app,https://flowmate-ai.firebaseapp.com,http://localhost:5173,http://127.0.0.1:5173',
 });
@@ -48,14 +50,21 @@ export const managedGemini = onRequest({
 }, async (req, res) => {
   if (!allowOrigin(req, res)) { res.status(403).end(); return; }
   if (req.method === 'OPTIONS') {
-    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Firebase-AppCheck');
     res.status(204).end(); return;
   }
-  if (req.method !== 'POST') { res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return; }
+  if (req.path === '/admin/access') {
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return;
+    }
+  } else if (req.method !== 'POST') {
+    res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return;
+  }
 
   let uid: string;
   let email: string | undefined;
+  let emailVerified = false;
   let allowance: 'guest' | 'account';
   try {
     const authorization = req.get('authorization') || '';
@@ -63,8 +72,9 @@ export const managedGemini = onRequest({
     const decoded = await getAuth().verifyIdToken(authorization.slice(7), true);
     uid = decoded.uid;
     email = decoded.email;
+    emailVerified = decoded.email_verified === true;
     allowance = decoded.firebase?.sign_in_provider === 'anonymous' ? 'guest' : 'account';
-    if (allowance === 'account' && decoded.email_verified !== true) {
+    if (allowance === 'account' && !emailVerified) {
       throw new RequestFailure('EMAIL_VERIFICATION_REQUIRED', 403);
     }
   } catch (error) {
@@ -79,12 +89,19 @@ export const managedGemini = onRequest({
     catch { sendError(res, new RequestFailure('APP_CHECK_REQUIRED', 401)); return; }
   }
 
+  if (req.path === '/admin/access') {
+    await handleManagedAiAdmin(db, req, res, {
+      uid, email, emailVerified, anonymous: allowance === 'guest',
+    }, PRIVILEGED_MONTHLY_LIMIT.value());
+    return;
+  }
+
   let input: ReturnType<typeof validateGenerationBody>;
   try { input = validateGenerationBody(req.body); }
   catch (error) { sendError(res, error); return; }
 
   const currentTime = nowMs();
-  const refs = turnLedgerRefs(db, uid, input.turnId, input.callId, new Date(currentTime), email, allowance);
+  const refs = turnLedgerRefs(db, uid, input.turnId, input.callId, new Date(currentTime), email, allowance, PRIVILEGED_MONTHLY_LIMIT.value());
   let turnReserved = false;
   let callReserved = false;
 

@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const authMocks = vi.hoisted(() => ({
+  primaryAuth: { currentUser: null as unknown, authStateReady: vi.fn().mockResolvedValue(undefined) },
+  guestAuth: { currentUser: null as unknown, authStateReady: vi.fn().mockResolvedValue(undefined) },
+  signInAnonymously: vi.fn().mockResolvedValue({ user: { uid: 'guest-user' } }),
+}));
+
 vi.mock('firebase/app', () => ({
   getApps: () => [],
-  initializeApp: vi.fn(() => ({ name: 'flowmate-app-check-test' })),
+  initializeApp: vi.fn((_config, name) => ({ name: name || 'flowmate-app-check-test' })),
 }));
 
 vi.mock('firebase/app-check', () => ({
@@ -17,10 +23,11 @@ vi.mock('firebase/app-check', () => ({
 }));
 
 vi.mock('firebase/auth', () => ({
-  getAuth: vi.fn(() => ({})),
-  initializeAuth: vi.fn(() => ({})),
+  getAuth: vi.fn(app => app.name === 'flowmate-managed-ai-guest' ? authMocks.guestAuth : authMocks.primaryAuth),
+  initializeAuth: vi.fn(app => app.name === 'flowmate-managed-ai-guest' ? authMocks.guestAuth : authMocks.primaryAuth),
   browserLocalPersistence: 'browser-local-persistence',
   setPersistence: vi.fn().mockResolvedValue(undefined),
+  signInAnonymously: authMocks.signInAnonymously,
   signInWithEmailAndPassword: vi.fn().mockResolvedValue({ user: { uid: 'test-user' } }),
   createUserWithEmailAndPassword: vi.fn(),
   signInWithPopup: vi.fn(),
@@ -40,6 +47,11 @@ describe('Firebase App Check provider wiring', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
+    authMocks.primaryAuth.currentUser = null;
+    authMocks.guestAuth.currentUser = null;
+    authMocks.primaryAuth.authStateReady.mockReset().mockResolvedValue(undefined);
+    authMocks.guestAuth.authStateReady.mockReset().mockResolvedValue(undefined);
+    authMocks.signInAnonymously.mockReset().mockResolvedValue({ user: { uid: 'guest-user' } });
   });
 
   it('uses the registered Enterprise provider and automatically refreshes tokens', async () => {
@@ -77,5 +89,51 @@ describe('Firebase App Check provider wiring', () => {
     expect(vi.mocked(setPersistence).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(signInWithEmailAndPassword).mock.invocationCallOrder[0],
     );
+  });
+
+  it('waits for restored primary Auth before selecting a guest identity', async () => {
+    vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
+    vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
+
+    let restorePrimary!: () => void;
+    authMocks.primaryAuth.authStateReady.mockImplementation(() => new Promise<void>(resolve => { restorePrimary = resolve; }));
+    const { getManagedAiUser } = await import('../services/firebase');
+    const restoredUser = { uid: 'verified-user', emailVerified: true };
+    const pendingUser = getManagedAiUser();
+
+    expect(authMocks.primaryAuth.authStateReady).toHaveBeenCalledOnce();
+    expect(authMocks.signInAnonymously).not.toHaveBeenCalled();
+    authMocks.primaryAuth.currentUser = restoredUser;
+    restorePrimary();
+
+    await expect(pendingUser).resolves.toBe(restoredUser);
+    expect(authMocks.signInAnonymously).not.toHaveBeenCalled();
+    expect(authMocks.guestAuth.authStateReady).not.toHaveBeenCalled();
+  });
+
+  it('waits for the persisted guest Auth identity before creating another one', async () => {
+    vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
+    vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
+
+    let restoreGuest!: () => void;
+    authMocks.guestAuth.authStateReady.mockImplementation(() => new Promise<void>(resolve => { restoreGuest = resolve; }));
+    const { getManagedAiUser } = await import('../services/firebase');
+    authMocks.primaryAuth.currentUser = null;
+    const persistedGuest = { uid: 'persisted-guest', emailVerified: false };
+    const pendingUser = getManagedAiUser();
+
+    expect(authMocks.primaryAuth.authStateReady).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    expect(authMocks.guestAuth.authStateReady).toHaveBeenCalledOnce();
+    expect(authMocks.signInAnonymously).not.toHaveBeenCalled();
+    authMocks.guestAuth.currentUser = persistedGuest;
+    restoreGuest();
+
+    await expect(pendingUser).resolves.toBe(persistedGuest);
+    expect(authMocks.signInAnonymously).not.toHaveBeenCalled();
   });
 });
