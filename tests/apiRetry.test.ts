@@ -109,6 +109,14 @@ describe('API Retry Utilities', () => {
             expect(fn).toHaveBeenCalledTimes(1);
         });
 
+        it('does not retry permanent managed-AI gates despite retryable HTTP status', async () => {
+            const disabled = { code: 'MANAGED_AI_DISABLED', status: 503 };
+            const fn = vi.fn().mockRejectedValue(disabled);
+
+            await expect(withRetry(fn, { nonRetryableCodes: ['MANAGED_AI_DISABLED'] })).rejects.toBe(disabled);
+            expect(fn).toHaveBeenCalledTimes(1);
+        });
+
         it('exhausts retries and throws', async () => {
             // Use real timers for this test since the async timing with fake timers is tricky
             vi.useRealTimers();

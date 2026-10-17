@@ -19,6 +19,8 @@ export interface RetryConfig {
     retryableStatusCodes: number[];
     /** Error types/names that should trigger a retry */
     retryableErrors: string[];
+    /** Application/provider codes that must never be retried, even with a retryable HTTP status */
+    nonRetryableCodes: string[];
 }
 
 export const DEFAULT_RETRY_CONFIG: RetryConfig = {
@@ -29,6 +31,7 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
     jitter: true,
     retryableStatusCodes: [408, 429, 500, 502, 503, 504],
     retryableErrors: ['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'NetworkError', 'AbortError'],
+    nonRetryableCodes: [],
 };
 
 /**
@@ -67,6 +70,11 @@ export function isRetryableError(
     error: any,
     config: RetryConfig = DEFAULT_RETRY_CONFIG
 ): boolean {
+    const errorCode = error?.code;
+    if (typeof errorCode === 'string' && config.nonRetryableCodes.includes(errorCode)) {
+        return false;
+    }
+
     // Check HTTP status codes
     const status = error?.status || error?.response?.status;
     if (status && config.retryableStatusCodes.includes(status)) {

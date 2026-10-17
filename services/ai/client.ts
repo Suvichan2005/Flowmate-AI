@@ -69,6 +69,7 @@ export const GEMINI_RETRY_CONFIG: Partial<RetryConfig> = {
     'DEADLINE_EXCEEDED',
     'NetworkError',
   ],
+  nonRetryableCodes: ['MANAGED_AI_DISABLED', 'GLOBAL_LIMIT_REACHED'],
 };
 
 // ---------------------------------------------------------------------------
