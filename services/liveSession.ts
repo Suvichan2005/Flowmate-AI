@@ -1,17 +1,22 @@
 import { 
+  Behavior,
   GoogleGenAI, 
   LiveServerMessage, 
   Modality, 
+  ThinkingLevel,
   Type, 
   FunctionDeclaration,
-  Session
+  Session,
+  type LiveConnectConfig,
 } from "@google/genai";
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from "../store";
 import { EntityKind, ToonOperation, UserSettings } from "../types";
-import { getAiClient, hasAiApiKey, AI_MODELS } from './ai/client';
+import { getByokLiveClient, getByokLiveModelOptions, getEphemeralApiKey, hasAiApiKey, AI_MODELS } from './ai/client';
+import { createManagedLiveSession, endManagedLiveSession, hasManagedAiIdentity } from './ai/managedClient';
 import { contextResolver, selectEligibleMemories, isEntityExcludedFromEgress } from './context';
 import { convertOperationsToActionProposal } from './kernel';
+import { getOptedInOnboardingContext } from './onboardingProfile';
 
 const MODEL_NAME = AI_MODELS.LIVE;
 
@@ -271,6 +276,9 @@ const recordCommitmentEvidenceTool: FunctionDeclaration = {
 
 export class LiveManager {
   private ai: GoogleGenAI;
+  private managedSessionId: string | null = null;
+  private liveSessionReady = false;
+  private liveUsage: Record<string, unknown> | null = null;
   private inputContext: AudioContext | null = null;
   private outputContext: AudioContext | null = null;
   private processor: ScriptProcessorNode | null = null;
@@ -286,6 +294,7 @@ export class LiveManager {
   public onStatusChange: (status: LiveVoiceStatus, details?: string) => void = () => {};
   public onTranscription: (text: string, source: 'user' | 'model') => void = () => {};
   public onPendingOpsChange?: (ops: ToonOperation[]) => void;
+  public onUsageChange: (usage: Record<string, unknown> | null) => void = () => {};
 
   // Turn buffers for saving to store messages
   private userTurnBuffer: string = '';
@@ -293,9 +302,15 @@ export class LiveManager {
   private turnPendingOps: ToonOperation[] = [];
   private lastTurnMessageId: string = '';
   private currentStatus: LiveVoiceStatus = 'idle';
+  private liveModel: 'gemini-3.8-live' | 'gemini-3.8-live-extended-thinking' = MODEL_NAME;
+  private liveConfig: LiveConnectConfig | null = null;
+  private resumptionHandle: string | null = null;
+  private resumeAttempts = 0;
+  private reconnecting = false;
+  private intentionallyStopped = false;
 
   constructor() {
-    this.ai = getAiClient();
+    this.ai = getByokLiveClient();
   }
 
   public getStatus(): LiveVoiceStatus {
@@ -307,22 +322,104 @@ export class LiveManager {
     this.onStatusChange(status, details);
   }
 
+  private openLiveConnection(resumptionHandle?: string): Promise<Session> {
+    if (!this.liveConfig) return Promise.reject(new Error('Live session configuration is unavailable.'));
+    const config: LiveConnectConfig = {
+      ...this.liveConfig,
+      sessionResumption: resumptionHandle ? { handle: resumptionHandle } : {},
+    };
+    return this.ai.live.connect({
+      model: this.liveModel,
+      config,
+      callbacks: {
+        onopen: () => this.setStatus('connecting', 'Connected to Gemini Live; waiting for session setup.'),
+        onmessage: async (message: LiveServerMessage) => { await this.handleMessage(message); },
+        onclose: () => { void this.handleUnexpectedDisconnect(); },
+        onerror: () => { void this.handleUnexpectedDisconnect(); },
+      },
+    });
+  }
+
+  private async handleUnexpectedDisconnect(): Promise<void> {
+    this.flushBuffers();
+    if (this.reconnecting) return;
+    if (this.intentionallyStopped) {
+      this.cleanup();
+      this.setStatus('disconnected');
+      return;
+    }
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      this.liveSessionReady = false;
+      this.stopAllAudioPlayback();
+      this.stopMicrophoneCapture();
+      this.setStatus('offline_fallback', 'Connection lost. Flowmate will try to resume when the device reconnects.');
+      return;
+    }
+    if (this.resumptionHandle && this.resumeAttempts < 2) {
+      await this.resumeLiveConnection();
+      return;
+    }
+    this.setStatus('error', 'The Live session ended and could not be resumed. Retry to start a new session.');
+    this.cleanup();
+  }
+
+  private async resumeLiveConnection(): Promise<void> {
+    if (!this.resumptionHandle || !this.liveConfig || this.reconnecting || this.intentionallyStopped || this.resumeAttempts >= 2) return;
+    const handle = this.resumptionHandle;
+    this.reconnecting = true;
+    this.resumeAttempts += 1;
+    this.liveSessionReady = false;
+    this.setStatus('connecting', 'Resuming your Gemini Live session…');
+    const previous = this.session;
+    this.session = null;
+    try { previous?.close(); } catch { /* The transport may already be closed. */ }
+    try {
+      await new Promise(resolve => window.setTimeout(resolve, 150));
+      if (!this.stream) this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.session = await this.openLiveConnection(handle);
+      if (this.liveSessionReady) this.startAudioInput();
+    } catch {
+      this.setStatus('error', 'Live session resumption failed. Retry to start a new session.');
+      this.cleanup();
+    } finally {
+      this.reconnecting = false;
+    }
+  }
+
   private handleOnline = () => {
     if (this.currentStatus === 'offline_fallback') {
-      this.setStatus('idle', 'Network reconnected');
+      if (this.resumptionHandle) void this.resumeLiveConnection();
+      else {
+        this.setStatus('error', 'Network restored, but this Live session has no resumable checkpoint. Retry to start a new session.');
+        this.cleanup();
+      }
     }
   };
 
   private handleOffline = () => {
     this.stopAllAudioPlayback();
+    this.stopMicrophoneCapture();
     this.setStatus('offline_fallback', 'Network connection lost. Live voice requires an active internet connection.');
   };
 
+  private stopMicrophoneCapture() {
+    if (this.processor) {
+      this.processor.onaudioprocess = null;
+      this.processor.disconnect();
+      this.processor = null;
+    }
+    this.source?.disconnect();
+    this.source = null;
+    this.stream?.getTracks().forEach(track => track.stop());
+    this.stream = null;
+  }
+
   async connect() {
     try {
-      // 0a. API Key Check
-      if (!hasAiApiKey()) {
-        this.setStatus('offline_fallback', 'Gemini Live requires a Gemini API key. Local workspace features remain available.');
+      this.intentionallyStopped = false;
+      this.resumeAttempts = 0;
+      if (!hasAiApiKey() && !hasManagedAiIdentity()) {
+        this.setStatus('error', 'Gemini Live is unavailable because no managed session or personal Gemini key is configured.');
         return;
       }
 
@@ -342,6 +439,8 @@ export class LiveManager {
 
       // Fetch User Settings & Context
       const settings = useStore.getState().settings || ({} as Partial<UserSettings>);
+      const liveModel = settings.preferred_live_model || MODEL_NAME;
+      const liveReasoning = settings.preferred_live_reasoning_level || 'medium';
 
       // P1-07 Unified Context & Memory Engine for Voice Session
       const resolved = await contextResolver.resolveContext({ source: 'voice_session' });
@@ -353,6 +452,8 @@ export class LiveManager {
       
       const systemInstructionText = `${voiceContextSummary}
 
+${getOptedInOnboardingContext(useStore.getState().currentUser?.uid || 'guest')}
+
 DOMAIN ARCHITECTURE & CAPABILITIES:
 - Calendar & Scheduling: Flowmate's calendar and daily timeline are directly populated by EVENT entities. When scheduling any event, journey/travel, meeting, or timed block, invoke the \`schedule_event\` tool with precise ISO 8601 \`start_time\` and \`end_time\` calculated in local timezone (+05:30).
 - Actions & Operations: Tool calls generate interactive confirmation previews on the user's screen before persisting changes. User authority is strictly preserved.
@@ -360,6 +461,14 @@ DOMAIN ARCHITECTURE & CAPABILITIES:
 - Activity Logging: Track habits and tasks with \`log_activity\` including duration and productivity classification (PRODUCTIVE, NEUTRAL, UNPRODUCTIVE).
 - Memory & Preferences: When user states preferences, routines, or durable facts, invoke \`propose_memory_update\` to stage for user confirmation.
 ${customInst}`;
+
+      if (hasAiApiKey()) {
+        const availableModels = await getByokLiveModelOptions();
+        if (!availableModels.some(option => option.id === liveModel)) {
+          throw new Error(`The saved Live model “${liveModel}” is not available to the current key. Select a model shown in Settings; Flowmate did not switch models.`);
+        }
+        this.ai = getByokLiveClient();
+      }
       
       // 1. Audio Setup (ZERO any)
       type WindowWithWebkitAudio = Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
@@ -380,63 +489,49 @@ ${customInst}`;
       }
 
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      const declarations: FunctionDeclaration[] = [
+        scheduleEventTool, createEntityTool, logActivityTool, readCalendarTool,
+        searchEntitiesTool, searchMemoryTool, proposeMemoryUpdateTool, recordCommitmentEvidenceTool,
+      ];
+      if (!hasAiApiKey()) {
+        const grant = await createManagedLiveSession(
+          liveModel,
+          liveReasoning,
+          systemInstructionText,
+          declarations.map(declaration => ({
+            name: declaration.name || '',
+            description: declaration.description || '',
+            parameters: (declaration.parameters || {}) as Record<string, unknown>,
+          })),
+        );
+        this.ai = new GoogleGenAI({ apiKey: grant.token, httpOptions: { apiVersion: 'v1beta' } });
+        this.managedSessionId = grant.sessionId;
+      } else if (!getEphemeralApiKey()) {
+        throw new Error('The personal Gemini key is no longer available in this browser session. Re-enter it in Settings.');
+      }
       
       // 2. Connect to Gemini Live
-      const sessionPromise = this.ai.live.connect({
-        model: MODEL_NAME,
-        config: {
+      this.liveModel = liveModel;
+      this.liveConfig = {
           responseModalities: [Modality.AUDIO],
           inputAudioTranscription: {},
           outputAudioTranscription: {},
-          tools: [{
-            functionDeclarations: [
-              scheduleEventTool,
-              createEntityTool,
-              logActivityTool,
-              readCalendarTool,
-              searchEntitiesTool,
-              searchMemoryTool,
-              proposeMemoryUpdateTool,
-              recordCommitmentEvidenceTool
-            ]
-          }],
+          tools: [{ functionDeclarations: declarations.map(declaration => ({
+            ...declaration,
+            ...(liveModel === 'gemini-3.8-live-extended-thinking' ? { behavior: Behavior.NON_BLOCKING } : {}),
+          })) }],
           systemInstruction: {
              parts: [{ text: systemInstructionText }]
-          }
-        },
-        callbacks: {
-          onopen: () => {
-            console.log('[LiveManager] Connected to Gemini Live');
-            this.setStatus('active');
           },
-          onmessage: async (msg: LiveServerMessage) => {
-            this.handleMessage(msg);
-          },
-          onclose: (e) => {
-            console.log('[LiveManager] Connection closed', e);
-            this.flushBuffers();
-            if (typeof navigator !== 'undefined' && !navigator.onLine) {
-              this.setStatus('offline_fallback', 'Network disconnected during voice session');
-            } else {
-              this.setStatus('disconnected');
-            }
-            this.cleanup();
-          },
-          onerror: (err) => {
-            console.error("[LiveManager] Live Error:", err);
-            this.flushBuffers();
-            if (typeof navigator !== 'undefined' && !navigator.onLine) {
-              this.setStatus('offline_fallback', 'Network connection interrupted');
-            } else {
-              this.setStatus('error', 'Live connection error occurred');
-            }
-            this.cleanup();
-          }
-        }
-      });
-      
-      this.session = await sessionPromise;
-      this.startAudioInput();
+          sessionResumption: {},
+          ...(liveModel === 'gemini-3.8-live-extended-thinking'
+            ? { thinkingConfig: { thinkingLevel: liveReasoning.toUpperCase() as ThinkingLevel } }
+            : {}),
+        };
+
+      this.session = await this.openLiveConnection();
+      if (this.liveSessionReady) this.startAudioInput();
 
     } catch (err) {
       console.error("[LiveManager] Failed to connect:", err);
@@ -458,7 +553,7 @@ ${customInst}`;
   }
 
   private startAudioInput() {
-    if (!this.inputContext || !this.stream) return;
+    if (!this.inputContext || !this.stream || this.processor) return;
 
     this.source = this.inputContext.createMediaStreamSource(this.stream);
     
@@ -514,11 +609,12 @@ ${customInst}`;
   public flushUserTurn(): string | null {
     const text = this.userTurnBuffer.trim();
     if (text) {
+      this.userTurnBuffer = '';
+      if (useStore.getState().settings.save_voice_transcripts !== true) return null;
       const { addMessage, activeSessionId } = useStore.getState();
       const effectiveSessionId = activeSessionId || 'general';
       const msgId = addMessage('user', text, undefined, null, effectiveSessionId);
       this.lastTurnMessageId = msgId;
-      this.userTurnBuffer = '';
       return msgId;
     }
     return null;
@@ -526,12 +622,13 @@ ${customInst}`;
 
   public flushModelTurn(): string | null {
     const text = this.modelTurnBuffer.trim();
+    const persistedText = useStore.getState().settings.save_voice_transcripts === true ? text : '';
     const ops = this.turnPendingOps.length > 0 ? [...this.turnPendingOps] : undefined;
     
-    if (text || (ops && ops.length > 0)) {
+    if (persistedText || (ops && ops.length > 0)) {
       const { addMessage, setPendingOps, activeSessionId } = useStore.getState();
       const effectiveSessionId = activeSessionId || 'general';
-      const msgText = text || (ops ? `Prepared ${ops.length} operation(s) for preview.` : '');
+      const msgText = persistedText || (ops ? `Prepared ${ops.length} operation(s) for preview.` : '');
       const msgId = addMessage('assistant', msgText, ops, null, effectiveSessionId);
       
       if (ops && ops.length > 0) {
@@ -542,6 +639,8 @@ ${customInst}`;
       this.turnPendingOps = [];
       return msgId;
     }
+    this.modelTurnBuffer = '';
+    this.turnPendingOps = [];
     return null;
   }
 
@@ -563,6 +662,30 @@ ${customInst}`;
   }
 
   public async handleMessage(msg: LiveServerMessage) {
+    if (msg.sessionResumptionUpdate) {
+      const update = msg.sessionResumptionUpdate;
+      this.resumptionHandle = update.resumable === true && update.newHandle ? update.newHandle : null;
+    }
+    if (msg.goAway && this.resumptionHandle && !this.reconnecting) {
+      void this.resumeLiveConnection();
+    }
+    if (msg.setupComplete) {
+      this.liveSessionReady = true;
+      this.resumeAttempts = 0;
+      this.setStatus('active', 'Gemini Live session is ready.');
+      if (this.session) this.startAudioInput();
+    }
+    if (msg.usageMetadata) {
+      this.liveUsage = msg.usageMetadata as unknown as Record<string, unknown>;
+      this.onUsageChange(this.liveUsage);
+    }
+    const interactionStatus = (msg as unknown as { interactionStatus?: string }).interactionStatus;
+    if (interactionStatus === 'IN_PROGRESS' && !msg.serverContent?.modelTurn?.parts?.some(part => part.inlineData?.data)) {
+      this.setStatus('thinking');
+    } else if (interactionStatus === 'IDLE' && this.liveSessionReady && !this.activeAudioSources.length) {
+      this.setStatus('listening');
+    }
+
     // 0. Audio Interruption Handling
     if (msg.serverContent?.interrupted) {
       this.stopAllAudioPlayback();
@@ -626,6 +749,7 @@ ${customInst}`;
       if (this.modelTurnBuffer.trim() || this.turnPendingOps.length > 0) {
         this.flushModelTurn();
       }
+      if (!this.userTurnBuffer.trim()) this.lastTurnMessageId = '';
       this.userTurnBuffer += inTrans.text;
       this.onTranscription(inTrans.text, 'user');
       this.setStatus('listening');
@@ -635,7 +759,8 @@ ${customInst}`;
     if (msg.serverContent?.turnComplete) {
       this.flushUserTurn();
       this.flushModelTurn();
-      if (this.turnPendingOps.length === 0) {
+      const extendedThinkingIdle = this.liveModel !== 'gemini-3.8-live-extended-thinking' || interactionStatus === 'IDLE';
+      if (this.turnPendingOps.length === 0 && extendedThinkingIdle) {
         this.setStatus('active');
       }
     }
@@ -884,6 +1009,7 @@ ${customInst}`;
   }
 
   disconnect() {
+    this.intentionallyStopped = true;
     this.flushBuffers();
     this.stopAllAudioPlayback();
     if (this.session) {
@@ -909,6 +1035,16 @@ ${customInst}`;
     this.source?.disconnect();
     this.inputContext?.close();
     this.outputContext?.close();
+
+    if (this.managedSessionId) {
+      void endManagedLiveSession(this.managedSessionId);
+      this.managedSessionId = null;
+    }
+    this.liveSessionReady = false;
+    this.resumptionHandle = null;
+    this.liveConfig = null;
+    this.reconnecting = false;
+    this.session = null;
     
     this.stream = null;
     this.processor = null;

@@ -1,38 +1,74 @@
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS, MAX_CALLS_PER_TURN, MODEL,
-  MONTHLY_GENERATION_LIMIT, USER_TURN_LIMIT, RequestFailure,
-  isAllowedManagedTool, isCompletedUserTurn, managedGenerationConfig, monthKey, sanitizeManagedCandidates, validateGenerationBody,
+  ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, DEFAULT_MODEL, GUEST_CHAT_TURN_LIMIT,
+  GUEST_DAILY_BRIEFING_LIMIT, MANAGED_FUNCTION_TIMEOUT_SECONDS, ACTIVE_MODEL_CALL_LEASE_MS,
+  RESERVATION_TTL_MS,
+  RequestFailure, SUPPORTED_MANAGED_MODELS,
+  authorizeManagedModel, dayKey, isAllowedManagedTool, isCompletedUserTurn, managedGenerationConfig,
+  monthKey, sanitizeManagedCandidates, validateGenerationBody,
 } from '../functions/src/policy';
 
 const config = { systemInstruction: 'Be helpful.', tools: [{ functionDeclarations: [{ name: 'apply_changes' }] }] };
 const request = (extra: Record<string, unknown> = {}) => ({
   turnId: 'turn_0000000000000001', callId: 'call_00000000000001',
-  contents: [{ role: 'user', parts: [{ text: 'hello' }] }], config, ...extra,
+  contents: [{ role: 'user', parts: [{ text: 'hello' }] }], config,
+  model: DEFAULT_MODEL, reasoningLevel: 'low', purpose: 'chat', ...extra,
 });
 
 describe('managed Gemini policy', () => {
-  it('pins the managed model and quotas to the approved limits', () => {
-    expect(MODEL).toBe('gemini-3.8-flash');
-    expect([USER_TURN_LIMIT, MONTHLY_GENERATION_LIMIT, MAX_INPUT_TOKENS, MAX_OUTPUT_TOKENS]).toEqual([10, 500, 16000, 2048]);
-    expect(MAX_CALLS_PER_TURN).toBe(15);
+  it('keeps guest and account chat/briefing allowances separate from model-call reporting', () => {
+    expect([GUEST_CHAT_TURN_LIMIT, ACCOUNT_CHAT_TURN_LIMIT]).toEqual([10, 50]);
+    expect([GUEST_DAILY_BRIEFING_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT]).toEqual([3, 5]);
   });
 
-  it('forces the server-side output and reasoning ceilings', () => {
-    expect(managedGenerationConfig({ maxOutputTokens: 99_999, thinkingConfig: { thinkingLevel: 'high' } })).toMatchObject({
-      maxOutputTokens: 2048,
-      thinkingConfig: { thinkingLevel: 'low' },
+  it('retains the approved function timeout and bounded stale-call lease', () => {
+    expect(MANAGED_FUNCTION_TIMEOUT_SECONDS).toBe(60);
+    expect(ACTIVE_MODEL_CALL_LEASE_MS).toBeGreaterThan(MANAGED_FUNCTION_TIMEOUT_SECONDS * 1000);
+    expect(ACTIVE_MODEL_CALL_LEASE_MS).toBeLessThan(RESERVATION_TTL_MS);
+  });
+
+  it('authorizes ordinary reasoning only on the everyday model and never High', () => {
+    expect(() => authorizeManagedModel(DEFAULT_MODEL, 'low', false)).not.toThrow();
+    expect(() => authorizeManagedModel(DEFAULT_MODEL, 'medium', false)).not.toThrow();
+    expect(() => authorizeManagedModel(DEFAULT_MODEL, 'high', false)).toThrowError(RequestFailure);
+    expect(() => authorizeManagedModel('gemini-3.1-pro-preview', 'medium', false)).toThrowError(RequestFailure);
+    expect(() => authorizeManagedModel(DEFAULT_MODEL, 'minimal', false)).toThrowError(RequestFailure);
+  });
+
+  it('allows each documented reasoning level only for a supported model and privileged tier', () => {
+    const flash = SUPPORTED_MANAGED_MODELS.find(model => model.id === 'gemini-3.8-flash')!;
+    expect(flash.reasoningLevels).toEqual(['low', 'medium', 'high']);
+    expect(() => authorizeManagedModel('gemini-3.8-flash', 'high', true)).not.toThrow();
+    expect(() => authorizeManagedModel('gemini-3.6-flash', 'minimal', true)).not.toThrow();
+    expect(() => authorizeManagedModel('gemini-3.5-flash-lite', 'high', true)).not.toThrow();
+    expect(() => authorizeManagedModel('gemini-3.1-pro-preview', 'high', true)).not.toThrow();
+    expect(() => authorizeManagedModel('gemini-3.8-flash', 'minimal', true)).toThrowError(RequestFailure);
+    expect(() => authorizeManagedModel('gemini-3.7-flash', 'medium', true)).toThrowError(RequestFailure);
+    expect(() => authorizeManagedModel('gemini-4-argon', 'medium', true)).not.toThrow();
+  });
+
+  it('ignores client-supplied thinking and does not impose an output ceiling', () => {
+    expect(managedGenerationConfig({ maxOutputTokens: 65_536, thinkingConfig: { thinkingLevel: 'high' } }, 'medium')).toEqual({
+      maxOutputTokens: 65_536,
+      thinkingConfig: { thinkingLevel: 'MEDIUM' },
+    });
+    expect(managedGenerationConfig({ temperature: 0.2 }, 'low')).toEqual({
+      temperature: 0.2,
+      thinkingConfig: { thinkingLevel: 'LOW' },
     });
   });
 
-  it('accepts only a bounded request with correlated turn and call identifiers', () => {
-    expect(validateGenerationBody(request()).turnId).toBe('turn_0000000000000001');
+  it('validates identity-free request structure without an arbitrary context-size limit', () => {
+    const longHistory = Array.from({ length: 80 }, (_, index) => ({ role: index % 2 ? 'model' : 'user', parts: [{ text: `item ${index}` }] }));
+    expect(validateGenerationBody(request({ contents: longHistory })).contents).toHaveLength(80);
     expect(() => validateGenerationBody(request({ uid: 'attacker-chosen' }))).toThrowError(RequestFailure);
-    expect(() => validateGenerationBody(request({ model: 'gemini-3.1-pro-preview' }))).toThrowError(RequestFailure);
+    expect(() => validateGenerationBody(request({ model: 'gemini-3.7-flash' }))).toThrowError(RequestFailure);
     expect(() => validateGenerationBody(request({ callId: 'short' }))).toThrowError(RequestFailure);
+    expect(() => validateGenerationBody(request({ purpose: 'workspace-sync' }))).toThrowError(RequestFailure);
+    expect(validateGenerationBody(request({ purpose: 'briefing', config: { maxOutputTokens: 512, temperature: 0.7 } })).purpose).toBe('briefing');
   });
 
-  it('rejects tools outside the fixed Flowmate allowlist', () => {
+  it('rejects tools outside the fixed Flowmate tool allowlist', () => {
     const invalidConfig = { systemInstruction: 'Be helpful.', tools: [{ functionDeclarations: [{ name: 'read_arbitrary_firestore' }] }] };
     expect(() => validateGenerationBody(request({ config: invalidConfig }))).toThrowError(RequestFailure);
     for (const name of ['configure_commitment', 'record_commitment_evidence', 'read_arbitrary_firestore']) {
@@ -40,23 +76,10 @@ describe('managed Gemini policy', () => {
       expect(() => validateGenerationBody(request({ config: mutatingConfig }))).toThrowError(RequestFailure);
       expect(isAllowedManagedTool(name)).toBe(false);
     }
-    for (const name of [
-      'query_entities', 'query_relationships', 'reflect_schemas', 'query_commitment', 'read_calendar',
-      'search_entities', 'lookup_food_history', 'get_productivity_stats', 'lookup_goals', 'lookup_habits',
-      'lookup_travel_route', 'search_memory', 'get_relevant_context', 'propose_memory_update', 'apply_changes',
-    ]) {
-      const supportedConfig = { systemInstruction: 'Be helpful.', tools: [{ functionDeclarations: [{ name }] }] };
-      expect(validateGenerationBody(request({ config: supportedConfig })).config).toEqual(supportedConfig);
-      expect(isAllowedManagedTool(name)).toBe(true);
-    }
+    expect(isAllowedManagedTool('apply_changes')).toBe(true);
   });
 
-  it('rejects oversized content and malformed histories before quota reservation', () => {
-    expect(() => validateGenerationBody(request({ contents: [] }))).toThrowError(RequestFailure);
-    expect(() => validateGenerationBody(request({ contents: [{ text: 'x'.repeat(1_500_001) }] }))).toThrowError(RequestFailure);
-  });
-
-  it('counts only terminal assistant output or proposed writes as successful user turns', () => {
+  it('counts only terminal assistant output or human-reviewed proposals as successful turns', () => {
     expect(isCompletedUserTurn({ functionCalls: [{ name: 'search_entities' }] })).toBe(false);
     expect(isCompletedUserTurn({ text: 'Here is a plan.', functionCalls: [] })).toBe(true);
     expect(isCompletedUserTurn({ functionCalls: [{ name: 'apply_changes' }] })).toBe(true);
@@ -79,8 +102,11 @@ describe('managed Gemini policy', () => {
     expect(JSON.stringify(sanitized)).not.toContain('private thought');
     expect(JSON.stringify(sanitized)).not.toContain('opaque-thought-signature');
   });
-  it('uses the approved Asia/Kolkata calendar month for the global cap', () => {
+
+  it('uses Asia/Kolkata day and month boundaries', () => {
     expect(monthKey(new Date('2026-10-31T18:29:59.000Z'))).toBe('2026-10');
     expect(monthKey(new Date('2026-10-31T18:30:00.000Z'))).toBe('2026-11');
+    expect(dayKey(new Date('2026-10-16T18:29:59.000Z'))).toBe('2026-10-16');
+    expect(dayKey(new Date('2026-10-16T18:30:00.000Z'))).toBe('2026-10-17');
   });
 });

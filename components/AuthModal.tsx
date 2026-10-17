@@ -99,6 +99,8 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose, onSuccess }) => {
 
         const result = await signInWithGoogle();
 
+        if (result.redirecting) return;
+
         setLoading(false);
 
         if (result.error) {

@@ -191,16 +191,17 @@ export const MessageVersionNav: React.FC<MessageVersionNavProps> = ({
         </button>
       )}
 
-      {/* Retry button for failed messages */}
-      {message.status === 'failed' && (
+      {/* Interrupted managed requests need an explicit user retry because the
+          provider may have completed even though the browser missed its reply. */}
+      {(message.status === 'failed' || message.status === 'interrupted') && (
         <button
           onClick={handleRetry}
-          title="Retry sending message"
-          aria-label="Retry sending message"
+          title={message.status === 'interrupted' ? 'The previous result may be unknown. Retrying can create a second response.' : 'Retry sending message'}
+          aria-label={message.status === 'interrupted' ? 'Retry interrupted message anyway' : 'Retry sending message'}
           className="inline-flex items-center gap-1 text-[10px] text-rose-400 hover:text-rose-200 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/50 px-1.5 py-0.5 rounded-full transition-colors cursor-pointer"
         >
           <RotateCw size={10} />
-          Retry
+          {message.status === 'interrupted' ? 'Retry anyway' : 'Retry'}
         </button>
       )}
 

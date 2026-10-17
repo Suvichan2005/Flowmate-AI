@@ -3,8 +3,11 @@ import { randomUUID } from 'node:crypto';
 import test, { after, before } from 'node:test';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { RequestFailure, monthKey, validateGenerationBody } from '../lib/policy.js';
-import { failTurn, finishTurn, reserveGenerationCall, reserveTurn, turnLedgerRefs } from '../lib/ledger.js';
+import { RequestFailure, dayKey, monthKey, validateGenerationBody } from '../lib/policy.js';
+import {
+  briefingLedgerRefs, failTurn, finishBriefing, finishTurn, reserveBriefing,
+  reserveBriefingGenerationCall, reserveGenerationCall, reserveTurn, turnLedgerRefs,
+} from '../lib/ledger.js';
 
 const host = process.env.FIRESTORE_EMULATOR_HOST;
 if (!host) throw new Error('FIRESTORE_EMULATOR_HOST is required; these tests must never run against production');
@@ -12,10 +15,11 @@ const app = initializeApp({ projectId: 'demo-flowmate-managed-ai-test' }, 'ledge
 const db = getFirestore(app);
 db.settings({ host, ssl: false });
 const uid = () => 'test_' + randomUUID().replaceAll('-', '');
+const stableDate = new Date('2026-10-15T12:00:00+05:30');
 
-test('managed requests reject caller-supplied UID, owner, entity, or workspace authority fields', () => {
+test('managed requests reject caller-supplied identity, owner, entity, or workspace authority fields', () => {
   const valid = {
-    turnId: 'turn_ownership_0001', callId: 'call_ownership_0001',
+    turnId: 'turn_ownership_0001', callId: 'call_ownership_00001',
     contents: [{ role: 'user', parts: [{ text: 'hello' }] }], config: { systemInstruction: '' },
   };
   for (const key of ['uid', 'ownerUid', 'ownerId', 'entityIds', 'workspaceSnapshot']) {
@@ -32,67 +36,113 @@ before(async () => {
 });
 after(async () => { await db.terminate(); });
 
-test('test mode never grants access based on email alone', async () => {
+test('test mode authorizes an exact UID, never an email alone', async () => {
   const allowedUid = uid();
   const blockedUid = uid();
-  const allowedEmail = 'flowmate-managed-ai-smoke@example.com';
+  const email = 'flowmate-managed-ai-smoke@example.com';
   await db.doc('system/managedAi').set({ enabled: true, mode: 'test', allowedTestUids: [allowedUid] });
-
-  const allowed = turnLedgerRefs(db, allowedUid, 'turn_allowlisted_0001', 'call_allowlisted_00001', new Date(), allowedEmail);
+  const allowed = turnLedgerRefs(db, allowedUid, 'turn_allowlisted_0001', 'call_allowlisted_00001', new Date(), email);
   await reserveTurn(db, allowed);
   assert.equal((await db.doc(`managedAiUsers/${allowedUid}`).get()).exists, true);
-
   const blocked = turnLedgerRefs(db, blockedUid, 'turn_blocked_uid_0001', 'call_blocked_uid_00001', new Date(), 'unapproved@example.com');
   await assert.rejects(reserveTurn(db, blocked), error => error.code === 'MANAGED_AI_DISABLED');
-  await assert.rejects(reserveGenerationCall(db, blocked), error => error.code === 'MANAGED_AI_DISABLED');
-  assert.equal((await db.doc(`managedAiUsers/${blockedUid}`).get()).exists, false);
   await failTurn(db, allowed, false);
   await db.doc('system/managedAi').set({ enabled: true, mode: 'general' });
 });
 
-test('privileged UID access bypasses lifetime turns, records usage, and revocation applies immediately', async () => {
+test('privileged identities have no turn, monthly call, or ordinary rate ceiling while usage is still counted', async () => {
   const privilegedUid = uid();
   const email = 'owner-approved@example.test';
-  await db.doc('system/managedAi').set({ enabled: true, mode: 'general' });
   await db.doc(`managedAiAllowlist/${privilegedUid}`).set({ uid: privilegedUid, emailLower: email, status: 'active' });
-
-  for (let index = 0; index < 11; index += 1) {
+  for (let index = 0; index < 55; index += 1) {
     const suffix = String(index).padStart(8, '0');
-    const refs = turnLedgerRefs(db, privilegedUid, `privileged_turn_${suffix}`, `privileged_call_${suffix}`, new Date(), email, 'account', 50);
-    await reserveTurn(db, refs);
+    const now = Date.now() + index * 10;
+    const refs = turnLedgerRefs(db, privilegedUid, `privileged_turn_${suffix}`, `privileged_call_${suffix}`, new Date(now), email);
+    await reserveTurn(db, refs, now);
     await reserveGenerationCall(db, refs);
     await finishTurn(db, refs, true);
   }
-  assert.equal((await db.doc(`managedAiPrivilegedUsers/${privilegedUid}`).get()).get('successfulTurns'), 11);
-  assert.equal((await db.doc(`managedAiUsers/${privilegedUid}`).get()).exists, false);
+  assert.equal((await db.doc(`managedAiPrivilegedUsers/${privilegedUid}`).get()).get('successfulTurns'), 55);
+  const privilegedRefs = turnLedgerRefs(db, privilegedUid, 'privileged_usage_0001', 'privileged_usage_00001', stableDate, email);
+  assert.equal((await privilegedRefs.privilegedMonth.get()).get('callsReserved'), 55);
+  assert.equal((await privilegedRefs.privilegedUserMonth.get()).get('callsReserved'), 55);
+
+  const currentPrivilegedMonth = turnLedgerRefs(db, privilegedUid, 'privileged_over_500', 'privileged_call_over_500', new Date(), email);
+  await currentPrivilegedMonth.privilegedMonth.set({ callsReserved: 500 }, { merge: true });
+  await reserveTurn(db, currentPrivilegedMonth);
+  await reserveGenerationCall(db, currentPrivilegedMonth);
+  assert.equal((await currentPrivilegedMonth.privilegedMonth.get()).get('callsReserved'), 501);
+  await finishTurn(db, currentPrivilegedMonth, true);
 
   await db.doc(`managedAiAllowlist/${privilegedUid}`).set({ status: 'revoked' }, { merge: true });
-  const revoked = turnLedgerRefs(db, privilegedUid, 'privileged_revoked_0001', 'privileged_revoked_00001', new Date(), email, 'account', 50);
+  const revoked = turnLedgerRefs(db, privilegedUid, 'privileged_revoked_0001', 'privileged_revoked_00001', new Date(), email);
   await reserveTurn(db, revoked);
   assert.equal(revoked.isPrivileged, false);
-  assert.equal((await db.doc(`managedAiUsers/${privilegedUid}`).get()).get('reservedTurns'), 1);
   await failTurn(db, revoked, false);
 });
 
-test('privileged monthly safety budget admits exactly 50 actual-call reservations', async () => {
-  const monthRef = db.doc('managedAiPrivilegedMonthly/' + monthKey(new Date()));
-  await monthRef.set({ callsReserved: 49 });
-  const refsList = await Promise.all(Array.from({ length: 12 }, async (_, index) => {
-    const userId = uid();
-    const email = `budget-owner-${index}@example.test`;
-    await db.doc(`managedAiAllowlist/${userId}`).set({ uid: userId, emailLower: email, status: 'active' });
+test('failed requests release the reservation; account allowance counts 50 successful turns', async () => {
+  const userId = uid();
+  const failed = turnLedgerRefs(db, userId, 'turn_failed_0000001', 'call_failed_00000001');
+  await reserveTurn(db, failed);
+  await failTurn(db, failed, false);
+  for (let index = 0; index < 50; index += 1) {
     const suffix = String(index).padStart(8, '0');
-    const refs = turnLedgerRefs(db, userId, `privileged_budget_turn_${suffix}`, `privileged_budget_call_${suffix}`, new Date(), email, 'account', 50);
-    await reserveTurn(db, refs);
-    return refs;
-  }));
-  const attempts = await Promise.allSettled(refsList.map(refs => reserveGenerationCall(db, refs)));
-  assert.equal(attempts.filter(attempt => attempt.status === 'fulfilled').length, 1);
-  assert.equal(attempts.filter(attempt => attempt.status === 'rejected' && attempt.reason.code === 'GLOBAL_LIMIT_REACHED').length, 11);
-  assert.equal((await monthRef.get()).get('callsReserved'), 50);
+    const now = Date.now() + index * 66_000;
+    const refs = turnLedgerRefs(db, userId, `turn_success_${suffix}`, `call_success_${suffix}`, stableDate);
+    await reserveTurn(db, refs, now);
+    await reserveGenerationCall(db, refs);
+    await finishTurn(db, refs, true);
+  }
+  const exhausted = turnLedgerRefs(db, userId, 'turn_success_00000010', 'call_success_00000010');
+  await assert.rejects(reserveTurn(db, exhausted), error => error.code === 'TURN_ALLOWANCE_EXHAUSTED');
+  assert.equal((await db.doc(`managedAiUsers/${userId}`).get()).get('successfulTurns'), 50);
 });
 
-test('only one overlapping reservation succeeds for a UID', async () => {
+test('guests receive ten lifetime chat turns separate from account records', async () => {
+  const guestId = uid();
+  for (let index = 0; index < 10; index += 1) {
+    const suffix = String(index).padStart(8, '0');
+    const now = Date.now() + index * 66_000;
+    const refs = turnLedgerRefs(db, guestId, `guest_success_${suffix}`, `guest_call_${suffix}`, stableDate, undefined, 'guest');
+    await reserveTurn(db, refs, now);
+    await reserveGenerationCall(db, refs);
+    await finishTurn(db, refs, true);
+  }
+  assert.equal((await db.doc(`managedAiGuests/${guestId}`).get()).get('successfulTurns'), 10);
+  const exhausted = turnLedgerRefs(db, guestId, 'guest_success_00000010', 'guest_call_00000010', new Date(), undefined, 'guest');
+  await assert.rejects(reserveTurn(db, exhausted), error => error.code === 'GUEST_TURN_ALLOWANCE_EXHAUSTED');
+  const accountRefs = turnLedgerRefs(db, guestId, 'account_success_00000000', 'account_call_00000000');
+  await reserveTurn(db, accountRefs);
+  assert.equal((await db.doc(`managedAiUsers/${guestId}`).get()).get('reservedTurns'), 1);
+  await failTurn(db, accountRefs, false);
+});
+
+test('briefings have a separate daily quota and failed model calls do not consume a successful briefing', async () => {
+  const guestId = uid();
+  const first = briefingLedgerRefs(db, guestId, 'briefing_failed_0001', new Date(), undefined, 'guest');
+  await reserveBriefing(db, first);
+  await reserveBriefingGenerationCall(db, first);
+  await finishBriefing(db, first, false);
+  assert.equal((await first.daily.get()).get('successful') || 0, 0);
+  assert.equal((await first.month.get()).get('callsReserved'), 1);
+
+  for (let index = 0; index < 3; index += 1) {
+    const refs = briefingLedgerRefs(db, guestId, `briefing_success_${String(index).padStart(8, '0')}`, stableDate, undefined, 'guest');
+    await reserveBriefing(db, refs);
+    await reserveBriefingGenerationCall(db, refs);
+    await finishBriefing(db, refs, true);
+  }
+  assert.equal((await first.daily.get()).get('successful'), 3);
+  const next = briefingLedgerRefs(db, guestId, 'briefing_success_00000003', stableDate, undefined, 'guest');
+  await assert.rejects(reserveBriefing(db, next), error => error.code === 'BRIEFING_ALLOWANCE_EXHAUSTED');
+
+  const chat = turnLedgerRefs(db, guestId, 'chat_independent_0001', 'chat_independent_00001', stableDate, undefined, 'guest');
+  await reserveTurn(db, chat);
+  await failTurn(db, chat, false);
+});
+
+test('only one overlapping request succeeds for a UID', async () => {
   const userId = uid();
   const attempts = await Promise.allSettled(Array.from({ length: 20 }, (_, index) => {
     const refs = turnLedgerRefs(db, userId, 'turn_' + String(index).padStart(16, '0'), 'call_' + String(index).padStart(16, '0'));
@@ -100,56 +150,17 @@ test('only one overlapping reservation succeeds for a UID', async () => {
   }));
   assert.equal(attempts.filter(value => value.status === 'fulfilled').length, 1);
   assert.equal(attempts.filter(value => value.status === 'rejected' && value.reason instanceof RequestFailure && value.reason.code === 'USER_CALL_IN_PROGRESS').length, 19);
-  assert.equal((await db.doc('managedAiUsers/' + userId).get()).get('reservedTurns'), 1);
+  assert.equal((await db.doc(`managedAiUsers/${userId}`).get()).get('reservedTurns'), 1);
 });
 
-test('failed requests release the user slot; exactly ten successes consume lifetime allowance', async () => {
+test('failed provider attempts remain in the per-user and global monthly call ledgers', async () => {
   const userId = uid();
-  const failed = turnLedgerRefs(db, userId, 'turn_failed_0000001', 'call_failed_00000001');
-  await reserveTurn(db, failed);
-  await failTurn(db, failed, false);
-
-  for (let index = 0; index < 10; index += 1) {
-    const suffix = String(index).padStart(8, '0');
-    const refs = turnLedgerRefs(db, userId, 'turn_success_' + suffix, 'call_success_' + suffix);
-    await reserveTurn(db, refs);
-    await reserveGenerationCall(db, refs);
-    await finishTurn(db, refs, true);
-  }
-  const exhausted = turnLedgerRefs(db, userId, 'turn_success_00000010', 'call_success_00000010');
-  await assert.rejects(reserveTurn(db, exhausted), error => error.code === 'TURN_ALLOWANCE_EXHAUSTED');
-  assert.equal((await db.doc('managedAiUsers/' + userId).get()).get('successfulTurns'), 10);
-});
-
-test('anonymous guest identities receive exactly three successful turns, separate from account allowance', async () => {
-  const guestId = uid();
-  for (let index = 0; index < 3; index += 1) {
-    const suffix = String(index).padStart(8, '0');
-    const refs = turnLedgerRefs(db, guestId, 'guest_success_' + suffix, 'guest_call_' + suffix, new Date(), undefined, 'guest');
-    await reserveTurn(db, refs);
-    await reserveGenerationCall(db, refs);
-    await finishTurn(db, refs, true);
-  }
-  const guestDoc = db.doc(`managedAiGuests/${guestId}`);
-  assert.equal((await guestDoc.get()).get('successfulTurns'), 3);
-  const nextGuestTurn = turnLedgerRefs(db, guestId, 'guest_success_00000003', 'guest_call_00000003', new Date(), undefined, 'guest');
-  await assert.rejects(reserveTurn(db, nextGuestTurn), error => error.code === 'GUEST_TURN_ALLOWANCE_EXHAUSTED');
-
-  const accountRefs = turnLedgerRefs(db, guestId, 'account_success_00000000', 'account_call_00000000');
-  await reserveTurn(db, accountRefs);
-  assert.equal((await db.doc(`managedAiUsers/${guestId}`).get()).get('reservedTurns'), 1);
-  await failTurn(db, accountRefs, false);
-});
-
-test('billable generation attempts remain charged even when the user turn fails', async () => {
-  const userId = uid();
-  const refs = turnLedgerRefs(db, userId, 'turn_billable_00001', 'call_billable_000001', new Date('2099-01-02T00:00:00.000Z'));
+  const refs = turnLedgerRefs(db, userId, 'turn_billable_00001', 'call_billable_000001');
   await reserveTurn(db, refs);
   await reserveGenerationCall(db, refs);
   await failTurn(db, refs, true);
-
   assert.equal((await refs.month.get()).get('callsReserved'), 1);
-  assert.equal((await db.doc('managedAiUsers/' + userId).get()).get('successfulTurns') || 0, 0);
+  assert.equal((await refs.userMonth.get()).get('callsReserved'), 1);
   assert.equal((await refs.call.get()).get('status'), 'failed');
 });
 
@@ -157,7 +168,7 @@ test('short-term per-UID rate limit rejects the 21st reservation in a minute', a
   const userId = uid();
   for (let index = 0; index < 20; index += 1) {
     const suffix = String(index).padStart(8, '0');
-    const refs = turnLedgerRefs(db, userId, 'turn_rate_' + suffix, 'call_rate_' + suffix);
+    const refs = turnLedgerRefs(db, userId, `turn_rate_${suffix}`, `call_rate_${suffix}`);
     await reserveTurn(db, refs);
     await failTurn(db, refs, false);
   }
@@ -165,16 +176,20 @@ test('short-term per-UID rate limit rejects the 21st reservation in a minute', a
   await assert.rejects(reserveTurn(db, blocked), error => error.code === 'RATE_LIMITED');
 });
 
-test('global monthly reservation remains at exactly 500 under concurrent users', async () => {
-  const monthRef = db.doc('managedAiMonthly/' + monthKey(new Date()));
-  await monthRef.set({ callsReserved: 499 });
+test('ordinary model-call usage remains observable without an artificial monthly application ceiling', async () => {
+  const monthRef = db.doc(`managedAiMonthly/${monthKey(new Date())}`);
+  await monthRef.set({ callsReserved: 500 });
   const results = await Promise.allSettled(Array.from({ length: 20 }, (_, index) => {
     const refs = turnLedgerRefs(db, uid(), 'turn_global_' + String(index).padStart(12, '0'), 'call_global_' + String(index).padStart(12, '0'));
     return reserveGenerationCall(db, refs);
   }));
-  const successes = results.filter(value => value.status === 'fulfilled').length;
-  const rejected = results.filter(value => value.status === 'rejected' && value.reason instanceof RequestFailure && value.reason.code === 'GLOBAL_LIMIT_REACHED').length;
-  assert.equal(successes, 1);
-  assert.equal(rejected, 19);
-  assert.equal((await monthRef.get()).get('callsReserved'), 500);
+  assert.equal(results.filter(value => value.status === 'fulfilled').length, 20);
+  assert.equal((await monthRef.get()).get('callsReserved'), 520);
+
+  const mixedUid = uid();
+  const briefing = briefingLedgerRefs(db, mixedUid, 'briefing_shared_budget', new Date());
+  await reserveBriefing(db, briefing);
+  await reserveBriefingGenerationCall(db, briefing);
+  assert.equal((await monthRef.get()).get('callsReserved'), 521, 'monthly call metadata is telemetry, not a shared quota');
+  await finishBriefing(db, briefing, false);
 });

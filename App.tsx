@@ -4,9 +4,9 @@ import { getActiveEntities, getActiveChatSessions, isChatSessionActive } from '.
 import { orchestrateMessage, generateContextualSuggestions, getInstantContextualSuggestions, type ContextualSuggestion } from './services/ai';
 import { hasAiApiKey, hasAiProviderAvailable } from './services/ai/client';
 import { processFileAttachment } from './utils/imageProcessing';
-import { onAuthChange, signOut } from './services/firebase';
+import { completeGoogleRedirectSignIn, onAuthChange, signOut } from './services/firebase';
 import { initializeSync, startRealtimeSync, loadInitialData, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
-import { mergeData, mergeMessages, mergeChatSessions } from './services/firestoreSync';
+import { mergeData, mergeMessages, mergeChatSessions, mergeCloudSettings } from './services/firestoreSync';
 import { preventDoubleClick } from './utils/debounce';
 import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers, Sparkles, LayoutDashboard, Settings } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -35,7 +35,9 @@ import { reconcileEntityCollection, globalPendingMutationQueue } from './service
 import { projectKernelEntitiesToLegacy } from './store/kernelProjection';
 import { setupCrossTabSync } from './services/storage';
 import { getLatestReviewDraft, deleteReviewDraft, revalidateReviewDraft, type ReviewDraft } from './services/action-review';
-import { resolveMobileGestureIntent } from './utils/mobileNavigationGestures';
+import { mobileGestureThreshold, resolveMobileGestureIntent } from './utils/mobileNavigationGestures';
+import OnboardingFlow from './components/OnboardingFlow';
+import { buildOnboardingChatDraft, hasCompletedOnboarding } from './services/onboardingProfile';
 
 // Helper to safely load dynamic chunks across deployments
 function lazyWithRetry<T extends React.ComponentType<any>>(
@@ -161,7 +163,9 @@ const App: React.FC = () => {
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [managedAiLimit, setManagedAiLimit] = useState<'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED' | 'GLOBAL_LIMIT_REACHED' | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [authResolved, setAuthResolved] = useState(false);
+  const [managedAiLimit, setManagedAiLimit] = useState<'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED' | null>(null);
   const managedAiDialogRef = useRef<HTMLElement | null>(null);
   const [chatWidth, setChatWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
@@ -243,7 +247,7 @@ const App: React.FC = () => {
   const { currentUser, setCurrentUser, loadFromCloud, syncToCloud } = useStore();
 
   const handleMobileTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (!isMobile || isMobileSidebarOpen) return;
+    if (!isMobile || isMobileSidebarOpen || loading || isStreaming || isLiveMode) return;
     if (event.touches.length !== 1) {
       mobileTouchStartRef.current = null;
       setMobileGestureOffset({ x: 0, y: 0 });
@@ -253,16 +257,26 @@ const App: React.FC = () => {
     const target = event.target instanceof Element ? event.target : null;
     if (
       !target ||
-      target.closest('button, a, input, textarea, select, [contenteditable="true"], [role="dialog"], [data-mobile-gesture-lock]')
+      target.closest('button, a, input, textarea, select, svg, canvas, [contenteditable="true"], [role="dialog"], [data-mobile-gesture-lock], [data-graph-drag], [data-swipe-lock]')
     ) return;
 
     const touch = event.touches[0];
-    const scrollContainer = target.closest<HTMLElement>('[data-mobile-scroll]');
+    // Pull-to-refresh is only armed when every scrollable ancestor is at its
+    // top. Looking only for the nearest app marker misfires in nested scroll
+    // regions and on components that use their own overflow container.
+    let node: HTMLElement | null = target instanceof HTMLElement ? target : target.parentElement;
+    let startedAtTop = true;
+    while (node && node !== event.currentTarget.parentElement) {
+      const style = window.getComputedStyle(node);
+      const scrollable = /(auto|scroll|overlay)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1;
+      if (scrollable && node.scrollTop > 0) startedAtTop = false;
+      node = node.parentElement;
+    }
     mobileTouchStartRef.current = {
       x: touch.clientX,
       y: touch.clientY,
       startX: touch.clientX,
-      startedAtTop: !scrollContainer || scrollContainer.scrollTop <= 0,
+      startedAtTop,
       canNavigateToChat: currentView !== 'chat',
     };
   };
@@ -270,6 +284,11 @@ const App: React.FC = () => {
   const handleMobileTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
     const start = mobileTouchStartRef.current;
     if (!start) return;
+    if (document.getSelection()?.isCollapsed === false) {
+      mobileTouchStartRef.current = null;
+      setMobileGestureOffset({ x: 0, y: 0 });
+      return;
+    }
     if (event.touches.length !== 1) {
       mobileTouchStartRef.current = null;
       setMobileGestureOffset({ x: 0, y: 0 });
@@ -283,7 +302,8 @@ const App: React.FC = () => {
     const isPullingDown = deltaY > 0 && Math.abs(deltaY) > Math.abs(deltaX) * 1.2 && start.startedAtTop;
 
     if (isHorizontal && ((deltaX < 0 && start.canNavigateToChat) || (deltaX > 0 && start.startX <= 28))) {
-      setMobileGestureOffset({ x: Math.max(-120, Math.min(120, deltaX * 0.55)), y: 0 });
+      const dragLimit = Math.max(150, window.innerWidth * 0.78);
+      setMobileGestureOffset({ x: Math.max(-dragLimit, Math.min(dragLimit, deltaX * 0.94)), y: 0 });
     } else if (isPullingDown && !loading && !isStreaming && !isLiveMode) {
       setMobileGestureOffset({ x: 0, y: Math.min(88, deltaY * 0.42) });
     } else {
@@ -305,6 +325,7 @@ const App: React.FC = () => {
       startX: start.startX,
       startedAtTop: start.startedAtTop,
       canNavigateToChat: start.canNavigateToChat,
+      distanceThresholdPx: mobileGestureThreshold(window.innerWidth),
     });
 
     setMobileGestureOffset({ x: 0, y: 0 });
@@ -312,10 +333,11 @@ const App: React.FC = () => {
     if (intent === 'open-chat') setView('chat');
     if (intent === 'refresh' && !loading && !isStreaming && !isLiveMode) {
       try {
-        if (input.trim()) sessionStorage.setItem('flowmate-mobile-refresh-draft', input);
-        else sessionStorage.removeItem('flowmate-mobile-refresh-draft');
+        sessionStorage.setItem('flowmate-mobile-refresh-draft', input);
       } catch {
-        // Refresh can still proceed when browser storage is unavailable.
+        setIsMobileRefreshing(false);
+        addToast('Refresh cancelled because this browser could not preserve the chat draft.', 'warning');
+        return;
       }
       setIsMobileRefreshing(true);
       window.setTimeout(() => window.location.reload(), 240);
@@ -498,8 +520,12 @@ const App: React.FC = () => {
 
   // Auth State Listener + Sync Integration
   useEffect(() => {
+    void completeGoogleRedirectSignIn().then(result => {
+      if (result.error) addToast('Google sign-in could not be completed. Please try again.', 'error');
+    });
     const unsubscribe = onAuthChange((user) => {
       setCurrentUser(user);
+      setAuthResolved(true);
       if (user) {
         // Initialize sync manager
         initializeSync(
@@ -587,7 +613,7 @@ const App: React.FC = () => {
               messages: messagesUnchanged ? state.messages : mergedMsgs,
               chatSessions: sessionsUnchanged ? state.chatSessions : finalChatSessions,
               ...(nextActive !== currentActive ? { activeSessionId: nextActive } : {}),
-              ...(remoteData.settings ? { settings: { ...state.settings, ...remoteData.settings } } : {}),
+              ...(remoteData.settings ? { settings: mergeCloudSettings(state.settings, remoteData.settings) as typeof state.settings } : {}),
             });
           }
         );
@@ -668,7 +694,7 @@ const App: React.FC = () => {
               messages: messagesUnchanged ? state.messages : mergedMsgs,
               chatSessions: sessionsUnchanged ? state.chatSessions : finalChatSessions,
               ...(nextActive !== currentActive ? { activeSessionId: nextActive } : {}),
-              ...(data.settings ? { settings: { ...state.settings, ...data.settings } } : {}),
+              ...(data.settings ? { settings: mergeCloudSettings(state.settings, data.settings) as typeof state.settings } : {}),
               ...(data.foodLogs?.length ? { foodLogs: data.foodLogs } : {}),
               ...(data.subjects?.length ? { subjects: data.subjects } : {}),
               ...(data.classSchedule?.length ? { classSchedule: data.classSchedule } : {}),
@@ -700,7 +726,15 @@ const App: React.FC = () => {
       unsubscribe();
       cleanupSync();
     };
-  }, [setCurrentUser, loadFromCloud]);
+  }, [setCurrentUser, loadFromCloud, addToast]);
+
+  const onboardingIdentity = currentUser?.uid || 'guest';
+  useEffect(() => {
+    if (!isHydrated || !authResolved) return;
+    const deepLinked = Boolean(window.location.hash && !['#', '#dashboard'].includes(window.location.hash));
+    if (deepLinked || currentView !== 'dashboard') return;
+    setShowOnboarding(!hasCompletedOnboarding(onboardingIdentity));
+  }, [isHydrated, authResolved, onboardingIdentity, currentView]);
 
   // Auto-sync entities, relationships, food logs and attendance data to cloud when they change
   useEffect(() => {
@@ -1040,7 +1074,8 @@ const App: React.FC = () => {
 
         updateMessageTurnMetadata(assistantMessageId, {
           ...collectedMetrics,
-          model: toon.provider === 'managed' ? 'gemini-3.8-flash' : toon.provider === 'byok' ? settings?.preferred_model : undefined,
+          model: toon.provider === 'managed' || toon.provider === 'byok' ? toon.model : undefined,
+          reasoning_level: toon.reasoningLevel,
           response_source: toon.provider === 'managed' || toon.provider === 'byok' ? 'gemini' : 'unavailable',
         });
       } finally {
@@ -1061,11 +1096,11 @@ const App: React.FC = () => {
     const userText = input.trim();
     const attachment = selectedAttachment;
 
+    const accepted = sendDirectMessage(userText, attachment);
+    if (!accepted) return;
     setInput('');
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-
-    await sendDirectMessage(userText, attachment);
   };
 
   // Direct send function for UnifiedChatInput - bypasses state sync issues
@@ -1097,6 +1132,7 @@ const App: React.FC = () => {
       const queueItem: BranchQueueItem = {
         id: uuidv4(),
         branch_id: effectiveBranchId,
+        owner_uid: useStore.getState().currentUser?.uid ?? 'local',
         user_message: userMsg,
         status: 'queued',
         enqueued_at: Date.now()
@@ -1214,7 +1250,7 @@ const App: React.FC = () => {
       case 'attendance':
         return <Dashboard />;
       case 'settings':
-        return <SettingsView />;
+        return <SettingsView onShowOnboarding={() => setShowOnboarding(true)} />;
       case 'chat_graph':
       default:
         return (
@@ -1672,7 +1708,7 @@ const App: React.FC = () => {
                     onLiveVoice={() => setIsLiveMode(true)}
                     onStop={handleStopGeneration}
                     isStreaming={isStreaming}
-                    queueCount={(branchQueues?.[activeBranchId] || []).filter(q => q.status === 'queued' || q.status === 'leased').length}
+          queueCount={(branchQueues?.[activeBranchId] || []).filter(q => q.status === 'queued' || q.status === 'leased' || q.status === 'needs_action').length}
                     loading={loading}
                     placeholder="Ask AI anything..."
                     attachment={selectedAttachment}
@@ -1710,19 +1746,39 @@ const App: React.FC = () => {
       {/* Mobile Layout: Full Content + Persistent Bottom Navigation */}
       {isMobile && (
         <div data-layout="mobile" className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] overflow-hidden relative">
+          {/* Destination peeks stay beneath the moving page so the gesture feels like a screen being pulled. */}
+          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && (
+            <div aria-hidden="true" className="absolute inset-y-0 left-0 z-0 w-64 overflow-hidden bg-slate-900 px-4 py-5 text-slate-300">
+              <div className="mb-6 flex items-center gap-3 font-semibold text-slate-100"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600/80"><Sparkles size={18} /></span>Flowmate</div>
+              <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Navigation</p>
+              <div className="space-y-2 text-sm">{['Home', 'Chat', 'Graph', 'Timeline', 'Calendar', 'Analytics', 'Library', 'Settings'].map((label, index) => <div key={label} className={`rounded-lg px-3 py-2 ${index === 0 ? 'bg-slate-800 text-emerald-200' : ''}`}>{label}</div>)}</div>
+            </div>
+          )}
+          {mobileGestureOffset.x < -18 && currentView !== 'chat' && (
+            <div aria-hidden="true" className="absolute inset-y-0 left-full z-0 w-full overflow-hidden bg-slate-900 px-6 py-5 text-slate-300">
+              <div className="-mx-6 -mt-5 mb-5 flex h-14 items-center justify-center border-b border-slate-800 bg-slate-900 font-semibold text-slate-100">Chat</div>
+              <div className="flex h-[70%] flex-col items-center justify-center text-center">
+                <MessageSquare size={28} className="mb-3 text-emerald-300" />
+                <p className="font-medium text-slate-100">Your conversation</p>
+                <p className="mt-1 text-xs text-slate-400">Release to open Chat</p>
+              </div>
+              <div className="rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm text-slate-500">Message…</div>
+            </div>
+          )}
           {/* Main content or full screen chat */}
           <div
-            className="flex-1 flex flex-col overflow-hidden pb-14"
+            className="relative z-10 flex-1 flex flex-col overflow-hidden pb-14 bg-slate-950"
             onTouchStart={handleMobileTouchStart}
             onTouchMove={handleMobileTouchMove}
             onTouchEnd={handleMobileTouchEnd}
             onTouchCancel={handleMobileTouchCancel}
             style={{
               touchAction: 'pan-y',
+              overscrollBehaviorY: 'contain',
               transform: `translate3d(${mobileGestureOffset.x}px, ${mobileGestureOffset.y}px, 0)`,
               transition: mobileTouchStartRef.current
                 ? 'none'
-                : window.matchMedia('(prefers-reduced-motion: reduce)').matches
+                : typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
                   ? 'transform 0ms'
                   : 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)',
               willChange: mobileTouchStartRef.current ? 'transform' : 'auto',
@@ -1860,7 +1916,7 @@ const App: React.FC = () => {
                       onLiveVoice={() => setIsLiveMode(true)}
                       onStop={handleStopGeneration}
                       isStreaming={isStreaming}
-                      queueCount={(branchQueues?.[activeBranchId] || []).filter(q => q.status === 'queued' || q.status === 'leased').length}
+                      queueCount={(branchQueues?.[activeBranchId] || []).filter(q => q.status === 'queued' || q.status === 'leased' || q.status === 'needs_action').length}
                       loading={loading}
                       placeholder="Message..."
                       attachment={selectedAttachment}
@@ -1896,17 +1952,6 @@ const App: React.FC = () => {
               <span className="mt-0.5">Home</span>
             </button>
             <button
-              onClick={() => setView('chat')}
-              aria-current={currentView === 'chat' ? 'page' : undefined}
-              aria-label="Open Chat"
-              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
-                currentView === 'chat' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <MessageSquare size={18} className={currentView === 'chat' ? 'stroke-[2.5]' : ''} />
-              <span className="mt-0.5">Chat</span>
-            </button>
-            <button
               onClick={() => setView('chat_graph')}
               aria-current={currentView === 'chat_graph' ? 'page' : undefined}
               aria-label="Open Graph"
@@ -1916,6 +1961,17 @@ const App: React.FC = () => {
             >
               <Layers size={18} className={currentView === 'chat_graph' ? 'stroke-[2.5]' : ''} />
               <span className="mt-0.5">Graph</span>
+            </button>
+            <button
+              onClick={() => setView('chat')}
+              aria-current={currentView === 'chat' ? 'page' : undefined}
+              aria-label="Open Chat"
+              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
+                currentView === 'chat' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <MessageSquare size={18} className={currentView === 'chat' ? 'stroke-[2.5]' : ''} />
+              <span className="mt-0.5">Chat</span>
             </button>
             <button
               onClick={() => setView('calendar')}
@@ -1972,23 +2028,30 @@ const App: React.FC = () => {
         />
       )}
 
+      {showOnboarding && (
+        <OnboardingFlow
+          identity={onboardingIdentity}
+          onClose={() => setShowOnboarding(false)}
+          onSignIn={() => { setShowOnboarding(false); setShowAuthModal(true); }}
+          onContinueInChat={() => { setInput(buildOnboardingChatDraft(onboardingIdentity)); setView('chat'); }}
+        />
+      )}
+
       {managedAiLimit && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/70 p-4">
           <section ref={managedAiDialogRef} role="dialog" aria-modal="true" aria-labelledby="managed-ai-limit-title" className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">Gemini access</p>
             <h2 id="managed-ai-limit-title" className="mt-2 text-xl font-semibold text-slate-100">
-              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' ? 'Your guest AI turns are used' : managedAiLimit === 'TURN_ALLOWANCE_EXHAUSTED' ? 'Your included AI turns are used' : 'Included AI capacity is temporarily full'}
+              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' ? 'Your guest AI turns are used' : 'Your included AI turns are used'}
             </h2>
             <p className="mt-3 text-sm leading-6 text-slate-300">
               {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED'
-                ? 'You have used your 3 free guest AI turns. Your conversation and local workspace are still here. Sign in for 10 lifetime included turns, or add your own Gemini API key.'
-                : managedAiLimit === 'TURN_ALLOWANCE_EXHAUSTED'
-                  ? 'Your account has used its 10 lifetime included AI turns. Your conversation and workspace are still here. Add your own Gemini API key to continue.'
-                  : 'The owner-funded Gemini limit has been reached for this month. Your conversation and workspace are preserved. You can continue with your own Gemini API key.'}
+                ? 'You have used your 10 free guest AI turns. Your conversation and local workspace are still here. Sign in for 50 lifetime included turns, or add your own Gemini API key.'
+                : 'Your account has used its 50 lifetime included AI turns. Your conversation and workspace are still here. Add your own Gemini API key to continue.'}
             </p>
             <div className="mt-6 flex flex-wrap justify-end gap-3">
               <button type="button" onClick={() => setManagedAiLimit(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Later</button>
-              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' && <button type="button" onClick={() => { setManagedAiLimit(null); setShowAuthModal(true); }} className="rounded-lg border border-emerald-700 px-4 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-950">Sign in for 10 turns</button>}
+              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' && <button type="button" onClick={() => { setManagedAiLimit(null); setShowAuthModal(true); }} className="rounded-lg border border-emerald-700 px-4 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-950">Sign in for 50 turns</button>}
               <button type="button" onClick={() => { setManagedAiLimit(null); setView('settings'); }} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">Add your Gemini key</button>
             </div>
           </section>

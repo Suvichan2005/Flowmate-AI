@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const authMocks = vi.hoisted(() => ({
     signInWithEmail: vi.fn(),
@@ -52,5 +52,18 @@ describe('AuthModal email verification flow', () => {
         expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
         expect(authMocks.refreshEmailVerification).toHaveBeenCalledTimes(2);
         expect(onSuccess).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the modal in a pending state while Google redirect sign-in navigates away', async () => {
+        authMocks.signInWithGoogle.mockResolvedValue({ user: null, error: null, accessToken: null, redirecting: true });
+        const onSuccess = vi.fn();
+        render(<AuthModal onClose={vi.fn()} onSuccess={onSuccess} />);
+
+        const googleButton = screen.getByRole('button', { name: 'Continue with Google' });
+        fireEvent.click(googleButton);
+
+        await waitFor(() => expect(authMocks.signInWithGoogle).toHaveBeenCalledOnce());
+        expect(googleButton).toBeDisabled();
+        expect(onSuccess).not.toHaveBeenCalled();
     });
 });

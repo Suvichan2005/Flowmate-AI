@@ -3,20 +3,21 @@ import { getAppCheck } from 'firebase-admin/app-check';
 import { getAuth } from 'firebase-admin/auth';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
-import { GoogleGenAI, type Content } from '@google/genai';
-import { defineBoolean, defineInt, defineString, defineSecret } from 'firebase-functions/params';
+import { randomUUID } from 'node:crypto';
+import { Behavior, GoogleGenAI, Modality, ThinkingLevel, type Content, type FunctionDeclaration, type LiveConnectConfig, type Tool } from '@google/genai';
+import { defineBoolean, defineString, defineSecret } from 'firebase-functions/params';
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
 import type { Request, Response } from 'express';
-import { MAX_INPUT_TOKENS, MODEL, RequestFailure, isCompletedUserTurn, managedGenerationConfig, sanitizeManagedCandidates, validateGenerationBody } from './policy.js';
-import { failTurn, finishTurn, reserveGenerationCall, reserveTurn, turnLedgerRefs } from './ledger.js';
+import { ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, ARGON_MODEL, DEFAULT_MODEL, GUEST_CHAT_TURN_LIMIT, GUEST_DAILY_BRIEFING_LIMIT, MANAGED_FUNCTION_TIMEOUT_SECONDS, SUPPORTED_MANAGED_MODELS, RequestFailure, authorizeManagedModel, dayKey, isCompletedUserTurn, managedGenerationConfig, monthKey, sanitizeManagedCandidates, validateGenerationBody } from './policy.js';
+import { briefingLedgerRefs, failTurn, finishBriefing, finishTurn, isManagedAiEnabledForIdentity, recordGenerationUsage, reserveBriefing, reserveBriefingGenerationCall, reserveGenerationCall, reserveTurn, sanitizeUsageMetadata, turnLedgerRefs } from './ledger.js';
 import { handleManagedAiAdmin } from './admin.js';
+import { generateArgonStateless } from './argon.js';
 
 if (getApps().length === 0) initializeApp();
 const db = getFirestore();
 const GEMINI_API_KEY = defineSecret('GEMINI_API_KEY');
-const APP_CHECK_REQUIRED = defineBoolean('APP_CHECK_REQUIRED', { default: false });
-const PRIVILEGED_MONTHLY_LIMIT = defineInt('FLOWMATE_PRIVILEGED_MONTHLY_LIMIT', { default: 50 });
+const APP_CHECK_REQUIRED = defineBoolean('APP_CHECK_REQUIRED', { default: true });
 const ALLOWED_ORIGINS = defineString('FLOWMATE_ALLOWED_ORIGINS', {
   default: 'https://flowmate-ai.web.app,https://flowmate-ai.firebaseapp.com,http://localhost:5173,http://127.0.0.1:5173',
 });
@@ -45,7 +46,7 @@ function allowOrigin(req: Request, res: Response): boolean {
  * owner/entity IDs are rejected. The kill switch is absent/off by default.
  */
 export const managedGemini = onRequest({
-  region: 'asia-south1', maxInstances: 2, minInstances: 0, timeoutSeconds: 60,
+  region: 'asia-south1', maxInstances: 2, minInstances: 0, timeoutSeconds: MANAGED_FUNCTION_TIMEOUT_SECONDS,
   secrets: [GEMINI_API_KEY], cors: false,
 }, async (req, res) => {
   if (!allowOrigin(req, res)) { res.status(403).end(); return; }
@@ -58,6 +59,14 @@ export const managedGemini = onRequest({
     if (req.method !== 'GET' && req.method !== 'POST') {
       res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return;
     }
+  } else if (req.path === '/models') {
+    if (req.method !== 'GET') { res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return; }
+  } else if (req.path === '/usage') {
+    if (req.method !== 'GET') { res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return; }
+  } else if (req.path === '/live-session') {
+    if (req.method !== 'POST') { res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return; }
+  } else if (req.path === '/live-session/end') {
+    if (req.method !== 'POST') { res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return; }
   } else if (req.method !== 'POST') {
     res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return;
   }
@@ -90,9 +99,235 @@ export const managedGemini = onRequest({
   }
 
   if (req.path === '/admin/access') {
-    await handleManagedAiAdmin(db, req, res, {
-      uid, email, emailVerified, anonymous: allowance === 'guest',
-    }, PRIVILEGED_MONTHLY_LIMIT.value());
+    await handleManagedAiAdmin(db, req, res, { uid, email, emailVerified, anonymous: allowance === 'guest' });
+    return;
+  }
+
+  if (req.path === '/usage') {
+    try {
+      const emailLower = email?.trim().toLowerCase();
+      const access = await db.doc(`managedAiAllowlist/${uid}`).get();
+      const privileged = allowance === 'account' && Boolean(emailLower) && access.get('status') === 'active'
+        && access.get('uid') === uid && access.get('emailLower') === emailLower;
+      const month = monthKey(new Date());
+      const today = dayKey(new Date());
+      const uidHash = createHash('sha256').update(uid).digest('hex');
+      const [identityUsage, briefingUsage, modelUsage, sharedModelUsage] = await Promise.all([
+        db.doc(`${privileged ? 'managedAiPrivilegedUsers' : allowance === 'guest' ? 'managedAiGuests' : 'managedAiUsers'}/${uid}`).get(),
+        db.doc(`managedAiBriefings/${today}_${uidHash}`).get(),
+        db.doc(`${privileged ? 'managedAiPrivilegedUserMonthly' : 'managedAiUserMonthly'}/${month}_${uidHash}`).get(),
+        db.doc(`managedAiMonthly/${month}`).get(),
+      ]);
+      res.set('Cache-Control', 'no-store');
+      res.status(200).json({
+        tier: privileged ? 'privileged' : allowance,
+        chat: { successfulTurns: Number(identityUsage.get('successfulTurns') || 0), lifetimeLimit: privileged ? null : allowance === 'guest' ? GUEST_CHAT_TURN_LIMIT : ACCOUNT_CHAT_TURN_LIMIT },
+        briefings: { successfulToday: Number(briefingUsage.get('successful') || 0), dailyLimit: privileged ? null : allowance === 'guest' ? GUEST_DAILY_BRIEFING_LIMIT : ACCOUNT_DAILY_BRIEFING_LIMIT, date: today },
+        modelCalls: {
+          thisMonth: Number((privileged ? modelUsage : sharedModelUsage).get('callsReserved') || 0),
+          applicationLimit: null,
+          month,
+        },
+      });
+    } catch {
+      logger.warn('Managed AI usage read failed', { code: 'USAGE_READ_UNAVAILABLE' });
+      res.status(503).json({ error: { code: 'USAGE_READ_UNAVAILABLE' } });
+    }
+    return;
+  }
+
+  if (req.path === '/live-session') {
+    const sessionId = randomUUID();
+    const sessionRef = db.doc(`managedAiLiveSessions/${uid}`);
+    let leaseAcquired = false;
+    try {
+      const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+        ? req.body as Record<string, unknown> : {};
+      if (Object.keys(body).some(key => !['model', 'reasoningLevel', 'systemInstruction', 'tools'].includes(key))) throw new RequestFailure('INVALID_REQUEST', 400);
+      const model = body.model === undefined ? 'gemini-3.8-live' : body.model;
+      const reasoningLevel = typeof body.reasoningLevel === 'string' ? body.reasoningLevel.toLowerCase() : 'medium';
+      const systemInstruction = typeof body.systemInstruction === 'string' ? body.systemInstruction.trim() : '';
+      if (!systemInstruction) throw new RequestFailure('INVALID_REQUEST', 400);
+      const allowedLiveTools = new Set(['schedule_event', 'create_entity', 'log_activity', 'read_calendar', 'search_entities', 'search_memory', 'propose_memory_update', 'record_commitment_evidence']);
+      const rawTools = body.tools === undefined ? [] : body.tools;
+      if (!Array.isArray(rawTools) || rawTools.length > 8) throw new RequestFailure('INVALID_REQUEST', 400);
+      const functionDeclarations = rawTools.map(raw => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new RequestFailure('INVALID_REQUEST', 400);
+        const item = raw as Record<string, unknown>;
+        if (Object.keys(item).some(key => !['name', 'description', 'parameters'].includes(key))
+          || typeof item.name !== 'string' || !allowedLiveTools.has(item.name)
+          || typeof item.description !== 'string' || item.description.length > 1200
+          || !item.parameters || typeof item.parameters !== 'object' || Array.isArray(item.parameters)
+          || JSON.stringify(item.parameters).length > 12_000) throw new RequestFailure('INVALID_REQUEST', 400);
+        return {
+          name: item.name,
+          description: item.description,
+          parameters: item.parameters as FunctionDeclaration['parameters'],
+          ...(model === 'gemini-3.8-live-extended-thinking' ? { behavior: Behavior.NON_BLOCKING } : {}),
+        };
+      });
+      if (model !== 'gemini-3.8-live' && model !== 'gemini-3.8-live-extended-thinking') {
+        throw new RequestFailure('MODEL_UNAVAILABLE', 422);
+      }
+      if (model === 'gemini-3.8-live-extended-thinking' && !['low', 'medium', 'high'].includes(reasoningLevel)) {
+        throw new RequestFailure('UNSUPPORTED_REASONING_LEVEL', 422);
+      }
+      const emailLower = email?.trim().toLowerCase();
+      const allowlist = await db.doc(`managedAiAllowlist/${uid}`).get();
+      const privileged = allowance === 'account' && Boolean(emailLower)
+        && allowlist.get('status') === 'active' && allowlist.get('uid') === uid
+        && allowlist.get('emailLower') === emailLower;
+      if (model === 'gemini-3.8-live-extended-thinking' && !privileged) {
+        throw new RequestFailure('MODEL_NOT_ALLOWED_FOR_ACCOUNT', 403);
+      }
+      const [aiControl, liveControl] = await Promise.all([
+        db.doc('system/managedAi').get(),
+        db.doc('system/managedLive').get(),
+      ]);
+      if (liveControl.get('enabled') !== true || !isManagedAiEnabledForIdentity(aiControl.data(), uid, privileged)) {
+        throw new RequestFailure('MANAGED_AI_DISABLED', 503);
+      }
+      // Token grants are short-term abuse protection, not a voice-session quota.
+      // Actual audio usage remains provider-metered and is not represented as a server-enforced budget.
+      const rateRef = db.doc(`managedAiLiveTokenRates/${uid}`);
+      await db.runTransaction(async transaction => {
+        const rate = await transaction.get(rateRef);
+        const data = rate.data() || {};
+        const start = Number(data.windowStartMs || 0);
+        const count = start > nowMs() - 60_000 ? Number(data.count || 0) : 0;
+        if (count >= 20) throw new RequestFailure('RATE_LIMITED', 429);
+        transaction.set(rateRef, { windowStartMs: start > nowMs() - 60_000 ? start : nowMs(), count: count + 1, updatedAt: Timestamp.now() }, { merge: true });
+      });
+      const now = Date.now();
+      await db.runTransaction(async transaction => {
+        const current = await transaction.get(sessionRef);
+        const currentExpiry = Number(current.get('expiresAtMs') || 0);
+        if (current.exists && current.get('status') !== 'ended' && currentExpiry > now) {
+          throw new RequestFailure('LIVE_SESSION_ALREADY_ACTIVE', 409);
+        }
+        transaction.set(sessionRef, {
+          sessionId,
+          status: 'issuing',
+          model,
+          createdAt: Timestamp.now(),
+          expiresAtMs: now + 15 * 60_000,
+        });
+      });
+      leaseAcquired = true;
+      const liveConfig: LiveConnectConfig = {
+        responseModalities: [Modality.AUDIO],
+        systemInstruction: { parts: [{ text: systemInstruction }] },
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        sessionResumption: {},
+        ...(functionDeclarations.length ? { tools: [{ functionDeclarations: functionDeclarations as FunctionDeclaration[] }] } : {}),
+        ...(model === 'gemini-3.8-live-extended-thinking'
+          ? { thinkingConfig: { thinkingLevel: reasoningLevel.toUpperCase() as ThinkingLevel } }
+          : {}),
+      };
+      const token = await new GoogleGenAI({
+        apiKey: GEMINI_API_KEY.value(),
+        httpOptions: { apiVersion: 'v1beta' },
+      }).authTokens.create({
+        config: {
+          uses: 1,
+          newSessionExpireTime: new Date(now + 60_000).toISOString(),
+          // Provider audio-only sessions have a 15-minute maximum. This is a
+          // provider session bound, not an application allowance or turn quota.
+          expireTime: new Date(now + 15 * 60_000).toISOString(),
+          liveConnectConstraints: { model: `models/${model}`, config: liveConfig },
+          // The Live API locks all session configuration fields by default for
+          // ephemeral tokens. Keep the provider's documented default; the
+          // SDK's additional-field paths are easy to mis-specify and unsafe to
+          // rely on without a real token-grant integration test.
+        },
+      });
+      if (!token.name) throw new RequestFailure('LIVE_TOKEN_UNAVAILABLE', 503);
+      await sessionRef.set({ status: 'active', tokenGrantedAt: Timestamp.now() }, { merge: true });
+      res.set('Cache-Control', 'no-store');
+      res.status(200).json({
+        token: token.name,
+        sessionId,
+        model,
+        reasoningLevel: model === 'gemini-3.8-live-extended-thinking' ? reasoningLevel : null,
+        expiresAt: new Date(now + 15 * 60_000).toISOString(),
+      });
+    } catch (error) {
+      if (leaseAcquired) {
+        try {
+          await db.runTransaction(async transaction => {
+            const current = await transaction.get(sessionRef);
+            if (current.get('sessionId') === sessionId) transaction.delete(sessionRef);
+          });
+        } catch { /* fail closed; the 15-minute provider-session lease expires */ }
+      }
+      if (!(error instanceof RequestFailure)) logger.warn('Managed Live token request failed', { code: 'LIVE_TOKEN_UNAVAILABLE' });
+      sendError(res, error instanceof RequestFailure ? error : new RequestFailure('LIVE_TOKEN_UNAVAILABLE', 503));
+    }
+    return;
+  }
+
+  if (req.path === '/live-session/end') {
+    try {
+      const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+        ? req.body as Record<string, unknown> : {};
+      if (Object.keys(body).length !== 1 || typeof body.sessionId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.sessionId)) {
+        throw new RequestFailure('INVALID_REQUEST', 400);
+      }
+      await db.runTransaction(async transaction => {
+        const current = await transaction.get(db.doc(`managedAiLiveSessions/${uid}`));
+        if (current.get('sessionId') === body.sessionId && current.get('status') !== 'ended') {
+          transaction.set(db.doc(`managedAiLiveSessions/${uid}`), { status: 'ended', endedAt: Timestamp.now(), expiresAtMs: Date.now() }, { merge: true });
+        }
+      });
+      res.set('Cache-Control', 'no-store');
+      res.status(200).json({ ended: true });
+    } catch (error) { sendError(res, error); }
+    return;
+  }
+
+  if (req.path === '/models') {
+    try {
+      const entry = await db.doc(`managedAiAllowlist/${uid}`).get();
+      const privileged = allowance === 'account' && Boolean(email) && entry.get('status') === 'active'
+        && entry.get('uid') === uid && entry.get('emailLower') === email?.trim().toLowerCase();
+      const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY.value() });
+      const providerModels = new Map<string, { inputTokenLimit?: number; outputTokenLimit?: number; supportedActions?: string[] }>();
+      for await (const model of await ai.models.list({ config: { pageSize: 100 } })) {
+        const id = String(model.name || '').replace(/^models\//, '').split('/').pop() || '';
+        if (id) providerModels.set(id, model);
+      }
+      const models = SUPPORTED_MANAGED_MODELS
+        .filter(model => (privileged || model.id === DEFAULT_MODEL) && (model.functionCalling || model.interactionsApi))
+        .flatMap(model => {
+          const providerModel = providerModels.get(model.id);
+          if (!providerModel || (!model.interactionsApi && !providerModel.supportedActions?.includes('generateContent')) || !providerModel.inputTokenLimit || !providerModel.outputTokenLimit) return [];
+          return [{
+            id: model.id,
+            name: model.name,
+            description: model.description,
+            reasoningLevels: privileged ? model.reasoningLevels : model.reasoningLevels.filter(level => level === 'low' || level === 'medium'),
+            inputTokenLimit: providerModel.inputTokenLimit,
+            outputTokenLimit: providerModel.outputTokenLimit,
+            supportsFunctionCalling: model.functionCalling,
+            interactionsApi: model.interactionsApi === true,
+            sharedContextWindow: model.sharedContextWindow === true,
+          }];
+        });
+      const liveIds = privileged
+        ? ['gemini-3.8-live', 'gemini-3.8-live-extended-thinking']
+        : ['gemini-3.8-live'];
+      const liveModels = liveIds.filter(id => providerModels.get(id)?.supportedActions?.includes('bidiGenerateContent')).map(id => ({
+        id,
+        name: id === 'gemini-3.8-live' ? 'Gemini 3.8 Live' : 'Gemini 3.8 Live Extended Thinking',
+        reasoningLevels: id === 'gemini-3.8-live-extended-thinking' ? ['low', 'medium', 'high'] : [],
+      }));
+      res.set('Cache-Control', 'private, max-age=60');
+      res.status(200).json({ models, liveModels, privileged, anonymous: allowance === 'guest' });
+    } catch {
+      logger.warn('Managed model catalogue unavailable', { code: 'MODEL_CATALOG_UNAVAILABLE' });
+      res.status(503).json({ error: { code: 'MODEL_CATALOG_UNAVAILABLE' } });
+    }
     return;
   }
 
@@ -101,46 +336,112 @@ export const managedGemini = onRequest({
   catch (error) { sendError(res, error); return; }
 
   const currentTime = nowMs();
-  const refs = turnLedgerRefs(db, uid, input.turnId, input.callId, new Date(currentTime), email, allowance, PRIVILEGED_MONTHLY_LIMIT.value());
+  const refs = input.purpose === 'chat'
+    ? turnLedgerRefs(db, uid, input.turnId, input.callId, new Date(currentTime), email, allowance)
+    : briefingLedgerRefs(db, uid, input.callId, new Date(currentTime), email, allowance);
   let turnReserved = false;
+  let briefingReserved = false;
   let callReserved = false;
 
   try {
-    await reserveTurn(db, refs, currentTime);
-    turnReserved = true;
+    if (input.purpose === 'chat') {
+      await reserveTurn(db, refs as ReturnType<typeof turnLedgerRefs>, currentTime);
+      turnReserved = true;
+    } else {
+      await reserveBriefing(db, refs as ReturnType<typeof briefingLedgerRefs>, currentTime);
+      briefingReserved = true;
+    }
+
+    const modelId = input.purpose === 'briefing' ? DEFAULT_MODEL : input.model;
+    const reasoningLevel = input.purpose === 'briefing' ? 'low' : input.reasoningLevel || (allowance === 'guest' ? 'low' : 'medium');
+    authorizeManagedModel(modelId, reasoningLevel, refs.isPrivileged);
 
     const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY.value() });
-    const policyContext: Content = { role: 'user', parts: [{ text: `${String(input.config.systemInstruction || '')}\n${JSON.stringify(input.config.tools || [])}` }] };
-    const count = await ai.models.countTokens({ model: MODEL, contents: [policyContext, ...(input.contents as Content[])] });
-    if (Number(count.totalTokens || 0) > MAX_INPUT_TOKENS) throw new RequestFailure('INPUT_TOKEN_LIMIT', 413);
+    const policyModel = SUPPORTED_MANAGED_MODELS.find(model => model.id === modelId);
+    if (!policyModel) throw new RequestFailure('MODEL_UNAVAILABLE', 422);
+    // Use provider metadata for the selected model at request time. The static
+    // catalogue is an authorization list, not a substitute for current limits.
+    const modelInfo = await ai.models.get({ model: modelId });
+    if ((!policyModel.interactionsApi && !modelInfo.supportedActions?.includes('generateContent')) ||
+        !modelInfo.inputTokenLimit || !modelInfo.outputTokenLimit) {
+      throw new RequestFailure('MODEL_UNAVAILABLE', 422);
+    }
+    const requestsTools = Array.isArray(input.config.tools) && input.config.tools.length > 0;
+    if (requestsTools && !policyModel.functionCalling) {
+      throw new RequestFailure('MODEL_TOOL_CALLING_UNAVAILABLE', 422);
+    }
+    const requestedOutputTokens = input.config.maxOutputTokens;
+    if (requestedOutputTokens !== undefined && Number(requestedOutputTokens) > modelInfo.outputTokenLimit) {
+      throw new RequestFailure('OUTPUT_TOKEN_LIMIT', 413);
+    }
+    let count: Awaited<ReturnType<typeof ai.models.countTokens>>;
+    try {
+      count = await ai.models.countTokens({
+        model: modelId,
+        contents: input.contents as Content[],
+        config: {
+          systemInstruction: String(input.config.systemInstruction || ''),
+          ...(Array.isArray(input.config.tools) ? { tools: input.config.tools as Tool[] } : {}),
+        },
+      });
+    } catch {
+      // Do not send a request whose model-specific context size could not be
+      // verified. In particular, Argon uses one shared input/output window.
+      throw new RequestFailure('MODEL_CATALOG_UNAVAILABLE', 503);
+    }
+    const inputTokens = Number(count.totalTokens);
+    if (!Number.isSafeInteger(inputTokens) || inputTokens < 0) throw new RequestFailure('MODEL_CATALOG_UNAVAILABLE', 503);
+    const requestedOutput = input.config.maxOutputTokens === undefined
+      ? modelInfo.outputTokenLimit
+      : Number(input.config.maxOutputTokens);
+    if (policyModel.sharedContextWindow
+      ? inputTokens + requestedOutput > modelInfo.inputTokenLimit
+      : inputTokens > modelInfo.inputTokenLimit) throw new RequestFailure('MODEL_CONTEXT_LIMIT', 413);
 
-    await reserveGenerationCall(db, refs);
+    if (input.purpose === 'chat') await reserveGenerationCall(db, refs as ReturnType<typeof turnLedgerRefs>);
+    else await reserveBriefingGenerationCall(db, refs as ReturnType<typeof briefingLedgerRefs>);
     callReserved = true;
 
-    const response = await ai.models.generateContent({
-      model: MODEL,
-      contents: input.contents as Content[],
-      config: managedGenerationConfig(input.config),
-    });
+    const response = policyModel.interactionsApi
+      ? await generateArgonStateless({
+        apiKey: GEMINI_API_KEY.value(), contents: input.contents,
+        config: input.config, reasoningLevel,
+      })
+      : await ai.models.generateContent({
+        model: modelId,
+        contents: input.contents as Content[],
+        config: managedGenerationConfig(input.config, reasoningLevel),
+      });
     const payload = {
       text: response.text || '',
-      candidates: sanitizeManagedCandidates(response.candidates || []),
+      candidates: policyModel.interactionsApi ? (response.candidates || []) : sanitizeManagedCandidates(response.candidates || []),
       functionCalls: response.functionCalls || [],
       usageMetadata: response.usageMetadata || null,
+      model: modelId,
+      reasoningLevel,
     };
-    const complete = isCompletedUserTurn(payload);
+    if (input.purpose === 'briefing' && !payload.text.trim()) throw new RequestFailure('GENERATION_FAILED', 502);
+    const complete = input.purpose === 'briefing' || isCompletedUserTurn(payload);
     logger.info('Managed AI generation completed', {
-      model: MODEL,
+      model: modelId,
+      reasoningLevel,
+      usage: sanitizeUsageMetadata(payload.usageMetadata as Record<string, unknown> | null),
       responseTextLength: payload.text.length,
       candidateCount: payload.candidates.length,
       functionCallCount: payload.functionCalls.length,
       completedUserTurn: complete,
     });
-    await finishTurn(db, refs, complete);
+    try { await recordGenerationUsage(refs, modelId, reasoningLevel, payload.usageMetadata as Record<string, unknown> | null); }
+    catch { logger.warn('Managed AI usage metadata could not be persisted', { model: modelId, reasoningLevel }); }
+    if (input.purpose === 'chat') await finishTurn(db, refs as ReturnType<typeof turnLedgerRefs>, complete);
+    else await finishBriefing(db, refs as ReturnType<typeof briefingLedgerRefs>, complete);
     res.status(200).json(payload);
   } catch (error) {
-    if (turnReserved) {
-      try { await failTurn(db, refs, callReserved); }
+    if (briefingReserved) {
+      try { await finishBriefing(db, refs as ReturnType<typeof briefingLedgerRefs>, false); }
+      catch { /* reservation expiry and server-only ledger fail closed */ }
+    } else if (turnReserved) {
+      try { await failTurn(db, refs as ReturnType<typeof turnLedgerRefs>, callReserved); }
       catch { /* fail closed: monthly generation reservations are never refunded */ }
     }
     if (!(error instanceof RequestFailure)) logger.error('Managed AI generation failed', { code: 'GENERATION_FAILED' });

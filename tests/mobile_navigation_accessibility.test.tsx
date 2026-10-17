@@ -5,6 +5,7 @@ import App from '../App';
 import Sidebar from '../components/Sidebar';
 import { useStore } from '../store';
 import { ViewType } from '../types';
+import { mobileGestureThreshold, resolveMobileGestureIntent } from '../utils/mobileNavigationGestures';
 
 const initialCurrentView = useStore.getState().currentView;
 
@@ -82,10 +83,17 @@ describe('Navigation accessibility and active route semantics', () => {
       render(<App />);
 
       const mobileNav = screen.getByRole('navigation', { name: /mobile navigation/i });
-      const homeBtn = screen.getByRole('button', { name: 'Home' });
-      const chatBtn = screen.getByRole('button', { name: 'Chat' });
-      const graphBtn = screen.getByRole('button', { name: 'Graph' });
-      const calendarBtn = screen.getByRole('button', { name: 'Calendar' });
+      const homeBtn = screen.getByRole('button', { name: 'Open Home' });
+      const chatBtn = screen.getByRole('button', { name: 'Open Chat' });
+      const graphBtn = screen.getByRole('button', { name: 'Open Graph' });
+      const calendarBtn = screen.getByRole('button', { name: 'Open Calendar' });
+      const settingsBtn = screen.getByRole('button', { name: 'Open Settings' });
+      const navButtons = [...mobileNav.querySelectorAll('button')];
+      expect(navButtons.map(button => button.getAttribute('aria-label'))).toEqual([
+        'Open Home', 'Open Graph', 'Open Chat', 'Open Calendar', 'Open Settings',
+      ]);
+      expect(navButtons[2]).toBe(chatBtn);
+      expect(navButtons[4]).toBe(settingsBtn);
 
       // Initially on dashboard (Home)
       expect(homeBtn).toHaveAttribute('aria-current', 'page');
@@ -127,8 +135,8 @@ describe('Navigation accessibility and active route semantics', () => {
     it('provides accessible dialog semantics and keyboard dismissal for mobile menu overlay', () => {
       render(<App />);
 
-      const moreBtn = screen.getByRole('button', { name: 'More' });
-      act(() => { fireEvent.click(moreBtn); });
+      const menuButton = screen.getByRole('button', { name: /open navigation menu/i });
+      act(() => { fireEvent.click(menuButton); });
 
       const menuDialog = screen.getByRole('dialog', { name: /mobile navigation/i });
       expect(menuDialog).toBeInTheDocument();
@@ -141,5 +149,20 @@ describe('Navigation accessibility and active route semantics', () => {
       act(() => { fireEvent.keyDown(document, { key: 'Escape' }); });
       expect(screen.queryByRole('dialog', { name: /mobile navigation/i })).not.toBeInTheDocument();
     });
+  });
+});
+
+describe('touch navigation gesture thresholds', () => {
+  it('scales the deliberate drag distance for narrow and wide phones', () => {
+    expect(mobileGestureThreshold(320)).toBe(80);
+    expect(mobileGestureThreshold(390)).toBe(98);
+    expect(mobileGestureThreshold(480)).toBe(112);
+  });
+
+  it('requires a deliberate dominant drag and keeps graph/pinch interactions outside the resolver', () => {
+    expect(resolveMobileGestureIntent({ deltaX: -60, deltaY: 4, startX: 180, startedAtTop: true, canNavigateToChat: true, distanceThresholdPx: 98 })).toBeNull();
+    expect(resolveMobileGestureIntent({ deltaX: -120, deltaY: 4, startX: 180, startedAtTop: true, canNavigateToChat: true, distanceThresholdPx: 98 })).toBe('open-chat');
+    expect(resolveMobileGestureIntent({ deltaX: 120, deltaY: 2, startX: 12, startedAtTop: true, canNavigateToChat: true, distanceThresholdPx: 98 })).toBe('open-menu');
+    expect(resolveMobileGestureIntent({ deltaX: 10, deltaY: 120, startX: 180, startedAtTop: false, canNavigateToChat: true, distanceThresholdPx: 98 })).toBeNull();
   });
 });

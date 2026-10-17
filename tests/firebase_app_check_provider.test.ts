@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const originalMatchMedia = window.matchMedia;
+
 const authMocks = vi.hoisted(() => ({
   primaryAuth: { currentUser: null as unknown, authStateReady: vi.fn().mockResolvedValue(undefined) },
   guestAuth: { currentUser: null as unknown, authStateReady: vi.fn().mockResolvedValue(undefined) },
   signInAnonymously: vi.fn().mockResolvedValue({ user: { uid: 'guest-user' } }),
+  signInWithPopup: vi.fn(),
+  signInWithRedirect: vi.fn().mockResolvedValue(undefined),
+  getRedirectResult: vi.fn().mockResolvedValue(null),
+  credentialFromResult: vi.fn().mockReturnValue({ accessToken: null }),
 }));
 
 vi.mock('firebase/app', () => ({
@@ -31,8 +37,13 @@ vi.mock('firebase/auth', () => ({
   signInAnonymously: authMocks.signInAnonymously,
   signInWithEmailAndPassword: vi.fn().mockResolvedValue({ user: { uid: 'test-user' } }),
   createUserWithEmailAndPassword: vi.fn(),
-  signInWithPopup: vi.fn(),
-  GoogleAuthProvider: class { addScope() {} },
+  signInWithPopup: authMocks.signInWithPopup,
+  signInWithRedirect: authMocks.signInWithRedirect,
+  getRedirectResult: authMocks.getRedirectResult,
+  GoogleAuthProvider: class {
+    static credentialFromResult = authMocks.credentialFromResult;
+    addScope() {}
+  },
   signOut: vi.fn(),
   onAuthStateChanged: vi.fn(),
 }));
@@ -53,6 +64,14 @@ describe('Firebase App Check provider wiring', () => {
     authMocks.primaryAuth.authStateReady.mockReset().mockResolvedValue(undefined);
     authMocks.guestAuth.authStateReady.mockReset().mockResolvedValue(undefined);
     authMocks.signInAnonymously.mockReset().mockResolvedValue({ user: { uid: 'guest-user' } });
+    authMocks.signInWithPopup.mockReset();
+    authMocks.signInWithRedirect.mockReset().mockResolvedValue(undefined);
+    authMocks.getRedirectResult.mockReset().mockResolvedValue(null);
+    authMocks.credentialFromResult.mockReset().mockReturnValue({ accessToken: null });
+    localStorage.clear();
+    if (originalMatchMedia) Object.defineProperty(window, 'matchMedia', { configurable: true, value: originalMatchMedia });
+    else Reflect.deleteProperty(window, 'matchMedia');
+    vi.restoreAllMocks();
   });
 
   it('uses the registered Enterprise provider and automatically refreshes tokens', async () => {
@@ -93,6 +112,54 @@ describe('Firebase App Check provider wiring', () => {
     expect(vi.mocked(setPersistence).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(signInWithEmailAndPassword).mock.invocationCallOrder[0],
     );
+  });
+
+  it('uses redirect-based Google sign-in on mobile instead of a popup', async () => {
+    vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
+    vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
+    Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn().mockReturnValue({ matches: true }) });
+
+    const { signInWithGoogle } = await import('../services/firebase');
+    const result = await signInWithGoogle();
+
+    expect(result).toMatchObject({ user: null, error: null, redirecting: true });
+    expect(authMocks.signInWithRedirect).toHaveBeenCalledOnce();
+    expect(authMocks.signInWithPopup).not.toHaveBeenCalled();
+  });
+
+  it('falls back to redirect when a desktop popup is blocked', async () => {
+    vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
+    vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
+    Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn().mockReturnValue({ matches: false }) });
+    authMocks.signInWithPopup.mockRejectedValue({ code: 'auth/popup-blocked', message: 'Popup blocked' });
+
+    const { signInWithGoogle } = await import('../services/firebase');
+    const result = await signInWithGoogle();
+
+    expect(result).toMatchObject({ user: null, error: null, redirecting: true });
+    expect(authMocks.signInWithPopup).toHaveBeenCalledOnce();
+    expect(authMocks.signInWithRedirect).toHaveBeenCalledOnce();
+  });
+
+  it('restores the Google redirect result and its Calendar access token after returning', async () => {
+    vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
+    vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
+    const user = { uid: 'google-user' };
+    authMocks.getRedirectResult.mockResolvedValue({ user });
+    authMocks.credentialFromResult.mockReturnValue({ accessToken: 'calendar-access-token' });
+
+    const { completeGoogleRedirectSignIn, getGoogleAccessToken } = await import('../services/firebase');
+    const result = await completeGoogleRedirectSignIn();
+
+    expect(authMocks.getRedirectResult).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ user, error: null, accessToken: 'calendar-access-token' });
+    expect(getGoogleAccessToken()).toBe('calendar-access-token');
   });
 
   it('waits for restored primary Auth before selecting a guest identity', async () => {

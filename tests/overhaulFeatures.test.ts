@@ -447,6 +447,7 @@ describe('TASK-P0-03: Gemini Live Audio Transcription & Chat History Persistence
         useStore.setState({
             activeSessionId: 'live-test-session',
             messages: [],
+            settings: { ...useStore.getState().settings, save_voice_transcripts: true },
             chatSessions: [
                 { id: 'live-test-session', title: 'Live Voice Test', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
             ]
@@ -522,6 +523,7 @@ describe('TASK-P0-03: Gemini Live Audio Transcription & Chat History Persistence
             activeSessionId: 'live-ops-session',
             messages: [],
             pendingOps: null,
+            settings: { ...useStore.getState().settings, save_voice_transcripts: true },
             chatSessions: [
                 { id: 'live-ops-session', title: 'Live Ops Test', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
             ]
@@ -607,6 +609,7 @@ describe('TASK-P0-03: Gemini Live Audio Transcription & Chat History Persistence
         useStore.setState({
             activeSessionId: 'live-interrupted-session',
             messages: [],
+            settings: { ...useStore.getState().settings, save_voice_transcripts: true },
             chatSessions: [
                 { id: 'live-interrupted-session', title: 'Interrupt Test', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }
             ]

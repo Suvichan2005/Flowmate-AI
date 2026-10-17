@@ -30,6 +30,9 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose, onFallbackToCh
   const [status, setStatus] = useState<LiveVoiceStatus>('initializing');
   const [statusDetails, setStatusDetails] = useState<string>('');
   const [transcript, setTranscript] = useState<Subtitle[]>([]);
+  const [providerUsage, setProviderUsage] = useState<Record<string, unknown> | null>(null);
+  const statusRef = useRef(status);
+  statusRef.current = status;
   const managerRef = useRef<LiveManager | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   
@@ -43,7 +46,7 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose, onFallbackToCh
 
   const handleStatusChange = useCallback((s: LiveVoiceStatus, details?: string) => {
     setStatus(s);
-    if (details) setStatusDetails(details);
+    setStatusDetails(details || '');
   }, []);
 
   const handleTranscription = useCallback((text: string, source: 'user' | 'model') => {
@@ -67,6 +70,7 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose, onFallbackToCh
     
     manager.onStatusChange = handleStatusChange;
     manager.onTranscription = handleTranscription;
+    manager.onUsageChange = setProviderUsage;
 
     manager.connect();
   }, [handleStatusChange, handleTranscription]);
@@ -88,7 +92,8 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose, onFallbackToCh
       ctx.clearRect(0, 0, width, height);
 
       const manager = managerRef.current;
-      const isVoiceActive = manager?.analyser && (status === 'active' || status === 'speaking' || status === 'listening');
+      const activeStatus = statusRef.current;
+      const isVoiceActive = manager?.analyser && (activeStatus === 'active' || activeStatus === 'speaking' || activeStatus === 'listening');
 
       if (manager?.analyser && isVoiceActive) {
         const bufferLength = manager.analyser.frequencyBinCount;
@@ -158,20 +163,19 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose, onFallbackToCh
 
     draw();
 
-    // Close on Escape key
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        handleClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-
     return () => {
       cancelAnimationFrame(animationRef.current);
-      window.removeEventListener('keydown', handleKeyDown);
       managerRef.current?.disconnect();
     };
-  }, [initManager, status]);
+  }, [initManager]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') handleClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Auto-scroll transcript drawer
   useEffect(() => {
@@ -246,7 +250,7 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose, onFallbackToCh
           ) : status === 'offline_fallback' ? (
             <>
               <WifiOff className="w-4 h-4 text-amber-400 shrink-0" />
-              <span className="text-xs font-semibold text-amber-300">Offline Fallback</span>
+              <span className="text-xs font-semibold text-amber-300">Offline</span>
             </>
           ) : status === 'error' ? (
             <>
@@ -254,6 +258,11 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose, onFallbackToCh
               <span className="text-xs font-medium text-red-400 truncate">
                 {statusDetails || 'Connection error'}
               </span>
+            </>
+          ) : status === 'thinking' ? (
+            <>
+              <Loader2 className="w-4 h-4 text-indigo-400 animate-spin shrink-0" />
+              <span className="text-xs font-semibold text-indigo-300">Thinking</span>
             </>
           ) : status === 'active' ? (
             <>
@@ -398,8 +407,12 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose, onFallbackToCh
             {status === 'active' || status === 'listening'
               ? 'Say "Schedule meeting tomorrow at 3pm" or "Note that I prefer morning focus"'
               : status === 'connecting'
-              ? 'Starting live audio session...'
-              : 'Voice session ready.'}
+              ? (statusDetails || 'Starting live audio session…')
+              : status === 'thinking'
+                ? 'Flowmate is processing the current voice turn…'
+                : status === 'speaking'
+                  ? 'Flowmate is speaking…'
+                  : statusDetails || 'Live voice is not connected yet.'}
           </div>
         ) : (
           transcript.map((t, idx) => (
@@ -428,6 +441,9 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose, onFallbackToCh
           ))
         )}
       </div>
+      {providerUsage && <p className="z-10 text-[10px] text-slate-500" aria-live="polite">
+        Provider-reported Live usage update: {Number.isFinite(Number(providerUsage.promptTokenCount)) ? `${Number(providerUsage.promptTokenCount).toLocaleString()} input` : 'input unavailable'} · {Number.isFinite(Number(providerUsage.candidatesTokenCount)) ? `${Number(providerUsage.candidatesTokenCount).toLocaleString()} output` : 'output unavailable'} tokens. These figures are not a server-enforced voice budget.
+      </p>}
     </div>
   );
 };

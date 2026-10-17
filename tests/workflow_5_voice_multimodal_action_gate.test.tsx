@@ -11,7 +11,7 @@
  *    - Staged into pendingOps with SHA-256 plan fingerprint
  *    - ZERO silent direct mutations to kernelEntities
  * 4. Graceful Offline & Permission Degradation:
- *    - Device offline enters offline_fallback
+ *    - Missing AI provider reports an actionable unavailable state
  *    - Network drop halts audio and enters offline_fallback
  *    - NotAllowedError reports clean permission guidance
  * 5. LiveVoiceModal UI Integration:
@@ -141,23 +141,47 @@ const mockLiveSessionInstance = {
 };
 
 const mockHasAiApiKey = vi.fn(() => true);
+const mockHasManagedAiIdentity = vi.fn(() => false);
 
 vi.mock('../services/ai/client', () => ({
   AI_MODELS: {
-    LIVE: 'gemini-2.0-flash-live',
+    LIVE: 'gemini-3.8-live',
   },
   hasAiApiKey: () => mockHasAiApiKey(),
+  getEphemeralApiKey: () => 'synthetic-byok-key',
+  getByokLiveClient: () => ({
+    live: {
+      connect: vi.fn().mockImplementation((params) => {
+        mockLiveSessionCallbacks = params.callbacks || {};
+        setTimeout(() => {
+          if (mockLiveSessionCallbacks.onopen) mockLiveSessionCallbacks.onopen();
+          if (mockLiveSessionCallbacks.onmessage) void mockLiveSessionCallbacks.onmessage({ setupComplete: {} });
+        }, 10);
+        return Promise.resolve(mockLiveSessionInstance);
+      }),
+    },
+  }),
+  getByokLiveModelOptions: async () => [
+    { id: 'gemini-3.8-live', name: 'Gemini 3.8 Live', reasoningLevels: [] },
+  ],
   getAiClient: () => ({
     live: {
       connect: vi.fn().mockImplementation((params) => {
         mockLiveSessionCallbacks = params.callbacks || {};
         setTimeout(() => {
           if (mockLiveSessionCallbacks.onopen) mockLiveSessionCallbacks.onopen();
+          if (mockLiveSessionCallbacks.onmessage) void mockLiveSessionCallbacks.onmessage({ setupComplete: {} });
         }, 10);
         return Promise.resolve(mockLiveSessionInstance);
       }),
     },
   }),
+}));
+
+vi.mock('../services/ai/managedClient', () => ({
+  createManagedLiveSession: vi.fn(),
+  endManagedLiveSession: vi.fn(),
+  hasManagedAiIdentity: () => mockHasManagedAiIdentity(),
 }));
 
 describe('Workflow 5: Multimodal & Voice Action Execution with Graceful Fallbacks', () => {
@@ -402,19 +426,22 @@ describe('Workflow 5: Multimodal & Voice Action Execution with Graceful Fallback
   });
 
   describe('3. Offline & Error Fallback Resilience', () => {
-    it('immediately transitions to offline_fallback when connecting without an API key', async () => {
+    it('reports unavailable when neither managed Live nor a personal key is available', async () => {
       mockHasAiApiKey.mockReturnValueOnce(false);
       const manager = new LiveManager();
       const statusTransitions: LiveVoiceStatus[] = [];
+      let reportedDetails = '';
 
-      manager.onStatusChange = (status) => {
+      manager.onStatusChange = (status, details) => {
         statusTransitions.push(status);
+        if (details) reportedDetails = details;
       };
 
       await manager.connect();
 
-      expect(manager.getStatus()).toBe('offline_fallback');
-      expect(statusTransitions).toContain('offline_fallback');
+      expect(manager.getStatus()).toBe('error');
+      expect(statusTransitions).toContain('error');
+      expect(reportedDetails).toContain('no managed session or personal Gemini key');
     });
 
     it('immediately transitions to offline_fallback when connecting while offline', async () => {

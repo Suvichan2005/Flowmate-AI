@@ -37,7 +37,7 @@ describe('completed assistant message persistence', () => {
       branchQueues: {
         'b_main_sync-session': [{
           id: 'queue-sync-test', branch_id: 'b_main_sync-session', user_message: userMessage,
-          status: 'queued', enqueued_at: Date.now(),
+          owner_uid: 'local', status: 'queued', enqueued_at: Date.now(),
         }],
       },
     });

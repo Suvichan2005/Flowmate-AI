@@ -5,9 +5,10 @@ import { getManagedAiEndpoint } from '../services/ai/managedClient';
 
 type Overview = {
   enabled: boolean;
+  liveEnabled: boolean;
   month: string;
-  ordinary: { modelCalls: number; monthlyLimit: number };
-  privileged: { modelCalls: number; monthlyLimit: number };
+  ordinary: { modelCalls: number; applicationLimit: number | null };
+  privileged: { accounts: number; noApplicationUsageCeiling: boolean };
   allowlist: Array<{ email: string; successfulTurns: number; modelCallsThisMonth: number; lastUsedAt: string | null }>;
   pendingInvitations: Array<{ email: string }>;
 };
@@ -83,17 +84,26 @@ export default function ManagedAiAdminPanel() {
         <label className="flex items-center gap-2 text-sm text-slate-200">
           <input type="checkbox" checked={overview.enabled} disabled={busy} onChange={event => {
             const enabled = event.target.checked;
-            if (!enabled || window.confirm('Enable managed Gemini for eligible users? User and monthly call caps remain enforced.')) {
+            if (!enabled || window.confirm('Enable managed Gemini for eligible users? Requests will be billed to the configured Google AI project; this toggle does not set a model-call budget.')) {
               void mutate({ action: 'setEnabled', enabled });
             }
           }} />
           Managed AI enabled
         </label>
+        <label className="flex items-center gap-2 text-sm text-slate-200">
+          <input type="checkbox" checked={overview.liveEnabled} disabled={busy || !overview.enabled} onChange={event => {
+            const enabled = event.target.checked;
+            if (!enabled || window.confirm('Enable managed Live voice token issuance for eligible users? Audio use is provider-billed and is not covered by chat or briefing counters.')) {
+              void mutate({ action: 'setLiveEnabled', enabled });
+            }
+          }} />
+          Managed Live voice enabled
+        </label>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 text-sm">
-        <p className="rounded-lg border border-slate-700 p-3">Ordinary budget · {overview.ordinary.modelCalls} / {overview.ordinary.monthlyLimit} calls ({overview.month})</p>
-        <p className="rounded-lg border border-slate-700 p-3">Privileged budget · {overview.privileged.modelCalls} / {overview.privileged.monthlyLimit} calls ({overview.month})</p>
+        <p className="rounded-lg border border-slate-700 p-3">Ordinary managed model calls · {overview.ordinary.modelCalls} recorded this month ({overview.month}); no Flowmate monthly call cap.</p>
+        <p className="rounded-lg border border-slate-700 p-3">Privileged accounts · no Flowmate usage ceiling.</p>
       </div>
 
       <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); void mutate({ action: 'add', email }); }}>

@@ -114,9 +114,23 @@ const mockLiveSessionInstance = {
 
 vi.mock('../services/ai/client', () => ({
   AI_MODELS: {
-    LIVE: 'gemini-2.0-flash-live',
+    LIVE: 'gemini-3.8-live',
   },
   hasAiApiKey: () => true,
+  getEphemeralApiKey: () => 'synthetic-byok-key',
+  getByokLiveModelOptions: async () => [
+    { id: 'gemini-3.8-live', name: 'Gemini 3.8 Live', reasoningLevels: [] },
+  ],
+  getByokLiveClient: () => ({
+    live: {
+      connect: vi.fn().mockImplementation((params) => {
+        mockLiveSessionCallbacks = params.callbacks || {};
+        if (mockLiveSessionCallbacks.onopen) mockLiveSessionCallbacks.onopen();
+        if (mockLiveSessionCallbacks.onmessage) void mockLiveSessionCallbacks.onmessage({ setupComplete: {} } as LiveServerMessage);
+        return Promise.resolve(mockLiveSessionInstance);
+      }),
+    },
+  }),
   getAiClient: () => ({
     live: {
       connect: vi.fn().mockImplementation((params) => {

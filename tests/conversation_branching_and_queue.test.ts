@@ -12,7 +12,7 @@
  * 8. sanitizeSecrets redacts sensitive credentials
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useStore } from '../store';
 import { resolveBranchHistory, getSiblingVersions, findLeafMessage, sanitizeSecrets } from '../utils/conversationGraph';
 import { Message } from '../types';
@@ -35,6 +35,7 @@ describe('Phase 3: Conversation Branching & Graph DAG', () => {
       activeBranchId: 'b_main_test-session',
       branchQueues: {},
       unsentDrafts: {},
+      currentUser: null,
       developerModeEnabled: false,
     });
   });
@@ -328,6 +329,48 @@ describe('Phase 3: Conversation Branching & Graph DAG', () => {
     const state = useStore.getState();
     const userMsgs = state.messages.filter(m => m.id === submissionId);
     expect(userMsgs).toHaveLength(1);
+  });
+
+  it('does not automatically replay an expired provider lease after a tab interruption', async () => {
+    const userMessageId = useStore.getState().addMessage('user', 'A request with an uncertain outcome', undefined, null, 'test-session');
+    const userMessage = useStore.getState().messages.find(message => message.id === userMessageId)!;
+    const assistantMessageId = useStore.getState().addMessage('assistant', '', undefined, null, 'test-session');
+    useStore.setState(state => ({
+      messages: state.messages.map(message => message.id === assistantMessageId ? { ...message, parent_id: userMessageId, status: 'streaming' } : message),
+      branchQueues: {
+        'b_main_test-session': [{
+          id: 'expired-lease', branch_id: 'b_main_test-session', user_message: userMessage,
+          owner_uid: 'local', status: 'leased', enqueued_at: Date.now() - 120_000, lease_expires_at: Date.now() - 1,
+        }],
+      },
+      activeLease: null,
+    }));
+    const execute = vi.fn();
+    useStore.getState().registerTurnExecutor(execute);
+
+    await useStore.getState().processBranchQueue('b_main_test-session');
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(useStore.getState().branchQueues['b_main_test-session'][0].status).toBe('needs_action');
+    expect(useStore.getState().messages.find(message => message.id === userMessageId)?.status).toBe('interrupted');
+    expect(useStore.getState().messages.find(message => message.id === assistantMessageId)?.status).toBe('interrupted');
+  });
+
+  it('holds queued sends for explicit review when the Firebase identity changes', async () => {
+    useStore.setState({ currentUser: { uid: 'account-A' } as any });
+    const queued = useStore.getState().enqueueUserMessage('Private draft from account A');
+    const execute = vi.fn();
+    useStore.getState().registerTurnExecutor(execute);
+
+    useStore.setState({ currentUser: { uid: 'account-B' } as any });
+    await useStore.getState().processBranchQueue('b_main_test-session');
+
+    const state = useStore.getState();
+    const held = state.branchQueues['b_main_test-session'].find(item => item.id === queued.id);
+    expect(execute).not.toHaveBeenCalled();
+    expect(held?.owner_uid).toBe('account-A');
+    expect(held?.status).toBe('needs_action');
+    expect(held?.error).toContain('different or unknown account');
   });
 
   it('Regression 5: The original branch and its descendants remain unchanged', async () => {

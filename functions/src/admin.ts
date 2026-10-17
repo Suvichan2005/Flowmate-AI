@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
 import { Timestamp, type Firestore } from 'firebase-admin/firestore';
 import type { Request, Response } from 'express';
-import { MONTHLY_GENERATION_LIMIT, monthKey } from './policy.js';
+import { monthKey } from './policy.js';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -30,33 +30,32 @@ async function requireAdmin(db: Firestore, identity: AdminIdentity): Promise<boo
   return Array.isArray(adminUids) && adminUids.includes(identity.uid);
 }
 
-async function readAccessOverview(db: Firestore, privilegedMonthlyLimit: number) {
+async function readAccessOverview(db: Firestore) {
   const month = monthKey(new Date());
-  const [allowlist, pending, ordinaryUsage, privilegedUsage, control] = await Promise.all([
+  const [allowlist, pending, ordinaryUsage, control, liveControl] = await Promise.all([
     db.collection('managedAiAllowlist').where('status', '==', 'active').get(),
     db.collection('managedAiPendingInvitations').where('status', '==', 'pending').get(),
     db.doc(`managedAiMonthly/${month}`).get(),
-    db.doc(`managedAiPrivilegedMonthly/${month}`).get(),
     db.doc('system/managedAi').get(),
+    db.doc('system/managedLive').get(),
   ]);
   const activeEntries = await Promise.all(allowlist.docs.map(async entry => {
     const uid = String(entry.get('uid') || entry.id);
     const usage = await db.doc(`managedAiPrivilegedUsers/${uid}`).get();
-    const accountMonth = await db.doc(`managedAiPrivilegedUserMonthly/${month}_${digest(uid)}`).get();
     return {
       uid,
       email: entry.get('emailLower') || '',
       status: 'active',
       successfulTurns: Number(usage.get('successfulTurns') || 0),
-      modelCallsThisMonth: Number(accountMonth.get('callsReserved') || 0),
       lastUsedAt: usage.get('lastUsedAt')?.toDate?.()?.toISOString?.() || null,
     };
   }));
   return {
     enabled: control.get('enabled') === true,
+    liveEnabled: liveControl.get('enabled') === true,
     month,
-    ordinary: { modelCalls: Number(ordinaryUsage.get('callsReserved') || 0), monthlyLimit: MONTHLY_GENERATION_LIMIT },
-    privileged: { modelCalls: Number(privilegedUsage.get('callsReserved') || 0), monthlyLimit: privilegedMonthlyLimit },
+    ordinary: { modelCalls: Number(ordinaryUsage.get('callsReserved') || 0), applicationLimit: null, usageIsTelemetryOnly: true },
+    privileged: { accounts: activeEntries.length, noApplicationUsageCeiling: true },
     allowlist: activeEntries,
     pendingInvitations: pending.docs.map(entry => ({ email: entry.get('emailLower') || '', status: 'pending' })),
   };
@@ -154,7 +153,6 @@ export async function handleManagedAiAdmin(
   req: Request,
   res: Response,
   identity: AdminIdentity,
-  privilegedMonthlyLimit: number,
 ): Promise<boolean> {
   if (req.path !== '/admin/access') return false;
   if (req.method !== 'GET' && req.method !== 'POST') { fail(res, 405, 'METHOD_NOT_ALLOWED'); return true; }
@@ -165,7 +163,7 @@ export async function handleManagedAiAdmin(
 
   try {
     if (req.method === 'GET') {
-      res.status(200).json(await readAccessOverview(db, privilegedMonthlyLimit));
+      res.status(200).json(await readAccessOverview(db));
       return true;
     }
     const body = req.body as Record<string, unknown> | null;
@@ -200,6 +198,17 @@ export async function handleManagedAiAdmin(
           action: body.enabled ? 'managed_ai_enable' : 'managed_ai_disable',
           createdAt: timestamp,
         });
+      });
+      res.status(200).json({ enabled: body.enabled });
+      return true;
+    }
+    if (body.action === 'setLiveEnabled' && Object.keys(body).every(key => ['action', 'enabled'].includes(key)) && typeof body.enabled === 'boolean') {
+      const controlRef = db.doc('system/managedLive');
+      const audit = db.collection('managedAiAdminAudit').doc(randomUUID());
+      await db.runTransaction(async transaction => {
+        const timestamp = Timestamp.now();
+        transaction.set(controlRef, { enabled: body.enabled, updatedAt: timestamp, updatedBy: identity.uid }, { merge: true });
+        transaction.create(audit, { actorUid: identity.uid, action: body.enabled ? 'managed_live_enable' : 'managed_live_disable', createdAt: timestamp });
       });
       res.status(200).json({ enabled: body.enabled });
       return true;

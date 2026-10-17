@@ -16,6 +16,7 @@ import {
     writeBatch,
     serverTimestamp,
     Timestamp,
+    deleteField,
     onSnapshot,
     Unsubscribe,
     query,
@@ -37,6 +38,8 @@ import {
 } from '../types';
 import { isDemoSyncBlocked } from './syncManager';
 import { isLegacySyntheticEntity } from './legacySyntheticEntity';
+import { MODEL_PREFERENCE_FIELDS } from './modelPreferenceSync';
+export { mergeCloudSettings } from './modelPreferenceSync';
 
 // --- Collection Paths ---
 
@@ -669,8 +672,18 @@ export async function saveUserConfig(
     if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
 
     try {
+        const { settings, ...otherConfig } = config;
+        const safePayload: Record<string, unknown> = sanitizeForFirestore(otherConfig) as Record<string, unknown>;
+        if (settings) {
+            const safeSettings = sanitizeForFirestore(settings) as Record<string, unknown>;
+            if (settings.sync_ai_preferences !== true) {
+                // Revoking consent also clears preferences that were synced earlier.
+                for (const key of MODEL_PREFERENCE_FIELDS) safeSettings[key] = deleteField();
+            }
+            safePayload.settings = safeSettings;
+        }
         await setDoc(userDoc(userId), {
-            ...sanitizeForFirestore(config),
+            ...safePayload,
             lastSyncedAt: serverTimestamp(),
             schemaVersion: 2,
         }, { merge: true });

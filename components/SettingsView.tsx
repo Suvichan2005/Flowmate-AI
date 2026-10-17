@@ -19,6 +19,9 @@ import { UserSettings, FeatureToggles } from '../types';
 import { getEphemeralApiKey, setEphemeralApiKey, hasAiApiKey } from '../services/ai/client';
 import { hasManagedAiIdentity } from '../services/ai/managedClient';
 import ManagedAiAdminPanel from './ManagedAiAdminPanel';
+import AiModelSelector from './AiModelSelector';
+import ManagedAiUsagePanel from './ManagedAiUsagePanel';
+import { clearOnboardingProfile } from '../services/onboardingProfile';
 
 const DEFAULT_FEATURE_TOGGLES: FeatureToggles = {
   food_tracking: true,
@@ -28,7 +31,7 @@ const DEFAULT_FEATURE_TOGGLES: FeatureToggles = {
   quick_streaks: true,
 };
 
-const SettingsView: React.FC = () => {
+const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboarding }) => {
   const { settings, updateSettings, entities, relationships, messages, importData, kernelEntities, applyOperations, deleteEntity } = useStore();
   const currentUser = useStore(state => state.currentUser);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -46,6 +49,7 @@ const SettingsView: React.FC = () => {
   // Ephemeral Gemini API Key State
   const [apiKeyInput, setApiKeyInput] = useState<string>(() => getEphemeralApiKey() || '');
   const [keySavedToast, setKeySavedToast] = useState(false);
+  const [profileMessage, setProfileMessage] = useState('');
 
   const memoryEntities = Object.values(kernelEntities || {})
     .filter(e => e.schema_id === 'system/memory_item' && e.lifecycle.deleted_at === null)
@@ -236,6 +240,23 @@ const SettingsView: React.FC = () => {
 
         <WorkspaceStatus detailed />
         <AppearanceSettings />
+        <section className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+          <h2 className="text-lg font-semibold text-slate-100">Your Flowmate profile</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-400">Review the optional context you shared during setup. It stays in this browser and is added to AI requests only if you opted in.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button type="button" onClick={onShowOnboarding} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-200 hover:border-emerald-500 hover:text-emerald-200">Review onboarding answers</button>
+            <button type="button" onClick={() => {
+              if (!window.confirm('Clear the optional onboarding answers saved in this browser? This does not change your workspace or conversations.')) return;
+              try {
+                clearOnboardingProfile(currentUser?.uid || 'guest');
+                setProfileMessage('Your local onboarding answers and draft were cleared.');
+              } catch {
+                setProfileMessage('Flowmate could not clear this browser’s onboarding answers.');
+              }
+            }} className="rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 hover:border-rose-500/60 hover:text-rose-200">Clear saved answers</button>
+          </div>
+          {profileMessage && <p role="status" className="mt-2 text-xs text-slate-400">{profileMessage}</p>}
+        </section>
         {import.meta.env.DEV && <section aria-label="Developer and experimental tools" className="p-4 border border-slate-700 rounded-lg space-y-3">
           <h2 className="text-lg text-slate-100">Developer / Experimental</h2>
           <p className="text-sm text-slate-400">Development-only prototypes, separate from normal workspace behavior.</p>
@@ -245,23 +266,33 @@ const SettingsView: React.FC = () => {
         {/* Model & API Key Settings */}
         <section>
           <h2 className="text-lg font-semibold text-slate-200 mb-4">AI Model & Runtime Access</h2>
+          <AiModelSelector />
+          <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm">
+            <input
+              type="checkbox"
+              checked={settings.sync_ai_preferences === true}
+              onChange={event => updateSettings({ sync_ai_preferences: event.target.checked })}
+              className="mt-0.5 accent-emerald-500"
+            />
+            <span>
+              <span className="block font-medium text-slate-200">Sync model and reasoning choices to my account</span>
+              <span className="mt-1 block text-xs leading-5 text-slate-400">Off by default. When enabled, your selected text and Live models and reasoning levels sync across your signed-in devices. Turning it off removes those preferences from cloud settings.</span>
+            </span>
+          </label>
+          <ManagedAiUsagePanel />
+          <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm">
+            <input
+              type="checkbox"
+              checked={settings.save_voice_transcripts === true}
+              onChange={event => updateSettings({ save_voice_transcripts: event.target.checked })}
+              className="mt-0.5 accent-emerald-500"
+            />
+            <span>
+              <span className="block font-medium text-slate-200">Save Live voice transcripts in chat history</span>
+              <span className="mt-1 block text-xs leading-5 text-slate-400">Off by default. Live captions remain visible during the current session, but spoken text is not added to saved conversations unless you turn this on. Raw audio is not stored by Flowmate.</span>
+            </span>
+          </label>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
-            <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Preferred Model for your own Gemini key</label>
-              <select
-                value={settings.preferred_model}
-                onChange={(e) => handleChange('preferred_model', e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
-              >
-                <option value="gemini-3.8-flash">Gemini 3.8 Flash (Recommended)</option>
-                <option value="gemini-3.7-flash">Gemini 3.7 Flash (Stable)</option>
-                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Advanced)</option>
-              </select>
-              <p className="text-xs text-slate-500 mt-2">
-                Managed access uses Gemini 3.8 Flash. This preference applies only when you use your own Gemini API key.
-              </p>
-            </div>
-
             <div className="pt-4 border-t border-slate-800/80">
               <div className="flex items-center justify-between mb-2">
                 <label className="block text-sm font-medium text-slate-200">
@@ -272,7 +303,7 @@ const SettingsView: React.FC = () => {
                     ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                     : 'bg-slate-800 text-slate-400 border border-slate-700'
                 }`}>
-                  {hasAiApiKey() ? 'Your key active' : hasManagedAiIdentity() ? 'Included access available' : currentUser ? 'Managed access unavailable here' : 'Sign in for included access'}
+                  {hasAiApiKey() ? 'Your key active' : hasManagedAiIdentity() ? 'Guest and account access available' : currentUser ? 'Managed access unavailable here' : 'AI provider unavailable here'}
                 </span>
               </div>
               <div className="flex gap-2">
@@ -314,7 +345,7 @@ const SettingsView: React.FC = () => {
                   <li>Your key is held <strong>in memory for this browser session only</strong>.</li>
                   <li>It is <strong>never</strong> written to disk, localStorage, or git.</li>
                   <li>It is sent directly from your browser only to Google's official Gemini endpoint.</li>
-                  <li>Signed-in users receive 10 successful AI turns with Flowmate managed Gemini access for the lifetime of the account. After that, add your own key here to continue. BYOK keys remain browser-session-only.</li>
+                  <li>Guests receive 10 successful managed AI chat turns. A verified account receives 50 lifetime turns; after either allowance, add your own key here to continue. BYOK keys remain browser-session-only.</li>
                 </ul>
               </div>
             </div>

@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Paperclip, Mic, MicOff, Send, X, Image, Loader2, Square } from 'lucide-react';
 import { sanitizeUserInput } from '../utils/validation';
 import { hasAiApiKey } from '../services/ai/client';
+import { hasManagedAiIdentity } from '../services/ai/managedClient';
+import AiModelSelector from './AiModelSelector';
 
 interface UnifiedChatInputProps {
     value?: string;
@@ -195,9 +197,13 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
     };
 
     const hasContent = input.trim().length > 0 || attachment;
+    const draftCharacterCount = Array.from(input).length;
+    const draftTokenEstimate = Math.ceil(draftCharacterCount / 4);
+    const canUseLiveVoice = hasAiApiKey() || hasManagedAiIdentity();
 
     return (
         <form onSubmit={handleSubmit} className="relative">
+            {(hasAiApiKey() || hasManagedAiIdentity()) && <AiModelSelector compact />}
             {/* Attachment Preview */}
             {attachment && (
                 <div className="mb-3 relative inline-block">
@@ -297,16 +303,16 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                                 rounded-xl
                                 transition-all duration-150
                                 active:scale-95
-                                ${hasAiApiKey()
+                                ${canUseLiveVoice
                                     ? 'text-indigo-400 hover:text-indigo-300 hover:bg-indigo-600/20'
                                     : 'text-slate-500 hover:text-slate-400 hover:bg-slate-800/40'}
                                 relative group
                             `}
-                            title={hasAiApiKey() ? "Start Gemini Live Voice Session" : "Gemini voice requires configuration in Settings"}
-                            aria-label={hasAiApiKey() ? "Start Gemini Live Voice Session" : "Gemini Live Voice unavailable without API key"}
+                            title={canUseLiveVoice ? "Start Gemini Live Voice Session" : "Gemini Live is unavailable for this session"}
+                            aria-label={canUseLiveVoice ? "Start Gemini Live Voice Session" : "Gemini Live Voice unavailable"}
                         >
                             <Mic size={isMobile ? 18 : 20} />
-                            {hasAiApiKey() && <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />}
+                            {canUseLiveVoice && <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />}
                         </button>
                     )}
 
@@ -384,6 +390,12 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                     )}
                 </div>
             </div>
+
+            <p aria-live="polite" className="mt-1 px-2 text-[10px] text-slate-500">
+                {draftCharacterCount > 0
+                    ? `${draftCharacterCount.toLocaleString()} characters · ~${draftTokenEstimate.toLocaleString()} draft tokens; estimate excludes conversation history and attachments.`
+                    : 'Model context is checked when you send; estimates include conversation history and attachments.'}
+            </p>
 
             {/* Voice indicator */}
             {isListening && (

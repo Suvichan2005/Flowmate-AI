@@ -4,7 +4,7 @@ import { asyncStorage } from './services/storage';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleCalendarAdapter } from './services/googleSync';
 import { generateBriefing } from './services/ai';
-import { saveUserData, loadUserData, mergeData, mergeMessages } from './services/firestoreSync';
+import { saveUserData, loadUserData, mergeData, mergeMessages, mergeCloudSettings } from './services/firestoreSync';
 import { scheduleSync, syncMessage, syncFoodLogsToCloud, syncAttendanceToCloud, syncChatSessionsToCloud, deleteChannelMessagesFromCloud, setDemoModeSyncBlock } from './services/syncManager';
 import { AuthenticatedIdentity, getPlatform } from './services/platform';
 import { validatePersistedState, validateOperations } from './utils/validation';
@@ -352,6 +352,10 @@ export const useStore = create<FlowmateState>()(
             settings: {
                 timezone: 'Asia/Kolkata', // Force IST
                 preferred_model: 'gemini-3.8-flash',
+                preferred_live_model: 'gemini-3.8-live',
+                preferred_live_reasoning_level: 'medium',
+                sync_ai_preferences: false,
+                save_voice_transcripts: false,
                 sync_enabled: false,
                 debug_mode: false,
                 custom_instructions: '',
@@ -694,7 +698,7 @@ export const useStore = create<FlowmateState>()(
                             universalTags: data.universalTags,
                             messages: mergedMsgs,
                             conflicts: [...(get().conflicts || []), ...newConflicts],
-                            settings: { ...get().settings, ...(data.settings || {}) },
+                            settings: mergeCloudSettings(get().settings, data.settings || {}) as UserSettings,
                             foodLogs: data.foodLogs?.length ? data.foodLogs : get().foodLogs,
                             subjects: data.subjects?.length ? data.subjects : get().subjects,
                             classSchedule: data.classSchedule?.length ? data.classSchedule : get().classSchedule,
@@ -1103,7 +1107,7 @@ export const useStore = create<FlowmateState>()(
                     entities: projectKernelEntitiesToLegacy(nextKernelEntities),
                     relationships: data.relationships || [],
                     messages: data.messages || [],
-                    settings: { ...state.settings, ...(data.settings || {}) },
+                    settings: mergeCloudSettings(state.settings, data.settings || {}) as UserSettings,
                     history: [], // Reset history on import
                     historyPointer: -1,
                     universalTags: data.universalTags || [] // Import tags if available
@@ -1338,7 +1342,7 @@ export const useStore = create<FlowmateState>()(
                 const state = get();
                 const branch = state.branches.find(b => b.id === branchId && !b.deleted_at);
                 if (!branch || !branch.diverged_from_branch_id) return; // Main history is never removed here.
-                if ((state.branchQueues[branchId] || []).some(q => q.status === 'queued' || q.status === 'leased')) return;
+                if ((state.branchQueues[branchId] || []).some(q => q.status === 'queued' || q.status === 'leased' || q.status === 'needs_action')) return;
                 const fallback = state.branches.find(b => b.id === branch.diverged_from_branch_id && !b.deleted_at)
                     || state.branches.find(b => b.conversation_id === branch.conversation_id && b.id !== branchId && !b.deleted_at);
                 if (!fallback) return;
@@ -1462,6 +1466,7 @@ export const useStore = create<FlowmateState>()(
                 const queueItem: BranchQueueItem = {
                     id: uuidv4(),
                     branch_id: effectiveBranchId,
+                    owner_uid: state.currentUser?.uid ?? 'local',
                     user_message: userMsg,
                     status: 'queued',
                     enqueued_at: Date.now()
@@ -1623,6 +1628,7 @@ export const useStore = create<FlowmateState>()(
                     const queueItem: BranchQueueItem = {
                         id: uuidv4(),
                         branch_id: newBranchId,
+                        owner_uid: get().currentUser?.uid ?? 'local',
                         user_message: userMsg,
                         status: 'queued',
                         enqueued_at: Date.now()
@@ -1662,6 +1668,12 @@ export const useStore = create<FlowmateState>()(
                 if (!existingMsg) return false;
 
                 const branchId = existingMsg.branch_id || state.activeBranchId;
+                const activeRetry = (state.branchQueues[branchId] || []).some(item => item.user_message.id === userMessageId
+                    && (item.status === 'queued' || item.status === 'leased'));
+                if (activeRetry) {
+                    await get().processBranchQueue(branchId);
+                    return true;
+                }
 
                 // Update existing message status to 'queued' without creating a duplicate
                 set(state => ({
@@ -1673,6 +1685,7 @@ export const useStore = create<FlowmateState>()(
                 const queueItem: BranchQueueItem = {
                     id: uuidv4(),
                     branch_id: branchId,
+                    owner_uid: state.currentUser?.uid ?? 'local',
                     user_message: { ...existingMsg, status: 'queued' },
                     status: 'queued',
                     enqueued_at: Date.now()
@@ -1704,12 +1717,65 @@ export const useStore = create<FlowmateState>()(
                 }
 
                 const queue = state.branchQueues[branchId] || [];
-                const nextItem = queue.find(item => item.status === 'queued' || (item.status === 'leased' && (!item.lease_expires_at || item.lease_expires_at < now)));
+                const staleLeases = queue.filter(item => item.status === 'leased'
+                    && (!item.lease_expires_at || Number(item.lease_expires_at) <= now));
+                if (staleLeases.length) {
+                    const staleIds = new Set(staleLeases.map(item => item.id));
+                    const staleUserIds = new Set(staleLeases.map(item => item.user_message.id));
+                    set(current => ({
+                        branchQueues: {
+                            ...current.branchQueues,
+                            [branchId]: (current.branchQueues[branchId] || []).map(item => staleIds.has(item.id)
+                                ? { ...item, status: 'needs_action' as const, lease_token: undefined, error: 'The previous attempt ended before Flowmate could confirm its result. Review the conversation, then retry if you still want to send it.' }
+                                : item),
+                        },
+                        messages: current.messages.map(message => {
+                            if (staleUserIds.has(message.id)) return { ...message, status: 'interrupted' as const };
+                            const parentWasLeased = staleLeases.some(item => item.user_message.id === message.parent_id);
+                            return parentWasLeased && message.role === 'assistant' && message.status === 'streaming'
+                                ? { ...message, status: 'interrupted' as const }
+                                : message;
+                        }),
+                        activeLease: current.activeLease?.branch_id === branchId ? null : current.activeLease,
+                        isStreaming: current.activeLease?.branch_id === branchId ? false : current.isStreaming,
+                        streamingMessageId: current.activeLease?.branch_id === branchId ? null : current.streamingMessageId,
+                    }));
+                }
+
+                const processingOwnerUid = state.currentUser?.uid ?? 'local';
+
+                // A queued message must never cross an account boundary during
+                // auth hydration or account switching. Legacy queue records have
+                // no owner_uid and therefore require an explicit retry as well.
+                const foreignQueuedItems = (get().branchQueues[branchId] || []).filter(item =>
+                    item.status === 'queued' && item.owner_uid !== processingOwnerUid
+                );
+                if (foreignQueuedItems.length) {
+                    const foreignIds = new Set(foreignQueuedItems.map(item => item.id));
+                    const foreignMessageIds = new Set(foreignQueuedItems.map(item => item.user_message.id));
+                    set(current => ({
+                        branchQueues: {
+                            ...current.branchQueues,
+                            [branchId]: (current.branchQueues[branchId] || []).map(item => foreignIds.has(item.id)
+                                ? { ...item, status: 'needs_action' as const, error: 'This message was queued under a different or unknown account. Review it, then retry explicitly to send it with the current account.' }
+                                : item),
+                        },
+                        messages: current.messages.map(message => foreignMessageIds.has(message.id)
+                            ? { ...message, status: 'interrupted' as const }
+                            : message),
+                    }));
+                }
+
+                // Never replay an expired lease automatically: the provider may
+                // have completed before a tab closed or lost its response.
+                const nextItem = (get().branchQueues[branchId] || []).find(item =>
+                    item.status === 'queued' && item.owner_uid === processingOwnerUid
+                );
                 if (!nextItem) return;
 
                 const leaseToken = uuidv4();
                 const fenceToken = now;
-                const leaseExpiresAt = new Date(now + 60000).toISOString();
+                const leaseExpiresAt = new Date(now + 310_000).toISOString();
 
                 const lease: BranchExecutionLease = {
                     branch_id: branchId,
@@ -1742,12 +1808,12 @@ export const useStore = create<FlowmateState>()(
                     );
 
                     const updatedQueue = (state.branchQueues[branchId] || []).map(q =>
-                        q.id === nextItem.id ? { ...q, status: 'leased' as const, lease_token: leaseToken, fence_token: fenceToken, lease_expires_at: now + 60000 } : q
+                        q.id === nextItem.id ? { ...q, status: 'leased' as const, lease_token: leaseToken, fence_token: fenceToken, lease_expires_at: now + 310_000 } : q
                     );
 
                     return {
                         messages: [
-                            ...(state.messages || []).map(m => m.id === nextItem.user_message.id ? { ...m, status: 'completed' as const } : m),
+                            ...(state.messages || []).map(m => m.id === nextItem.user_message.id ? { ...m, status: 'in_flight' as const } : m),
                             assistantMsg
                         ],
                         branches: updatedBranches,
@@ -1792,7 +1858,7 @@ export const useStore = create<FlowmateState>()(
                         );
                         return {
                             messages: (state.messages || []).map(m =>
-                                m.id === assistantMsgId ? { ...m, status: 'completed' as const } : m
+                                m.id === assistantMsgId || m.id === nextItem.user_message.id ? { ...m, status: 'completed' as const } : m
                             ),
                             branchQueues: {
                                 ...state.branchQueues,
@@ -1821,15 +1887,19 @@ export const useStore = create<FlowmateState>()(
                     set(state => {
                         const isAbort = err?.name === 'AbortError';
                         const updatedQueue = (state.branchQueues[branchId] || []).map(q =>
-                            q.id === nextItem.id ? { ...q, status: isAbort ? ('cancelled' as const) : ('failed' as const) } : q
+                            q.id === nextItem.id ? {
+                                ...q,
+                                status: isAbort ? ('needs_action' as const) : ('failed' as const),
+                                error: isAbort ? 'The request was interrupted before completion. Review its status before retrying.' : String(err?.message || 'The request failed.'),
+                            } : q
                         );
                         return {
                             messages: (state.messages || []).map(m => {
                                 if (m.id === assistantMsgId) {
                                     return { ...m, status: isAbort ? 'interrupted' as const : 'failed' as const };
                                 }
-                                if (m.id === nextItem.user_message.id && !isAbort) {
-                                    return { ...m, status: 'failed' as const };
+                                if (m.id === nextItem.user_message.id) {
+                                    return { ...m, status: isAbort ? 'interrupted' as const : 'failed' as const };
                                 }
                                 return m;
                             }),
@@ -3372,6 +3442,10 @@ export const useStore = create<FlowmateState>()(
                 const mergedSettings = {
                     timezone: 'Asia/Kolkata', // Force IST fallback
                     preferred_model: 'gemini-3.8-flash',
+                    preferred_live_model: 'gemini-3.8-live',
+                    preferred_live_reasoning_level: 'medium',
+                    sync_ai_preferences: false,
+                    save_voice_transcripts: false,
                     sync_enabled: false,
                     debug_mode: false,
                     custom_instructions: '',

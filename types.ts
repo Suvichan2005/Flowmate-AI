@@ -296,8 +296,10 @@ export interface ConversationBranch {
 export interface BranchQueueItem {
   id: string;
   branch_id: string;
+  /** Auth identity that created this send; legacy/unowned sends require explicit retry. */
+  owner_uid: string;
   user_message: Message;
-  status: 'queued' | 'leased' | 'completed' | 'cancelled' | 'failed';
+    status: 'queued' | 'leased' | 'needs_action' | 'completed' | 'cancelled' | 'failed';
   enqueued_at: number;
   lease_token?: string;
   fence_token?: number;
@@ -395,6 +397,8 @@ export interface ToonResponse {
   ops: ToonOperation[];
   assistant: ToonAssistant;
   provider?: 'managed' | 'byok' | 'unavailable' | 'managed-limited';
+  model?: string;
+  reasoningLevel?: string;
 }
 
 export interface SyncQueueItem {
@@ -450,6 +454,12 @@ export interface UserSettings {
   // App Settings
   timezone: string;
   preferred_model: string;
+  preferred_reasoning_level?: 'minimal' | 'low' | 'medium' | 'high';
+  preferred_live_model?: 'gemini-3.8-live' | 'gemini-3.8-live-extended-thinking';
+  preferred_live_reasoning_level?: 'low' | 'medium' | 'high';
+  /** Model choices remain local unless the user explicitly opts into cloud sync. */
+  sync_ai_preferences?: boolean;
+  save_voice_transcripts?: boolean;
   sync_enabled: boolean;
   debug_mode: boolean;
   custom_instructions?: string;

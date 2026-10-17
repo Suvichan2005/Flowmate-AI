@@ -24,6 +24,8 @@ import {
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     signInWithPopup,
+    signInWithRedirect,
+    getRedirectResult,
     GoogleAuthProvider,
     signOut as firebaseSignOut,
     onAuthStateChanged,
@@ -39,6 +41,7 @@ import {
     Firestore
 } from 'firebase/firestore';
 import type { Auth } from 'firebase/auth';
+import { resolveFirebaseAuthDomain } from './firebaseAuthDomain';
 
 // Validate required environment variables
 const validateEnvVar = (name: string, value: string | undefined): string => {
@@ -52,7 +55,10 @@ const validateEnvVar = (name: string, value: string | undefined): string => {
 // Firebase configuration from environment variables
 const firebaseConfig = {
     apiKey: validateEnvVar('VITE_FIREBASE_API_KEY', import.meta.env.VITE_FIREBASE_API_KEY),
-    authDomain: validateEnvVar('VITE_FIREBASE_AUTH_DOMAIN', import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
+    authDomain: resolveFirebaseAuthDomain(
+        typeof window !== 'undefined' ? window.location.hostname : '',
+        validateEnvVar('VITE_FIREBASE_AUTH_DOMAIN', import.meta.env.VITE_FIREBASE_AUTH_DOMAIN),
+    ),
     projectId: validateEnvVar('VITE_FIREBASE_PROJECT_ID', import.meta.env.VITE_FIREBASE_PROJECT_ID),
     storageBucket: validateEnvVar('VITE_FIREBASE_STORAGE_BUCKET', import.meta.env.VITE_FIREBASE_STORAGE_BUCKET),
     messagingSenderId: validateEnvVar('VITE_FIREBASE_MESSAGING_SENDER_ID', import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID),
@@ -288,9 +294,16 @@ export const refreshEmailVerification = async () => {
 };
 
 export const signInWithGoogle = async () => {
-    if (!auth || !googleProvider) return { user: null, error: 'Firebase not configured', accessToken: null };
+    if (!auth || !googleProvider) return { user: null, error: 'Firebase not configured', accessToken: null, redirecting: false };
     try {
         await setPersistence(auth, browserLocalPersistence);
+        // Mobile browsers and installed PWAs often block or mis-handle OAuth
+        // popups. Redirect keeps the same Firebase Auth persistence and returns
+        // to the current URL, where completeGoogleRedirectSignIn consumes it.
+        if (isMobileGoogleAuthContext()) {
+            await signInWithRedirect(auth, googleProvider);
+            return { user: null, error: null, accessToken: null, redirecting: true };
+        }
         const result = await signInWithPopup(auth, googleProvider);
 
         // Extract OAuth access token for Google Calendar API
@@ -300,9 +313,41 @@ export const signInWithGoogle = async () => {
             console.log('[Firebase] Google Calendar access token obtained');
         }
 
+        return { user: result.user, error: null, accessToken: googleAccessToken, redirecting: false };
+    } catch (error: any) {
+        // A blocked desktop popup can still use the redirect flow. Avoid
+        // silently retrying on cancellation or provider/configuration errors.
+        if (error?.code === 'auth/popup-blocked' || error?.code === 'auth/operation-not-supported-in-this-environment') {
+            try {
+                await signInWithRedirect(auth, googleProvider);
+                return { user: null, error: null, accessToken: null, redirecting: true };
+            } catch (redirectError: any) {
+                return { user: null, error: redirectError?.message || error.message, accessToken: null, redirecting: false };
+            }
+        }
+        return { user: null, error: error.message, accessToken: null, redirecting: false };
+    }
+};
+
+const isMobileGoogleAuthContext = (): boolean => {
+    if (typeof window === 'undefined') return false;
+    const coarsePointer = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+    const mobileUserAgent = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    return coarsePointer || mobileUserAgent;
+};
+
+/** Completes a Google OAuth redirect after the browser returns to Flowmate. */
+export const completeGoogleRedirectSignIn = async () => {
+    if (!auth || !googleProvider) return { user: null, error: null, accessToken: null };
+    try {
+        const result = await getRedirectResult(auth);
+        if (!result) return { user: null, error: null, accessToken: null };
+
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+        if (credential?.accessToken) setGoogleAccessToken(credential.accessToken);
         return { user: result.user, error: null, accessToken: googleAccessToken };
     } catch (error: any) {
-        return { user: null, error: error.message, accessToken: null };
+        return { user: null, error: error?.message || 'Google sign-in could not be completed.', accessToken: null };
     }
 };
 

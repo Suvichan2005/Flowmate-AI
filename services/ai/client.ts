@@ -9,7 +9,8 @@
 
 import { GoogleGenAI } from "@google/genai";
 import type { RetryConfig } from "../../utils/apiRetry";
-import { hasManagedAiIdentity } from "./managedClient";
+import { hasManagedAiIdentity, type ManagedLiveModelOption } from "./managedClient";
+import { FLOWMATE_MODEL_CAPABILITIES, type ModelOption } from "./modelCatalog";
 
 // ---------------------------------------------------------------------------
 // Client (ephemeral browser key; local rules remain available without Gemini)
@@ -52,6 +53,54 @@ export const getAiClient = (): GoogleGenAI => {
   return new GoogleGenAI({ apiKey: key || '' });
 };
 
+/** Live ephemeral credentials are only accepted by Google's v1beta endpoint. */
+export const getByokLiveClient = (): GoogleGenAI => {
+  const key = getEphemeralApiKey();
+  return new GoogleGenAI({ apiKey: key || '', httpOptions: { apiVersion: 'v1beta' } });
+};
+
+/** Return only models that both Flowmate's current adapter and this BYOK key support. */
+export const getByokModelOptions = async (): Promise<ModelOption[]> => {
+  if (!hasAiApiKey()) return [];
+  const listed = await getAiClient().models.list({ config: { pageSize: 100 } });
+  const options: ModelOption[] = [];
+  for await (const providerModel of listed) {
+    const id = String(providerModel.name || '').replace(/^models\//, '').split('/').pop() || '';
+    const capabilities = FLOWMATE_MODEL_CAPABILITIES.find(model => model.id === id);
+    if (!capabilities) continue;
+    const providerSupportsAdapter = capabilities.interactionsApi
+      ? id === 'gemini-4-argon'
+      : Boolean(providerModel.supportedActions?.includes('generateContent'));
+    if (!providerSupportsAdapter) continue;
+    // Do not substitute old static limits when the live provider omits its
+    // current limits. Only advertise a model when its present capabilities are
+    // available from this key.
+    const inputTokenLimit = providerModel.inputTokenLimit;
+    const outputTokenLimit = providerModel.outputTokenLimit;
+    if (!inputTokenLimit || !outputTokenLimit) continue;
+    options.push({
+      ...capabilities,
+      inputTokenLimit,
+      outputTokenLimit,
+    });
+  }
+  return options;
+};
+
+export const getByokLiveModelOptions = async (): Promise<ManagedLiveModelOption[]> => {
+  if (!hasAiApiKey()) return [];
+  const listed = await getAiClient().models.list({ config: { pageSize: 100 } });
+  const supported = new Set<string>();
+  for await (const model of listed) {
+    const id = String(model.name || '').replace(/^models\//, '').split('/').pop() || '';
+    if (model.supportedActions?.includes('bidiGenerateContent')) supported.add(id);
+  }
+  return [
+    ...(supported.has('gemini-3.8-live') ? [{ id: 'gemini-3.8-live' as const, name: 'Gemini 3.8 Live', reasoningLevels: [] as const }] : []),
+    ...(supported.has('gemini-3.8-live-extended-thinking') ? [{ id: 'gemini-3.8-live-extended-thinking' as const, name: 'Gemini 3.8 Live Extended Thinking', reasoningLevels: ['low', 'medium', 'high'] as const }] : []),
+  ].map(option => ({ ...option, reasoningLevels: [...option.reasoningLevels] }));
+};
+
 // ---------------------------------------------------------------------------
 // Retry Policy
 // ---------------------------------------------------------------------------
@@ -69,7 +118,12 @@ export const GEMINI_RETRY_CONFIG: Partial<RetryConfig> = {
     'DEADLINE_EXCEEDED',
     'NetworkError',
   ],
-  nonRetryableCodes: ['MANAGED_AI_DISABLED', 'GLOBAL_LIMIT_REACHED'],
+  nonRetryableCodes: [
+    'MANAGED_AI_DISABLED', 'GUEST_TURN_ALLOWANCE_EXHAUSTED',
+    'TURN_ALLOWANCE_EXHAUSTED', 'BRIEFING_ALLOWANCE_EXHAUSTED', 'MODEL_NOT_ALLOWED_FOR_ACCOUNT',
+    'MODEL_UNAVAILABLE', 'UNSUPPORTED_REASONING_LEVEL', 'MODEL_CONTEXT_LIMIT', 'OUTPUT_TOKEN_LIMIT',
+      'REQUEST_ALREADY_PROCESSED', 'TURN_ALREADY_COMPLETE', 'PROVIDER_RATE_LIMITED',
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -86,5 +140,4 @@ export const AI_MODELS = {
 export type AiModelId = typeof AI_MODELS[keyof typeof AI_MODELS];
 
 export const DEFAULT_MODEL = AI_MODELS.BALANCED;
-export const MAX_FUNCTION_TURNS = 5;
 export const HISTORY_WINDOW = 12;

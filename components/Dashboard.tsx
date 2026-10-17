@@ -128,7 +128,7 @@ const InsightModal: React.FC<InsightModalProps> = ({ title, items, onClose, onSe
     );
 };
 
-type ManagedAiLimit = 'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED' | 'GLOBAL_LIMIT_REACHED';
+type ManagedAiLimit = 'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED';
 interface DashboardProps {
     onOpenGraphFixer?: () => void;
     onManagedAiLimit?: (code: ManagedAiLimit) => void;
@@ -226,7 +226,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
         setBriefingLoading(true);
         try {
             const errorCode = await refreshDailyBriefing();
-            if (errorCode === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' || errorCode === 'TURN_ALLOWANCE_EXHAUSTED' || errorCode === 'GLOBAL_LIMIT_REACHED') {
+            if (errorCode === 'BRIEFING_ALLOWANCE_EXHAUSTED') {
+                addToast?.('Your daily included briefing allowance is used. Chat turns have a separate allowance; configure BYOK in Settings to generate another briefing today.', 'info');
+            } else if (errorCode === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' || errorCode === 'TURN_ALLOWANCE_EXHAUSTED') {
                 onManagedAiLimit?.(errorCode);
             } else if (errorCode) {
                 addToast?.('The briefing could not be generated. No local fallback was used; your workspace is unchanged.', 'error');
@@ -239,6 +241,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
     const today = new Date().toISOString().split('T')[0];
     const isBriefingStale = !dailyBriefing || dailyBriefing.generated_for_date !== today
         || entities.some(e => Date.parse(e.updated_at) > Date.parse(dailyBriefing.timestamp));
+    const briefingIsAi = dailyBriefing?.source === 'managed' || dailyBriefing?.source === 'byok';
+    const briefingSourceLabel = dailyBriefing
+        ? briefingIsAi ? 'AI briefing' : 'Local summary'
+        : hasAiProviderAvailable() ? null : 'Local summary';
+    const briefingActionLabel = hasAiProviderAvailable()
+        ? (briefingIsAi ? 'Refresh AI Briefing' : 'Generate AI Briefing')
+        : (dailyBriefing && !briefingIsAi ? 'Update Local Summary' : 'Generate Local Summary');
 
     // Format minutes to hours/minutes string
     const formatDuration = (minutes: number) => {
@@ -428,11 +437,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                                     return 'Working late?';
                                 })()}
                             </h2>
-                            {(dailyBriefing
-                                ? dailyBriefing.source !== 'managed' && dailyBriefing.source !== 'byok'
-                                : !hasAiProviderAvailable()) && (
+                            {briefingSourceLabel && (
                                 <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-ideapad-elevated text-ideapad-muted border border-ideapad-border">
-                                    Local summary
+                                    {briefingSourceLabel}
                                 </span>
                             )}
                         </div>
@@ -442,9 +449,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                             className="flex items-center justify-center gap-2 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 shadow-lg shadow-emerald-900/40 w-full sm:w-auto self-start sm:self-auto"
                         >
                             {briefingLoading ? <RefreshCw className="animate-spin w-3 h-3" /> : <RefreshCw className="w-3 h-3" />}
-                            {!hasAiProviderAvailable()
-                                ? (dailyBriefing ? "Update Local Briefing" : "Generate Local Briefing")
-                                : (dailyBriefing ? "Update Briefing" : "Generate Briefing")}
+                            {briefingActionLabel}
                         </button>
                     </div>
 
