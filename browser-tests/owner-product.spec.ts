@@ -20,7 +20,7 @@ async function send(page: Page, text: string) {
   await page.getByRole('textbox', { name: 'Message Flowmate' }).fill(text);
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled();
-  await expect(page.getByText('No AI response · provider not configured').last()).toBeVisible();
+  await expect(page.getByText('No AI response · unavailable').last()).toBeVisible();
 }
 test.beforeEach(async ({ context, page }) => {
   const testOrigin = process.env.FLOWMATE_TEST_ORIGIN || 'http://127.0.0.1:4195';
@@ -274,7 +274,7 @@ test('keyless workspace does not present local rules as AI and does not contact 
   await navigate(page, 'Chat');
   await send(page, 'Show my tasks');
   await expect(page.getByText(/Gemini is not configured, so Flowmate did not generate an AI response/).last()).toBeVisible();
-  await expect(page.getByText(/No AI response · provider not configured/).last()).toBeVisible();
+  await expect(page.getByText(/No AI response · unavailable/).last()).toBeVisible();
   expect(externalRequests).toEqual([]);
 });
 

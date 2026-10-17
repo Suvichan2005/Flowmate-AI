@@ -18,6 +18,8 @@ vi.mock('firebase/app-check', () => ({
 
 vi.mock('firebase/auth', () => ({
   getAuth: vi.fn(() => ({})),
+  initializeAuth: vi.fn(() => ({})),
+  browserLocalPersistence: 'browser-local-persistence',
   signInWithEmailAndPassword: vi.fn(),
   createUserWithEmailAndPassword: vi.fn(),
   signInWithPopup: vi.fn(),
@@ -47,6 +49,7 @@ describe('Firebase App Check provider wiring', () => {
     vi.stubEnv('VITE_FIREBASE_APPCHECK_SITE_KEY', 'public-test-site-key');
 
     const { initializeAppCheck, ReCaptchaEnterpriseProvider } = await import('firebase/app-check');
+    const { initializeAuth, browserLocalPersistence } = await import('firebase/auth');
     await import('../services/firebase');
 
     expect(initializeAppCheck).toHaveBeenCalledOnce();
@@ -54,5 +57,7 @@ describe('Firebase App Check provider wiring', () => {
     expect(options.provider).toBeInstanceOf(ReCaptchaEnterpriseProvider);
     expect((options.provider as unknown as { siteKey: string }).siteKey).toBe('public-test-site-key');
     expect(options.isTokenAutoRefreshEnabled).toBe(true);
+    expect(initializeAuth).toHaveBeenCalledOnce();
+    expect(vi.mocked(initializeAuth).mock.calls[0][1]).toEqual({ persistence: browserLocalPersistence });
   });
 });

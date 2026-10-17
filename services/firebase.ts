@@ -94,7 +94,13 @@ if (hasValidConfig) {
     }
 
     // Export services
-    auth = getAuth(app);
+    try {
+        auth = initializeAuth(app, { persistence: browserLocalPersistence });
+    } catch {
+        // Preserve the existing instance during HMR; on a fresh load this makes
+        // the intended cross-reload Auth persistence explicit.
+        auth = getAuth(app);
+    }
     try {
         db = initializeFirestore(app, {
             localCache: persistentLocalCache({
