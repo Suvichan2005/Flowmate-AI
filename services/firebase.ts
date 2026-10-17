@@ -22,6 +22,8 @@ import {
     GoogleAuthProvider,
     signOut as firebaseSignOut,
     onAuthStateChanged,
+    sendEmailVerification,
+    reload,
     User
 } from 'firebase/auth';
 import {
@@ -182,9 +184,36 @@ export const signUpWithEmail = async (email: string, password: string) => {
     if (!auth) return { user: null, error: 'Firebase not configured' };
     try {
         const result = await createUserWithEmailAndPassword(auth, email, password);
-        return { user: result.user, error: null };
+        try {
+            await sendEmailVerification(result.user);
+            return { user: result.user, error: null };
+        } catch (error: any) {
+            // Account creation succeeded; preserve the user so the UI can offer a resend.
+            return { user: result.user, error: error.message || 'Account created, but the verification email could not be sent.' };
+        }
     } catch (error: any) {
         return { user: null, error: error.message };
+    }
+};
+
+export const resendVerificationEmail = async () => {
+    if (!auth?.currentUser) return { error: 'Sign in to resend the verification email.' };
+    try {
+        await sendEmailVerification(auth.currentUser);
+        return { error: null };
+    } catch (error: any) {
+        return { error: error.message || 'The verification email could not be sent.' };
+    }
+};
+
+export const refreshEmailVerification = async () => {
+    const user = auth?.currentUser;
+    if (!user) return { verified: false, error: 'Sign in to continue.' };
+    try {
+        await reload(user);
+        return { verified: user.emailVerified, error: null };
+    } catch (error: any) {
+        return { verified: false, error: error.message || 'Could not refresh verification status.' };
     }
 };
 

@@ -3,6 +3,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import AuthModal from '../components/AuthModal';
 
+const authMocks = vi.hoisted(() => ({
+    signInWithEmail: vi.fn(),
+    signUpWithEmail: vi.fn(),
+    signInWithGoogle: vi.fn(),
+    isFirebaseConfigured: vi.fn(() => false),
+    resendVerificationEmail: vi.fn(),
+    refreshEmailVerification: vi.fn(),
+}));
+
+vi.mock('../services/firebase', () => authMocks);
+
 describe('AuthModal accessibility & keyboard interaction', () => {
     beforeEach(() => {
         vi.clearAllMocks();
