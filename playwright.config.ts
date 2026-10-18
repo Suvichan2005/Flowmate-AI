@@ -1,6 +1,10 @@
 import { defineConfig } from '@playwright/test';
 const productionOffline = Boolean(process.env.FLOWMATE_PRODUCTION_OFFLINE);
-const baseURL = process.env.FLOWMATE_TEST_ORIGIN || 'http://127.0.0.1:4195';
+const testPort = Number(process.env.FLOWMATE_TEST_PORT || 4195);
+if (!Number.isInteger(testPort) || testPort < 1024 || testPort > 65535) {
+  throw new Error('FLOWMATE_TEST_PORT must be an available unprivileged TCP port');
+}
+const baseURL = process.env.FLOWMATE_TEST_ORIGIN || `http://127.0.0.1:${testPort}`;
 export default defineConfig({
   testDir: './browser-tests', workers: 1, retries: 0, timeout: 60000,
   expect: { timeout: 10000 }, outputDir: 'qa-evidence/artifacts',
@@ -11,7 +15,7 @@ export default defineConfig({
     command: 'npm run preview -- --host 127.0.0.1 --port 4196 --strictPort',
     url: baseURL, reuseExistingServer: true, timeout: 30000,
   } : {
-    command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4195 --strictPort',
+    command: `node node_modules/vite/bin/vite.js --host 127.0.0.1 --port ${testPort} --strictPort`,
     url: baseURL, reuseExistingServer: true, timeout: 30000,
     // Local browser tests must fail closed to the demo emulators. A missing
     // flag must never send Auth or Firestore requests to a real Firebase project.
