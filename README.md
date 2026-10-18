@@ -2,9 +2,13 @@
 
 > **A graph-native productivity workspace for connecting goals, projects, tasks, schedules, and the conversations around them.**
 
-Flowmate brings planning into one navigable workspace. Its typed relationships link the work behind a goal, while shared Dashboard, Graph, Calendar, Timeline, Analytics, and Library views make those connections easier to follow.
+Flowmate brings planning into one navigable workspace. Its typed relationships link the work behind a goal, while Dashboard, Graph, Calendar, Analytics, and Library present the same workspace for different kinds of work.
 
 **[Open Flowmate](https://flowmate-ai.web.app/)** · [View the source on GitHub](https://github.com/Suvichan2005/Flowmate-AI)
+
+![Flowmate's live graph connecting a goal, project, tasks, an event, and a habit in a synthetic workspace](docs/assets/flowmate-graph-live.png)
+
+*Captured from the deployed application using ordinary create and link actions in an isolated, local-only synthetic workspace.*
 
 [![React](https://img.shields.io/badge/React-19-149eca?logo=react&logoColor=white)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -25,7 +29,7 @@ Flowmate represents work as typed entities and relationships. The Graph visualiz
 
 - **Plan with connected records:** create and edit goals, projects, tasks, events, habits, notes, and other supported entities.
 - **Explore relationships:** add typed links and inspect the workspace in an interactive D3 graph.
-- **Use multiple planning views:** review work in Dashboard, Calendar, Timeline, Analytics, and Library.
+- **Use multiple planning views:** review work in Dashboard, Calendar, Analytics, and Library.
 - **Branch conversations:** create alternate conversation paths and navigate their histories.
 - **Track progress:** review project and goal progress, habits, focus sessions, and productivity summaries.
 - **Personalize Flowmate:** choose among four complete palettes, with local persistence and cross-tab synchronization.
@@ -33,37 +37,36 @@ Flowmate represents work as typed entities and relationships. The Graph visualiz
 
 ## Gemini assistance and user control
 
-When configured, Gemini supports conversational planning grounded in workspace context. A key entered through Settings is held in memory for the active browser tab and sent from the browser to Google's Gemini API. AI-generated operations are subject to Flowmate's review and confirmation pipeline; a model response alone does not apply a workspace change.
+Gemini assistance is optional. A user-provided key can be entered in Settings; it stays in the active browser session and is sent from that browser to Google's Gemini API. Model-proposed workspace changes still pass through Flowmate's review and confirmation flow.
 
-Live provider check: four short requests through the deployed Chat experience succeeded with **Gemini 3.8 Flash**, using a synthetic workspace. The final response accurately identified the saved goal, project, event, tasks, and relationship state. No changes were proposed or executed. The runtime key was cleared from the isolated test session afterward; it is not part of the deployment or repository.
-
-AI assistance requires a configured Gemini key and network access. Browser API keys are visible to the browser environment, so use a suitably restricted key. Do not place Gemini credentials in Vite `VITE_*` build variables or commit them.
+Managed Gemini is disabled in the current production build while protected App Check acceptance is unresolved. The deployed browser checks used a keyless build and made no model requests, so they do not certify a live provider response. Without an available provider, Flowmate keeps the message and reports that no AI response was generated rather than inventing one. Browser API keys are visible to the browser environment; use a suitably restricted key. Never put Gemini credentials in Vite `VITE_*` build variables or commit them.
 
 ## Architecture
 
-Flowmate is a client-side React application without an application server in this release. The browser owns local workspace state. Firebase and Gemini are optional direct client integrations.
+Flowmate's released interface is a client-side React application. The browser stores the local workspace; signed-in Firestore sync is optional and consent-gated. User-provided Gemini keys are used directly from the browser. The managed-Gemini Function exists separately, but the current Hosting build does not call it.
 
 ~~~mermaid
 flowchart LR
   User[User] --> UI[React views]
   UI --> Store[Zustand store]
   Store --> Kernel[Domain kernel and validated operations]
-  Kernel --> Projections[Dashboard, Graph, Calendar, Timeline, Library]
+  Kernel --> Projections[Dashboard, Graph, Calendar, Analytics, Library]
   Store <--> Local[Browser storage]
   Store -. optional signed-in sync .-> Firebase[Firebase Auth and Firestore]
-  UI -. configured runtime key .-> Gemini[Google Gemini API]
+  UI -. optional user key .-> Gemini[Google Gemini API]
   Gemini --> Tools[Declared workspace tools]
   Tools --> Review[Review proposed operations]
   Review -->|user confirms| Kernel
   Review -->|user declines| Stop[No mutation]
   SW[Service worker caches application shell] --> UI
+  Managed[Managed Gemini endpoint - disabled] -. gated .-> UI
 ~~~
 
 ## Data model and cross-view behavior
 
 Entities represent goals, projects, tasks, events, habits, and other supported records. Typed relationships connect entity identifiers with links such as `PART_OF`, `DEPENDS_ON`, `FULFILLS`, `PRECEDES`, and `RELATED_TO`.
 
-Validated operations update the shared workspace store. Graph, Dashboard, Calendar, Timeline, and Library read projections over that state, keeping changes visible across views. Browser storage provides local persistence; signed-in users can enable user-scoped synchronization with Firestore.
+Validated operations update the shared workspace store. Graph, Dashboard, Calendar, Analytics, and Library project that same state, keeping changes visible across views. Browser storage provides local persistence; signed-in users can enable user-scoped Firestore synchronization after consent.
 
 ## Engineering choices
 
@@ -126,15 +129,15 @@ npm run check:themes
 npm run build
 ~~~
 
-The deployed browser acceptance pass covered workspace editing across views and reload, conversation and branch controls, responsive layouts, four themes, and offline application-shell reload. Firebase Authentication and Firestore received a bounded preview smoke test with synthetic data. Four bounded live Gemini requests succeeded through the deployed Chat UI as described above.
+The deployed build is pinned to source commit `15e2109ad2a25cc3a15aee8ba5bac99aeabd3a73`. Its release checks passed 87 test files / 769 tests, TypeScript, project boundaries and invariants, theme checks, and a five-timezone calendar matrix (245 cases). The final candidate passed 19 real-Chrome journeys on its Hosting preview; the deployed production build then passed 8 fresh-Chrome smoke journeys covering mobile navigation and model control, responsive Settings, the collapsed-chat graph layout, keyless provider isolation, and offline shell recovery. Two synthetic D3 harness tests passed against source because that test harness is excluded from production assets. No signed-in account, Firestore write, or Gemini generation was used in these browser passes.
 
-Google sign-in, Google Calendar integration, every Firebase security-rule scenario, and multi-user collaboration were not established by these checks.
+Google sign-in, production Firestore synchronization, every Firebase security-rule scenario, managed Gemini generation, and multi-user collaboration were not established by these checks.
 
 ## Security and limitations
 
 - Firebase browser configuration is public client configuration, not an authorization secret. Protect user data with Firebase Authentication and backend security rules.
 - A Hosting preview connected to the production Firebase project still uses that backend; use synthetic accounts and records for provider testing.
-- Gemini requires a user-configured runtime key. Treat browser keys as exposed to the browser and restrict their API access and quota.
+- Managed Gemini is disabled in this deployment. BYOK requires a user-configured runtime key and network access; treat browser keys as exposed to the browser and restrict their API access and quota.
 - Local data is browser-profile-specific until optional cloud synchronization is configured.
 - This release is a personal productivity workspace, not a hosted team collaboration service.
 
