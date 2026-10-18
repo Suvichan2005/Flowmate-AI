@@ -207,4 +207,24 @@ describe('Firebase App Check provider wiring', () => {
     await expect(pendingUser).resolves.toBe(persistedGuest);
     expect(authMocks.signInAnonymously).not.toHaveBeenCalled();
   });
+
+  it('shares one anonymous sign-in when first-load requests race', async () => {
+    vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
+    vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
+
+    let completeSignIn!: (result: { user: { uid: string } }) => void;
+    authMocks.signInAnonymously.mockImplementation(() => new Promise(resolve => { completeSignIn = resolve; }));
+    const { getManagedAiUser } = await import('../services/firebase');
+    const requests = Array.from({ length: 4 }, () => getManagedAiUser());
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(authMocks.signInAnonymously).toHaveBeenCalledOnce();
+    const guest = { uid: 'single-guest-user' };
+    completeSignIn({ user: guest });
+
+    await expect(Promise.all(requests)).resolves.toEqual([guest, guest, guest, guest]);
+  });
 });

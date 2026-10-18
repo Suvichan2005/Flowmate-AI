@@ -77,6 +77,7 @@ const hasValidConfig = !!(
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let managedAiGuestAuth: Auth | null = null;
+let managedAiGuestSignIn: Promise<User | null> | null = null;
 let db: Firestore | null = null;
 let googleProvider: GoogleAuthProvider | null = null;
 let appCheck: AppCheck | null = null;
@@ -182,11 +183,16 @@ export const getManagedAiUser = async (): Promise<User | null> => {
         return null;
     }
     if (guestAuth.currentUser) return guestAuth.currentUser;
-    try {
-        return (await signInAnonymously(guestAuth)).user;
-    } catch {
-        return null;
+    // Model catalogue, usage and generation requests can all initialize the
+    // guest identity at once. Share one sign-in operation so a fresh visitor
+    // cannot receive multiple anonymous UIDs and multiply the per-UID allowance.
+    if (!managedAiGuestSignIn) {
+        managedAiGuestSignIn = signInAnonymously(guestAuth)
+            .then(({ user }) => user)
+            .catch(() => null)
+            .finally(() => { managedAiGuestSignIn = null; });
     }
+    return managedAiGuestSignIn;
 };
 
 /** Returns a short-lived App Check token when this app has been configured. */
