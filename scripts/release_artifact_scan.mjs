@@ -22,11 +22,14 @@ function safeLocator(locator, sentinels = []) {
 const safeFindings = (findings, sentinels = []) => findings.map(f => ({ ...f, locator: safeLocator(f.locator, sentinels) }));
 
 /** Content matches are never echoed. Suspicious locator values are redacted too. */
-export function scanText(text, locator, sentinels = [], checkClientInjection = true) {
+export function scanText(text, locator, sentinels = [], checkClientInjection = true, approvedFirebasePublicKeys = []) {
   const findings = [];
   for (const [rule, pattern] of credentialRules) {
     if (rule === 'model-build-injection' && !checkClientInjection) continue;
-    if (pattern.test(text)) findings.push({ rule, locator });
+    const matched = rule === 'google-api-key-requires-review'
+      ? [...text.matchAll(new RegExp(pattern.source, 'g'))].some(([value]) => !approvedFirebasePublicKeys.includes(value))
+      : pattern.test(text);
+    if (matched) findings.push({ rule, locator });
   }
   for (const sentinel of sentinels) {
     if (sentinel && text.includes(sentinel)) findings.push({ rule: 'controlled-sentinel', locator });
@@ -34,7 +37,7 @@ export function scanText(text, locator, sentinels = [], checkClientInjection = t
   return safeFindings(findings, sentinels);
 }
 
-export function scanDirectory(directory, sentinels = []) {
+export function scanDirectory(directory, sentinels = [], approvedFirebasePublicKeys = []) {
   const root = resolve(directory);
   const findings = [];
   let files = 0, bytes = 0;
@@ -48,7 +51,7 @@ export function scanDirectory(directory, sentinels = []) {
       files++;
       const content = readFileSync(full); bytes += content.length;
       // Inspect complete bytes, including binary prefixes/tails, before any reporting or truncation.
-      findings.push(...scanText(content.toString('utf8'), locator, sentinels));
+      findings.push(...scanText(content.toString('utf8'), locator, sentinels, true, approvedFirebasePublicKeys));
       if (forbiddenPath.test(locator)) findings.push({ rule: 'private-path', locator });
     }
   }
@@ -57,7 +60,7 @@ export function scanDirectory(directory, sentinels = []) {
   return { files, bytes, findings: safeFindings(findings, sentinels), passed: findings.length === 0 };
 }
 
-export function scanHistory(cwd, baseRef, candidateRef, sentinels = []) {
+export function scanHistory(cwd, baseRef, candidateRef, sentinels = [], approvedFirebasePublicKeys = []) {
   const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   const base = git('rev-parse', '--verify', baseRef + '^{commit}').trim();
   const candidate = git('rev-parse', '--verify', candidateRef + '^{commit}').trim();
@@ -75,7 +78,7 @@ export function scanHistory(cwd, baseRef, candidateRef, sentinels = []) {
       if (mode === '120000' || type !== 'blob') { findings.push({ rule: 'uninspected-git-entry', locator }); continue; }
       if (!seen.has(oid)) {
         seen.add(oid);
-        findings.push(...scanText(git('cat-file','blob',oid), locator, sentinels, commit === candidate));
+        findings.push(...scanText(git('cat-file','blob',oid), locator, sentinels, commit === candidate, approvedFirebasePublicKeys));
       }
     }
   }
@@ -84,7 +87,7 @@ export function scanHistory(cwd, baseRef, candidateRef, sentinels = []) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const args = process.argv.slice(2), allowed = new Set(['--directory','--base','--candidate','--sentinel-env']);
+    const args = process.argv.slice(2), allowed = new Set(['--directory','--base','--candidate','--sentinel-env','--firebase-key-env']);
     const supplied = new Set();
     for (let i=0; i<args.length; i+=2) {
       if (!allowed.has(args[i]) || supplied.has(args[i]) || !args[i+1] || args[i+1].startsWith('--')) throw new Error('Invalid arguments');
@@ -95,9 +98,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const sentinelName = args.includes('--sentinel-env') ? value('--sentinel-env') : null;
     if (sentinelName && !process.env[sentinelName]) throw new Error('Requested sentinel environment variable is missing');
     const sentinels = sentinelName ? [process.env[sentinelName]] : [];
+    const firebaseKeyName = args.includes('--firebase-key-env') ? value('--firebase-key-env') : null;
+    if (firebaseKeyName && !/^AIza[0-9A-Za-z_-]{35}$/.test(process.env[firebaseKeyName] || '')) throw new Error('Requested Firebase public key is missing or malformed');
+    const approvedFirebasePublicKeys = firebaseKeyName ? [process.env[firebaseKeyName]] : [];
     const result = { schemaVersion: 1 };
-    if (args.includes('--directory')) result.artifacts = scanDirectory(value('--directory'), sentinels);
-    if (args.includes('--base') && args.includes('--candidate')) result.history = scanHistory(process.cwd(), value('--base'), value('--candidate'), sentinels);
+    if (args.includes('--directory')) result.artifacts = scanDirectory(value('--directory'), sentinels, approvedFirebasePublicKeys);
+    if (args.includes('--base') && args.includes('--candidate')) result.history = scanHistory(process.cwd(), value('--base'), value('--candidate'), sentinels, approvedFirebasePublicKeys);
     if (!result.artifacts && !result.history) throw new Error('Specify --directory and/or both --base and --candidate');
     result.passed = (!result.artifacts || result.artifacts.passed) && (!result.history || result.history.passed);
     console.log(JSON.stringify(result, null, 2));

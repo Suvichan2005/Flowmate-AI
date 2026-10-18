@@ -34,6 +34,13 @@ describe('Public release privacy gate', () => {
     expect(scanText('firebaseProjectId: "example", appId: "public-app"', 'config.json')).toEqual([]);
     expect(scanText(['import.meta.env.', 'VITE_GEMINI_API_KEY'].join(''), 'client.ts')[0].rule).toBe('model-build-injection');
   });
+  it('allows only an explicitly reviewed Firebase browser key and still catches other key-shaped values', () => {
+    const approved = ['AIza', 'a'.repeat(35)].join('');
+    const unrelated = ['AIza', 'b'.repeat(35)].join('');
+    expect(scanText(`apiKey: "${approved}"`, 'firebase-config.js', [], true, [approved])).toEqual([]);
+    expect(scanText(`apiKey: "${approved}", other: "${unrelated}"`, 'bundle.js', [], true, [approved]))
+      .toEqual([{ rule: 'google-api-key-requires-review', locator: 'bundle.js' }]);
+  });
   it('fails closed on an empty artifact directory and unsafe filenames', () => {
     const root = temp();
     expect(scanDirectory(root).passed).toBe(false);
