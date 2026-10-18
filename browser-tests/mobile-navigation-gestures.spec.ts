@@ -54,6 +54,11 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
   await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
 
   // A deliberate left-edge drag reveals the real sidebar and its accessible dialog.
+  // Let the previous screen's return animation finish before starting a new drag;
+  // otherwise the test can begin a second gesture while the surface is still moving.
+  await expect.poll(() => page.getByTestId('mobile-gesture-surface').evaluate(
+    element => new DOMMatrix(getComputedStyle(element).transform).m41,
+  )).toBe(0);
   const openMenuOffsets = await dragTouch(context, page, [
     { x: 8, y: 430 }, { x: 50, y: 430 }, { x: 95, y: 430 }, { x: 140, y: 430 },
   ], '[data-testid="mobile-gesture-surface"]');

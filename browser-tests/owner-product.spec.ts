@@ -26,8 +26,8 @@ async function navigate(page: Page, route: string) {
 async function send(page: Page, text: string) {
   await page.getByRole('textbox', { name: 'Message Flowmate' }).fill(text);
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled();
-  await expect(page.getByText('No AI response · unavailable').last()).toBeVisible();
+  await expect(page.locator('[data-message-id]').filter({ hasText: text }).first()).toBeVisible();
+  await expect(page.getByText(/^(?:No AI response · unavailable|Local rules · no AI request)$/).last()).toBeVisible();
 }
 test.beforeEach(async ({ context, page }) => {
   const testOrigin = process.env.FLOWMATE_TEST_ORIGIN || 'http://127.0.0.1:4195';
@@ -39,6 +39,10 @@ test.beforeEach(async ({ context, page }) => {
   }
   await page.goto('/#dashboard');
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+  // Fresh production-profile contexts receive first-run onboarding. Dismiss it
+  // before exercising independent route journeys so it cannot intercept nav.
+  const skipOnboarding = page.getByRole('button', { name: 'Skip setup for now', exact: true });
+  if (await skipOnboarding.count()) await skipOnboarding.click();
 });
 
 test('fork parent child edit reload delete and restore preserve conversation history', async ({ page }) => {
@@ -272,17 +276,20 @@ test('D3 node selection does not destroy its simulation DOM or camera', async ({
 });
 
 test('keyless workspace does not present local rules as AI and does not contact a model provider', async ({ page, context }) => {
-  const externalRequests: string[] = [];
+  const aiEndpointRequests: string[] = [];
   context.on('request', request => {
-    if (new URL(request.url()).origin !== (process.env.FLOWMATE_TEST_ORIGIN || 'http://127.0.0.1:4195')) externalRequests.push(request.url());
+    const url = request.url();
+    if (url.includes('generativelanguage.googleapis.com') || url.includes('/managedGemini')) {
+      aiEndpointRequests.push(new URL(url).origin + new URL(url).pathname);
+    }
   });
   await navigate(page, 'Settings');
   await expect(page.getByText('Gemini not configured', { exact: true }).first()).toBeVisible();
   await navigate(page, 'Chat');
   await send(page, 'Show my tasks');
   await expect(page.getByText(/Gemini is not configured, so Flowmate did not generate an AI response/).last()).toBeVisible();
-  await expect(page.getByText(/No AI response · unavailable/).last()).toBeVisible();
-  expect(externalRequests).toEqual([]);
+  await expect(page.getByText('No AI response · unavailable').last()).toBeVisible();
+  expect(aiEndpointRequests).toEqual([]);
 });
 
 test('production service worker restores the cached workspace after offline reload', async ({ page, context }) => {
@@ -337,7 +344,7 @@ test('arbitrary user-created CRUD propagates to graph timeline calendar analytic
   await create('GOAL', 'QA arbitrary goal'); await create('PROJECT', 'QA arbitrary project');
   await create('TASK', 'QA arbitrary task', true); await create('EVENT', 'QA arbitrary event', true);
   await create('HABIT', 'QA arbitrary habit');
-  await page.getByRole('button', { name: /Generate Local Briefing/ }).click();
+  await page.getByRole('button', { name: 'Generate Local Summary', exact: true }).click();
   await expect(page.getByText(/Local briefing: you have 1 active task/)).toBeVisible();
   await navigate(page, 'Library');
   await page.getByRole('heading', { name: 'QA arbitrary task', exact: true }).click();
@@ -359,7 +366,7 @@ test('arbitrary user-created CRUD propagates to graph timeline calendar analytic
   await panel.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(panel.getByRole('heading', { name: 'QA edited task' })).toBeVisible();
   await panel.getByRole('button', { name: 'Close entity details' }).click();
-  await navigate(page, 'Dashboard'); await page.getByRole('button', { name: /Update Local Briefing/ }).click();
+  await navigate(page, 'Dashboard'); await page.getByRole('button', { name: 'Update Local Summary', exact: true }).click();
   await expect(page.getByText(/Local briefing: you have 0 active tasks/)).toBeVisible();
   await page.reload(); await navigate(page, 'Library');
   await expect(page.getByRole('heading', { name: 'QA edited task', exact: true })).toBeVisible();

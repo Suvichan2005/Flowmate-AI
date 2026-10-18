@@ -57,9 +57,13 @@ const MANAGED_AI_REGION = 'asia-south1';
 
 export const getManagedAiEndpoint = (): string => {
   const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
-  return import.meta.env.VITE_MANAGED_AI_ENDPOINT || (import.meta.env.PROD && projectId
+  // An explicitly empty build value is the release-time kill switch. Keep the
+  // production-derived default only for builds that omit the setting entirely.
+  const configuredEndpoint = import.meta.env.VITE_MANAGED_AI_ENDPOINT;
+  if (configuredEndpoint !== undefined) return configuredEndpoint.trim();
+  return import.meta.env.PROD && projectId
     ? `https://${MANAGED_AI_REGION}-${projectId}.cloudfunctions.net/managedGemini`
-    : '');
+    : '';
 };
 
 export const hasManagedAiIdentity = (): boolean => Boolean(isFirebaseConfigured() && getManagedAiEndpoint());

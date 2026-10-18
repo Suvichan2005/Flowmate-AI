@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getFirebaseAppCheckToken, getManagedAiUser, isFirebaseConfigured } from '../services/firebase';
-import { generateManagedContent, hasManagedAiIdentity, ManagedAiError } from '../services/ai/managedClient';
+import { generateManagedContent, getManagedAiEndpoint, hasManagedAiIdentity, ManagedAiError } from '../services/ai/managedClient';
 
 const mocked = vi.hoisted(() => ({ user: null as { emailVerified: boolean; getIdToken: (forceRefresh?: boolean) => Promise<string> } | null }));
 
@@ -47,6 +47,21 @@ describe('managed AI browser client', () => {
     vi.stubEnv('PROD', true);
     mocked.user = { emailVerified: true, getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
     expect(hasManagedAiIdentity()).toBe(true);
+  });
+
+  it('treats an explicitly empty production endpoint as a managed-AI kill switch', async () => {
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_MANAGED_AI_ENDPOINT', '');
+    vi.stubEnv('PROD', true);
+    mocked.user = { emailVerified: true, getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(getManagedAiEndpoint()).toBe('');
+    expect(hasManagedAiIdentity()).toBe(false);
+    await expect(generateManagedContent([], {}, 'turn_0000000000000001', 'call_00000000000001'))
+      .rejects.toMatchObject({ code: 'MANAGED_AI_NOT_CONFIGURED' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('sends verified identity, optional App Check, fixed endpoint, and no caller UID or key', async () => {
