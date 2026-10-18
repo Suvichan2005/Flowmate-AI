@@ -32,7 +32,6 @@ Contains all 42 React UI components.
 | `AnalyticsView.tsx` | Dashboard for productivity metrics and charts |
 | `SchedulesView.tsx` | Dedicated view for Class Schedules & Mess Menus |
 | `SettingsView.tsx` | Configuration panel (API Keys, Timezone, Feature Toggles) |
-| `TimelineView.tsx` | Linear timeline visualization of events |
 
 ### Entity Management
 

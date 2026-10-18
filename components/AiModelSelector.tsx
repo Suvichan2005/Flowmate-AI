@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Brain, ChevronDown, Loader2 } from 'lucide-react';
 import { useStore } from '../store';
 import { getByokLiveModelOptions, getByokModelOptions, hasAiApiKey, subscribeToApiKeyStatus } from '../services/ai/client';
@@ -17,8 +17,30 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
   const [byok, setByok] = useState(hasAiApiKey());
   const [privileged, setPrivileged] = useState(false);
   const [anonymousManaged, setAnonymousManaged] = useState(!currentUser);
+  const compactRootRef = useRef<HTMLDivElement>(null);
+  const compactTriggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => subscribeToApiKeyStatus(configured => setByok(configured)), []);
+
+  useEffect(() => {
+    if (!compact || !open) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !compactRootRef.current?.contains(event.target)) setOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setOpen(false);
+        compactTriggerRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [compact, open]);
 
   useEffect(() => {
     let current = true;
@@ -167,21 +189,51 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
     {controls}
   </section>;
 
-  return <div className="relative z-20 mb-2">
+  const compactModelLabel = selectedName.replace(/^Gemini\s+/i, '');
+  return <div ref={compactRootRef} className="relative z-30 shrink-0">
     <button
+      ref={compactTriggerRef}
       type="button"
+      data-testid="ai-model-selector-trigger"
+      aria-haspopup="dialog"
       aria-expanded={open}
-      aria-label={`Model ${selectedName}; reasoning ${reasoningNeedsChoice ? 'not selected' : defaultReasoning}`}
+      aria-label={`Model and reasoning: ${selectedName}, ${reasoningNeedsChoice ? 'choose level' : defaultReasoning}`}
+      title={`${selectedName} · ${reasoningNeedsChoice ? 'Choose reasoning' : defaultReasoning}`}
       onClick={() => setOpen(value => !value)}
-      className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-300 hover:border-emerald-500/70"
+      className="inline-flex h-10 max-w-[10rem] min-w-0 items-center gap-1.5 rounded-xl border border-ideapad-border bg-ideapad-surface px-2.5 text-xs text-ideapad-text transition-colors hover:bg-ideapad-surface-variant focus-visible:outline-offset-2 max-[380px]:max-w-[7.5rem]"
     >
-      {loading ? <Loader2 size={13} className="animate-spin" /> : <Brain size={13} />}
-      <span className="truncate">{selectedName}</span>
-      <span className="rounded-full bg-slate-800 px-2 py-0.5 text-emerald-300">{reasoningNeedsChoice ? 'choose level' : defaultReasoning}</span>
-      <ChevronDown size={13} />
+      {loading ? <Loader2 size={14} className="animate-spin shrink-0" /> : <Brain size={14} className="shrink-0 text-ideapad-mint" />}
+      <span className="min-w-0 truncate">{compactModelLabel}</span>
+      <span className="shrink-0 rounded-md bg-ideapad-surface-variant px-1.5 py-0.5 text-[10px] font-medium text-ideapad-mint">{reasoningNeedsChoice ? 'Set' : defaultReasoning[0].toUpperCase() + defaultReasoning.slice(1)}</span>
+      <ChevronDown size={13} className={`shrink-0 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
     </button>
-    {open && <div className="absolute bottom-full left-0 mb-2 w-[min(22rem,calc(100vw-2rem))] rounded-xl border border-slate-700 bg-slate-950 p-4 shadow-2xl">
-      {controls}
+    {open && <div role="dialog" aria-label="Model and reasoning" className="absolute bottom-full right-0 mb-2 w-[min(21rem,calc(100vw-1.5rem))] rounded-2xl border border-ideapad-border bg-ideapad-surface p-3 shadow-2xl sm:p-4">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-ideapad-text">Model</h3>
+        {privileged && <span className="rounded-full bg-ideapad-surface-variant px-2 py-1 text-[10px] text-ideapad-mint">Privileged</span>}
+      </div>
+      {options.length > 0 ? <div role="listbox" aria-label="Available AI models" className="max-h-48 space-y-1 overflow-y-auto">
+        {options.map(model => <button key={model.id} type="button" role="option" aria-selected={selected?.id === model.id} onClick={() => changeModel(model)} className={`flex w-full items-start gap-2 rounded-xl px-3 py-2.5 text-left transition-colors ${selected?.id === model.id ? 'bg-ideapad-surface-variant text-ideapad-text' : 'text-ideapad-muted hover:bg-ideapad-surface-variant/70'}`}>
+          <Brain size={15} className={`mt-0.5 shrink-0 ${selected?.id === model.id ? 'text-ideapad-mint' : 'text-ideapad-muted'}`} />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium">{model.name}</span>
+            <span className="mt-0.5 block text-[11px] leading-4 text-ideapad-muted">{model.description}</span>
+          </span>
+          {selected?.id === model.id && <span aria-hidden="true" className="mt-1 text-xs text-ideapad-mint">✓</span>}
+        </button>)}
+      </div> : <p role="status" className="rounded-xl bg-ideapad-surface-variant px-3 py-2 text-xs text-ideapad-muted">{loading ? 'Checking available models…' : catalogError ? 'Model access could not be verified.' : 'No model is available for this provider.'}</p>}
+      {selected && <>
+        <div className="mt-3 border-t border-ideapad-border pt-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h4 className="text-xs font-semibold text-ideapad-text">Reasoning</h4>
+            <span className="text-[10px] text-ideapad-muted">{reasoningNeedsChoice ? 'Choose a supported level' : `${defaultReasoning[0].toUpperCase()} selected`}</span>
+          </div>
+          <div role="group" aria-label="Reasoning level" className="grid grid-cols-3 gap-1 rounded-xl bg-ideapad-base p-1">
+            {reasoningOptions.map(level => <button key={level} type="button" aria-pressed={!reasoningNeedsChoice && defaultReasoning === level} onClick={() => changeReasoning(level)} className={`rounded-lg px-2 py-2 text-xs font-medium transition-colors ${!reasoningNeedsChoice && defaultReasoning === level ? 'bg-ideapad-surface-variant text-ideapad-mint shadow-sm' : 'text-ideapad-muted hover:text-ideapad-text'}`}>{level[0].toUpperCase() + level.slice(1)}</button>)}
+          </div>
+        </div>
+        {savedReasoningUnavailable && <p role="status" className="mt-2 text-[11px] text-amber-300">Your saved reasoning level is unavailable for this model. Choose one above.</p>}
+      </>}
     </div>}
   </div>;
 };

@@ -3,7 +3,8 @@
  *
  * SCOPE & PURPOSE:
  * Codifies the 12 Phase 0 Invariants into an executable, deterministic test suite
- * grounded in real archived conversations from `archive_intelligence.db`.
+ * grounded in deterministic synthetic entities and messages. It does not read
+ * the retired archive-intelligence database or private conversation exports.
  *
  * INVARIANTS TESTED:
  * 1. Chronological processing without future leakage.
@@ -102,7 +103,7 @@ describe('Phase 0 Executable Memory Acceptance Contract', () => {
   // 1. Chronological Processing Without Future Leakage
   // -------------------------------------------------------------------------
   it('INV-01: Chronological Processing — state at Turn 15 contains strictly zero facts from Turn 177', () => {
-    // Ground truth from Flowmate HQ conversation (69119037-f804-8323-82dd-ce6ddcd3f110)
+    // Synthetic chronology fixture: the earlier decision is present at this checkpoint.
     // Turn 12: FastAPI selected
     const turn12FastApi = createContractEntity({
       id: 'mem_fastapi_12',

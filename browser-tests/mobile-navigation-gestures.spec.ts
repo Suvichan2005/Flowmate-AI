@@ -1,0 +1,74 @@
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+
+async function skipOptionalOnboarding(page: Page) {
+  const skip = page.getByRole('button', { name: 'Skip setup for now', exact: true });
+  if (await skip.count()) await skip.click();
+}
+
+async function dragTouch(context: BrowserContext, page: Page, points: Array<{ x: number; y: number }>, movingSelector: string) {
+  const cdp = await context.newCDPSession(page);
+  const [start, ...rest] = points;
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ id: 1, x: start.x, y: start.y, radiusX: 1, radiusY: 1, force: 1 }],
+  });
+  const offsets: number[] = [];
+  for (const point of rest) {
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ id: 1, x: point.x, y: point.y, radiusX: 1, radiusY: 1, force: 1 }],
+    });
+    offsets.push(await page.locator(movingSelector).evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41));
+  }
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [],
+  });
+  await cdp.detach();
+  return offsets;
+}
+
+test('mobile screen drag opens Chat, returns to Home, and opens then drags the sidebar closed', async ({ page, context }) => {
+  await context.route('**/*', route => {
+    const hostname = new URL(route.request().url()).hostname;
+    return hostname === '127.0.0.1' || hostname === 'localhost' ? route.continue() : route.abort();
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/#dashboard');
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+  await skipOptionalOnboarding(page);
+
+  const nav = page.getByRole('navigation', { name: 'Mobile Navigation' });
+  const openChatOffsets = await dragTouch(context, page, [
+    { x: 250, y: 430 }, { x: 210, y: 430 }, { x: 170, y: 430 }, { x: 130, y: 430 },
+  ], '[data-testid="mobile-gesture-surface"]');
+  expect(openChatOffsets.some(offset => offset < 0)).toBe(true);
+  await expect(nav.getByRole('button', { name: 'Open Chat', exact: true })).toHaveAttribute('aria-current', 'page');
+  await page.screenshot({ path: 'qa-evidence/mobile-chat-composer-design-review.png' });
+
+  const surface = page.getByTestId('mobile-gesture-surface');
+  const chatReturnOffsets = await dragTouch(context, page, [
+    { x: 150, y: 430 }, { x: 195, y: 430 }, { x: 235, y: 430 }, { x: 275, y: 430 },
+  ], '[data-testid="mobile-gesture-surface"]');
+  expect(chatReturnOffsets.some(offset => offset > 0)).toBe(true);
+  await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
+
+  // A deliberate left-edge drag reveals the real sidebar and its accessible dialog.
+  const openMenuOffsets = await dragTouch(context, page, [
+    { x: 8, y: 430 }, { x: 50, y: 430 }, { x: 95, y: 430 }, { x: 140, y: 430 },
+  ], '[data-testid="mobile-gesture-surface"]');
+  expect(openMenuOffsets.some(offset => offset > 0)).toBe(true);
+  const sidebar = page.getByRole('dialog', { name: 'Mobile navigation' });
+  await expect(sidebar).toBeVisible();
+  const panel = page.getByTestId('mobile-sidebar-panel');
+  await expect.poll(() => panel.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41)).toBe(0);
+
+  // Drag the exposed header area left; the panel follows the finger and then closes.
+  const closeMenuOffsets = await dragTouch(context, page, [
+    { x: 150, y: 25 }, { x: 115, y: 25 }, { x: 75, y: 25 }, { x: 30, y: 25 },
+  ], '[data-testid="mobile-sidebar-panel"]');
+  expect(closeMenuOffsets.some(offset => offset < 0)).toBe(true);
+  await expect(sidebar).toBeHidden();
+  await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(surface).toBeVisible();
+});

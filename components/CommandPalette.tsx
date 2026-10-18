@@ -13,7 +13,6 @@ import {
   CheckSquare,
   Sparkles,
   BarChart3,
-  Clock,
   Library,
   UtensilsCrossed,
   GraduationCap,
@@ -134,7 +133,6 @@ export const CommandPalette: React.FC<{ onSendToChat: (text: string) => void }> 
       { id: 'nav-proj', title: 'Go to Projects', subtitle: 'View', icon: <BookOpen size={14} />, type: 'COMMAND', action: () => setView('projects') },
       { id: 'nav-cal', title: 'Go to Calendar', subtitle: 'View', icon: <Calendar size={14} />, type: 'COMMAND', action: () => setView('calendar') },
       { id: 'nav-analytics', title: 'Go to Analytics', subtitle: 'View', icon: <BarChart3 size={14} />, type: 'COMMAND', action: () => setView('analytics') },
-      { id: 'nav-timeline', title: 'Go to Timeline', subtitle: 'View', icon: <Clock size={14} />, type: 'COMMAND', action: () => setView('timeline') },
       { id: 'nav-knowledge', title: 'Go to Knowledge Base', subtitle: 'View', icon: <Library size={14} />, type: 'COMMAND', action: () => setView('knowledge') },
       { id: 'nav-settings', title: 'Go to Settings', subtitle: 'View', icon: <Settings size={14} />, type: 'COMMAND', action: () => setView('settings') },
     ].filter(item => item.title.toLowerCase().includes(q));

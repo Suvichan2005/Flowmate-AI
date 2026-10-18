@@ -2,9 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { useStore } from '../store';
 import { getActiveEntities } from '../store/helpers';
 import { EntityKind, EntityStatus, RelationshipType } from '../types';
-import { Target, BookOpen, Clock, AlertCircle, Search, Filter, CheckCircle2, Circle, Library, StickyNote, Hash, LayoutGrid, Kanban, CalendarRange } from 'lucide-react';
+import { Target, BookOpen, Clock, AlertCircle, Search, Filter, CheckCircle2, Circle, Library, StickyNote, Hash, LayoutGrid, Kanban } from 'lucide-react';
 import KanbanBoard from './KanbanBoard';
-import TimelineView from './TimelineView';
 import { calculateProgress } from '../utils/progressCalculation';
 import { CommitmentCard } from './CommitmentCard';
 
@@ -21,7 +20,7 @@ const EntityList: React.FC<EntityListProps> = ({ kinds, schemaId, capability, ti
   
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<EntityStatus | 'ALL'>('ALL');
-  const [viewMode, setViewMode] = useState<'GRID' | 'BOARD' | 'TIMELINE'>('GRID');
+  const [viewMode, setViewMode] = useState<'GRID' | 'BOARD'>('GRID');
 
   const filteredItems = useMemo(() => {
     return entities.filter(e => {
@@ -94,13 +93,6 @@ const EntityList: React.FC<EntityListProps> = ({ kinds, schemaId, capability, ti
                      >
                          <Kanban size={16} />
                      </button>
-                     <button 
-                        onClick={() => setViewMode('TIMELINE')}
-                        className={`p-2 rounded ${viewMode === 'TIMELINE' ? 'bg-slate-800 text-indigo-400 shadow-sm' : 'text-slate-500 hover:text-slate-300'}`}
-                        title="Timeline View"
-                     >
-                         <CalendarRange size={16} />
-                     </button>
                  </div>
 
                  {/* Status Filter (Only valid for Grid) */}
@@ -136,9 +128,7 @@ const EntityList: React.FC<EntityListProps> = ({ kinds, schemaId, capability, ti
       </header>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-          {viewMode === 'TIMELINE' ? (
-              <TimelineView entities={filteredItems} />
-          ) : viewMode === 'BOARD' ? (
+          {viewMode === 'BOARD' ? (
               <KanbanBoard entities={filteredItems} />
           ) : filteredItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 border border-dashed border-slate-800 rounded-xl text-slate-500">

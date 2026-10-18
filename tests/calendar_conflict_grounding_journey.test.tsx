@@ -13,7 +13,6 @@ import {
   CalendarConflict
 } from '../utils/calendarConflicts';
 import { CommandPalette } from '../components/CommandPalette';
-import TimelineView from '../components/TimelineView';
 import CalendarView from '../components/CalendarView';
 import CreateEntityModal from '../components/CreateEntityModal';
 import { useStore } from '../store';
@@ -612,39 +611,7 @@ describe('Workflow 2: Calendar Conflict Grounding & Read-Only Awareness', () => 
     });
   });
 
-  describe('3. TimelineView & CalendarView Collision Grounding', () => {
-    it('TimelineView renders conflict indicator on colliding events', () => {
-      const e1: any = {
-        id: 'tl-1',
-        title: 'Team Workshop A',
-        kind: EntityKind.EVENT,
-        status: EntityStatus.IN_PROGRESS,
-        created_at: '2026-10-12T00:00:00Z',
-        updated_at: '2026-10-12T00:00:00Z',
-        start_time: '2026-10-12T09:00:00Z',
-        end_time: '2026-10-12T12:00:00Z'
-      };
-
-      const e2: any = {
-        id: 'tl-2',
-        title: 'Design Review B',
-        kind: EntityKind.EVENT,
-        status: EntityStatus.IN_PROGRESS,
-        created_at: '2026-10-12T00:00:00Z',
-        updated_at: '2026-10-12T00:00:00Z',
-        start_time: '2026-10-12T10:00:00Z',
-        end_time: '2026-10-12T11:00:00Z'
-      };
-
-      render(<TimelineView entities={[e1, e2]} />);
-
-      const entityEl1 = screen.getByTestId('timeline-entity-tl-1');
-      const entityEl2 = screen.getByTestId('timeline-entity-tl-2');
-
-      expect(entityEl1).toHaveAttribute('title', expect.stringContaining('[Schedule Conflict]'));
-      expect(entityEl2).toHaveAttribute('title', expect.stringContaining('[Schedule Conflict]'));
-    });
-
+  describe('3. CalendarView Collision Grounding', () => {
     it('CalendarView renders schedule collision badge on colliding events', () => {
       const today = new Date();
       today.setHours(10, 0, 0, 0);

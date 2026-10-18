@@ -228,7 +228,7 @@ export function getNormalizedEventInterval(
 
 /**
  * Discovers entity IDs that collide with at least one other eligible event.
- * Unified interval/eligibility contract for CalendarView and TimelineView.
+ * Shared interval and eligibility contract for calendar and scheduling views.
  */
 export function findCollidingEventIds(
   entities: Entity[],

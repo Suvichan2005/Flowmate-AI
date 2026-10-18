@@ -3,14 +3,21 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 
 async function navigate(page: Page, route: string) {
   if (page.viewportSize()!.width < 768) {
-    await page.getByRole('navigation', { name: 'Mobile Navigation' }).getByRole('button', { name: 'More', exact: true }).click();
+    const bottomNavigation = page.getByRole('navigation', { name: 'Mobile Navigation' });
+    const bottomLabel: Record<string, string> = { Dashboard: 'Open Home', Chat: 'Open Chat', Library: 'Open Library', Calendar: 'Open Calendar', Settings: 'Open Settings' };
+    if (bottomLabel[route]) {
+      await bottomNavigation.getByRole('button', { name: bottomLabel[route], exact: true }).click();
+    } else {
+      await page.getByRole('button', { name: /open navigation menu/i }).click();
+      await page.getByRole('dialog', { name: 'Mobile navigation' }).getByRole('button', { name: 'Navigate to ' + route, exact: true }).click();
+    }
+  } else {
+    await page.getByRole('button', { name: 'Navigate to ' + route, exact: true }).click();
   }
-  await page.getByRole('button', { name: 'Navigate to ' + route, exact: true }).click();
   const main = page.viewportSize()!.width < 768 ? page.getByRole('main').last() : page.locator('#main-content');
   if (route === 'Chat') await expect(page.getByTestId('conversation-switcher')).toBeVisible();
   else if (route === 'Dashboard') await expect(main.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
   else if (route === 'Graph') await expect(page.getByRole('heading', { name: 'Knowledge Graph is Empty' }).or(page.getByText(/Nodes.*Links/)).first()).toBeVisible();
-  else if (route === 'Timeline') await expect(main).toContainText(/No timeline data available|Today/);
   else if (route === 'Calendar') await expect(main.locator('h1')).toBeVisible();
   else if (route === 'Analytics') await expect(main.getByRole('heading', { name: 'Progress Intelligence' })).toBeVisible();
   else if (route === 'Library') await expect(main.locator('h1')).toContainText('Library');
@@ -343,9 +350,6 @@ test('arbitrary user-created CRUD propagates to graph timeline calendar analytic
   await panel.getByRole('button', { name: 'Close entity details' }).click();
   await navigate(page, 'Graph'); await expect(page.locator('svg g.node')).toHaveCount(5);
   await expect(page.locator('svg line.link')).toHaveCount(1);
-  await navigate(page, 'Timeline'); await expect(page.getByText('QA arbitrary task', { exact: true })).toBeVisible();
-  await expect(page.getByText('QA arbitrary event', { exact: true })).toBeVisible();
-  await expect(page.getByText('QA arbitrary goal', { exact: true })).toHaveCount(0);
   await navigate(page, 'Calendar'); await expect(page.getByText('QA arbitrary event', { exact: true }).first()).toBeVisible();
   await navigate(page, 'Analytics'); await expect(page.getByRole('heading', { name: 'QA arbitrary habit', exact: true })).toBeVisible();
   await navigate(page, 'Library'); await page.getByRole('heading', { name: 'QA arbitrary task', exact: true }).click();
@@ -483,7 +487,7 @@ test('four palettes govern canvas and route surfaces at desktop tablet and mobil
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     for (const palette of ['Forest', 'Ocean', 'Plum', 'Slate']) {
       await navigate(page, 'Settings'); await page.getByRole('radio', { name: new RegExp('^' + palette) }).click();
-      for (const route of ['Dashboard', 'Timeline', 'Graph', 'Calendar', 'Analytics', 'Library', 'Chat', 'Settings']) {
+      for (const route of ['Dashboard', 'Graph', 'Calendar', 'Analytics', 'Library', 'Chat', 'Settings']) {
         await navigate(page, route);
         const values = await page.evaluate(() => {
           const probe = document.createElement('div'); probe.style.background = 'var(--surface-canvas)'; document.body.append(probe);

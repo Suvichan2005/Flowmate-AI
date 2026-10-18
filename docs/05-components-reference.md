@@ -61,11 +61,6 @@ Dashboard for productivity metrics.
 *   Productivity charts
 *   Time breakdown by category
 
-### `TimelineView.tsx`
-Linear timeline visualization of events and activities.
-
----
-
 ## Entity Management
 
 ### `EntityDetailPanel.tsx` (~62KB)

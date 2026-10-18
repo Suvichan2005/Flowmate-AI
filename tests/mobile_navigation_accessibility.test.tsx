@@ -34,7 +34,6 @@ describe('Navigation accessibility and active route semantics', () => {
       { label: 'Dashboard', view: 'dashboard' },
       { label: 'Chat', view: 'chat' },
       { label: 'Graph', view: 'chat_graph' },
-      { label: 'Timeline', view: 'timeline' },
       { label: 'Calendar', view: 'calendar' },
       { label: 'Analytics', view: 'analytics' },
       { label: 'Library', view: 'knowledge' },
@@ -79,57 +78,48 @@ describe('Navigation accessibility and active route semantics', () => {
       vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(390);
     });
 
-    it('updates aria-current="page" on bottom navigation buttons when switching routes', () => {
+    it('centers Home, keeps Chat left of center, and updates the active route', () => {
       render(<App />);
 
       const mobileNav = screen.getByRole('navigation', { name: /mobile navigation/i });
       const homeBtn = screen.getByRole('button', { name: 'Open Home' });
       const chatBtn = screen.getByRole('button', { name: 'Open Chat' });
-      const graphBtn = screen.getByRole('button', { name: 'Open Graph' });
+      const libraryBtn = screen.getByRole('button', { name: 'Open Library' });
       const calendarBtn = screen.getByRole('button', { name: 'Open Calendar' });
       const settingsBtn = screen.getByRole('button', { name: 'Open Settings' });
       const navButtons = [...mobileNav.querySelectorAll('button')];
       expect(navButtons.map(button => button.getAttribute('aria-label'))).toEqual([
-        'Open Home', 'Open Graph', 'Open Chat', 'Open Calendar', 'Open Settings',
+        'Open Chat', 'Open Library', 'Open Home', 'Open Calendar', 'Open Settings',
       ]);
-      expect(navButtons[2]).toBe(chatBtn);
+      expect(navButtons[0]).toBe(chatBtn);
+      expect(navButtons[2]).toBe(homeBtn);
       expect(navButtons[4]).toBe(settingsBtn);
 
-      // Initially on dashboard (Home)
       expect(homeBtn).toHaveAttribute('aria-current', 'page');
       expect(chatBtn).not.toHaveAttribute('aria-current');
-      expect(graphBtn).not.toHaveAttribute('aria-current');
-      expect(calendarBtn).not.toHaveAttribute('aria-current');
+      expect(libraryBtn).not.toHaveAttribute('aria-current');
 
-      // Click Chat
       act(() => { fireEvent.click(chatBtn); });
       expect(useStore.getState().currentView).toBe('chat');
       expect(chatBtn).toHaveAttribute('aria-current', 'page');
       expect(homeBtn).not.toHaveAttribute('aria-current');
-      expect(graphBtn).not.toHaveAttribute('aria-current');
-      expect(calendarBtn).not.toHaveAttribute('aria-current');
 
-      // Click Graph
-      act(() => { fireEvent.click(graphBtn); });
-      expect(useStore.getState().currentView).toBe('chat_graph');
-      expect(graphBtn).toHaveAttribute('aria-current', 'page');
+      act(() => { fireEvent.click(libraryBtn); });
+      expect(useStore.getState().currentView).toBe('knowledge');
+      expect(libraryBtn).toHaveAttribute('aria-current', 'page');
       expect(chatBtn).not.toHaveAttribute('aria-current');
-      expect(homeBtn).not.toHaveAttribute('aria-current');
-      expect(calendarBtn).not.toHaveAttribute('aria-current');
 
-      // Click Calendar
       act(() => { fireEvent.click(calendarBtn); });
       expect(useStore.getState().currentView).toBe('calendar');
       expect(calendarBtn).toHaveAttribute('aria-current', 'page');
-      expect(graphBtn).not.toHaveAttribute('aria-current');
-      expect(chatBtn).not.toHaveAttribute('aria-current');
-      expect(homeBtn).not.toHaveAttribute('aria-current');
 
-      // Click Home
+      act(() => { fireEvent.click(settingsBtn); });
+      expect(useStore.getState().currentView).toBe('settings');
+      expect(settingsBtn).toHaveAttribute('aria-current', 'page');
+
       act(() => { fireEvent.click(homeBtn); });
       expect(useStore.getState().currentView).toBe('dashboard');
       expect(homeBtn).toHaveAttribute('aria-current', 'page');
-      expect(calendarBtn).not.toHaveAttribute('aria-current');
     });
 
     it('provides accessible dialog semantics and keyboard dismissal for mobile menu overlay', () => {

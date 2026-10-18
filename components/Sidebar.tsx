@@ -14,7 +14,6 @@ import {
   Maximize2,
   Minimize2,
   TrendingUp,
-  Clock,
   Network,
   Search
 } from 'lucide-react';
@@ -50,7 +49,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
     { icon: LayoutDashboard, label: 'Dashboard', view: 'dashboard' as ViewType },
     { icon: MessageSquare, label: 'Chat', view: 'chat' as ViewType },
     { icon: Network, label: 'Graph', view: 'chat_graph' as ViewType },
-    { icon: Clock, label: 'Timeline', view: 'timeline' as ViewType },
     { icon: Calendar, label: 'Calendar', view: 'calendar' as ViewType },
     { icon: TrendingUp, label: 'Analytics', view: 'analytics' as ViewType },
     { icon: Library, label: 'Library', view: 'knowledge' as ViewType },

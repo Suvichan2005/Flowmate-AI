@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Paperclip, Mic, MicOff, Send, X, Image, Loader2, Square } from 'lucide-react';
+import { Paperclip, Mic, MicOff, Send, X, Loader2, Square } from 'lucide-react';
 import { sanitizeUserInput } from '../utils/validation';
 import { hasAiApiKey } from '../services/ai/client';
 import { hasManagedAiIdentity } from '../services/ai/managedClient';
@@ -202,43 +202,27 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
     const canUseLiveVoice = hasAiApiKey() || hasManagedAiIdentity();
 
     return (
-        <form onSubmit={handleSubmit} className="relative">
-            {(hasAiApiKey() || hasManagedAiIdentity()) && <AiModelSelector compact />}
-            {/* Attachment Preview */}
+        <form onSubmit={handleSubmit} className="relative" aria-label="Chat composer">
             {attachment && (
-                <div className="mb-3 relative inline-block">
-                    <img
-                        src={attachment}
-                        alt="Attachment"
-                        className="h-20 w-20 object-cover rounded-xl border border-slate-600 shadow-lg"
-                    />
-                    {onRemoveAttachment && (
-                        <button
-                            type="button"
-                            onClick={onRemoveAttachment}
-                            className="absolute -top-2 -right-2 p-1.5 bg-red-500 rounded-full text-white hover:bg-red-400 transition-colors shadow-lg"
-                        >
-                            <X size={12} />
-                        </button>
-                    )}
+                <div className="mb-2 relative inline-flex items-center gap-2 rounded-xl border border-ideapad-border bg-ideapad-surface p-2">
+                    <img src={attachment} alt="Attachment preview" className="h-14 w-14 rounded-lg object-cover" />
+                    {onRemoveAttachment && <button type="button" onClick={onRemoveAttachment} aria-label="Remove attachment" className="rounded-lg p-2 text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text"><X size={16} /></button>}
                 </div>
             )}
 
-            {/* Input Row - Premium ChatGPT-style */}
-            <div className={`
-                flex items-center gap-2
-                bg-gradient-to-r from-slate-800/90 to-slate-800/70
-                backdrop-blur-sm
-                border border-slate-600/50
-                rounded-2xl
-                ${isMobile ? 'p-2' : 'p-2.5'}
-                shadow-lg
-                focus-within:border-indigo-500/60
-                focus-within:shadow-indigo-500/10
-                focus-within:shadow-xl
-                transition-all duration-200
-            `}>
-                {/* Attachment Button */}
+            <div className="overflow-visible rounded-2xl border border-ideapad-border bg-ideapad-surface shadow-sm transition-colors focus-within:border-ideapad-mint/60" data-testid="chat-composer">
+                <textarea
+                    aria-label="Message Flowmate"
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(e) => updateInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={isListening ? 'Listening…' : placeholder}
+                    rows={1}
+                    className={`block w-full min-w-0 resize-none bg-transparent px-4 pt-3 pb-2 text-ideapad-text outline-none placeholder:text-ideapad-muted/70 ${isMobile ? 'text-base' : 'text-sm'} max-h-[150px] min-h-[44px] leading-6`}
+                    style={{ lineHeight: '1.5' }}
+                />
+
                 <input
                     ref={fileInputRef}
                     type="file"
@@ -247,163 +231,46 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                     className="hidden"
                     id="chat-file-input"
                 />
-                <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`
-                        ${isMobile ? 'p-2' : 'p-2.5'}
-                        text-slate-400 hover:text-indigo-400
-                        hover:bg-slate-700/50
-                        rounded-xl
-                        transition-all duration-150
-                        active:scale-95
-                        shrink-0
-                    `}
-                    title="Attach file"
-                >
-                    <Paperclip size={isMobile ? 18 : 20} />
-                </button>
+                <div className="flex min-w-0 items-center justify-between gap-2 px-2 pb-2">
+                    <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file" title="Attach file" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-ideapad-muted transition-colors hover:bg-ideapad-surface-variant hover:text-ideapad-text">
+                        <Paperclip size={19} />
+                    </button>
 
-                {/* Textarea - Properly aligned */}
-                <textarea
-                    aria-label="Message Flowmate"
-                    ref={textareaRef}
-                    value={input}
-                    onChange={(e) => updateInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={isListening ? "Listening..." : placeholder}
-                    rows={1}
-                    className={`
-                        flex-1
-                        bg-transparent
-                        text-slate-100
-                        ${isMobile ? 'text-base' : 'text-sm'}
-                        resize-none
-                        outline-none
-                        placeholder-slate-500
-                        min-h-[28px]
-                        max-h-[150px]
-                        py-1.5
-                        leading-relaxed
-                        self-center
-                    `}
-                    disabled={false}
-                    style={{ lineHeight: '1.5' }}
-                />
+                    <div className="flex min-w-0 items-center gap-1.5">
+                        {(hasAiApiKey() || hasManagedAiIdentity()) && <AiModelSelector compact />}
 
-                {/* Right buttons - Vertically centered */}
-                <div className="flex items-center gap-1 shrink-0 self-center">
-                    {/* Live Voice Button (Gemini Live Mode) */}
-                    {onLiveVoice && (
-                        <button
+                        {onLiveVoice && <button
                             type="button"
                             onClick={onLiveVoice}
-                            className={`
-                                ${isMobile ? 'p-2' : 'p-2.5'}
-                                rounded-xl
-                                transition-all duration-150
-                                active:scale-95
-                                ${canUseLiveVoice
-                                    ? 'text-indigo-400 hover:text-indigo-300 hover:bg-indigo-600/20'
-                                    : 'text-slate-500 hover:text-slate-400 hover:bg-slate-800/40'}
-                                relative group
-                            `}
-                            title={canUseLiveVoice ? "Start Gemini Live Voice Session" : "Gemini Live is unavailable for this session"}
-                            aria-label={canUseLiveVoice ? "Start Gemini Live Voice Session" : "Gemini Live Voice unavailable"}
-                        >
-                            <Mic size={isMobile ? 18 : 20} />
-                            {canUseLiveVoice && <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />}
-                        </button>
-                    )}
+                            disabled={!canUseLiveVoice}
+                            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${canUseLiveVoice ? 'text-ideapad-mint hover:bg-ideapad-surface-variant' : 'cursor-not-allowed text-ideapad-muted/50'}`}
+                            title={canUseLiveVoice ? 'Start Gemini Live voice' : 'Gemini Live is unavailable for this session'}
+                            aria-label={canUseLiveVoice ? 'Start Gemini Live voice' : 'Gemini Live voice unavailable'}
+                        ><Mic size={19} /></button>}
 
-                    {/* Speech Recognition (STT text typing into input box) when no Live Voice */}
-                    {!onLiveVoice && speechSupported && (
-                        <button
+                        {!onLiveVoice && speechSupported && <button
                             type="button"
                             onClick={toggleListening}
-                            className={`
-                                ${isMobile ? 'p-2' : 'p-2.5'}
-                                rounded-xl
-                                transition-all duration-150
-                                active:scale-95
-                                ${isListening
-                                    ? 'bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse'
-                                    : 'text-slate-400 hover:text-indigo-400 hover:bg-slate-700/50'
-                                }
-                            `}
-                            title={isListening ? "Stop listening" : "Voice input"}
-                        >
-                            {isListening ? <MicOff size={isMobile ? 18 : 20} /> : <Mic size={isMobile ? 18 : 20} />}
-                        </button>
-                    )}
+                            aria-label={isListening ? 'Stop voice input' : 'Voice input'}
+                            title={isListening ? 'Stop listening' : 'Voice input'}
+                            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${isListening ? 'bg-rose-500/15 text-rose-300' : 'text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text'}`}
+                        >{isListening ? <MicOff size={19} /> : <Mic size={19} />}</button>}
 
-                    {/* Stop / Send / Queue Button */}
-                    {(loading || isStreaming) && !hasContent && onStop ? (
-                        <button
-                            type="button"
-                            onClick={onStop}
-                            className={`
-                                ${isMobile ? 'p-2' : 'p-2.5'}
-                                rounded-xl
-                                transition-all duration-150
-                                active:scale-95
-                                bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 hover:text-rose-300
-                                border border-rose-500/40
-                                shadow-lg shadow-rose-500/10
-                            `}
-                            title="Stop generating"
-                            aria-label="Stop generating"
+                        {(loading || isStreaming) && !hasContent && onStop ? <button type="button" onClick={onStop} aria-label="Stop generating" title="Stop generating" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 transition-colors hover:bg-rose-500/20"><Square size={16} className="fill-current" /></button> : ((!isMobile || hasContent) && <button
+                            type="submit"
+                            disabled={!hasContent}
+                            title={(loading || isStreaming) ? 'Queue message' : 'Send message'}
+                            aria-label={(loading || isStreaming) ? 'Queue message' : 'Send message'}
+                            className={`relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${hasContent ? 'bg-ideapad-mint text-ideapad-base hover:brightness-110' : 'cursor-not-allowed bg-ideapad-surface-variant text-ideapad-muted/60'}`}
                         >
-                            <Square size={isMobile ? 16 : 18} className="fill-current" />
-                        </button>
-                    ) : (
-                        (!isMobile || hasContent) && (
-                            <button
-                                type="submit"
-                                disabled={!hasContent}
-                                className={`
-                                    ${isMobile ? 'p-2' : 'p-2.5'}
-                                    rounded-xl
-                                    transition-all duration-150
-                                    active:scale-95
-                                    relative
-                                    ${hasContent
-                                        ? 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/30'
-                                        : 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
-                                    }
-                                `}
-                                title={(loading || isStreaming) ? "Queue message" : "Send message"}
-                                aria-label={(loading || isStreaming) ? "Queue message" : "Send message"}
-                            >
-                                {(loading || isStreaming) && !hasContent ? (
-                                    <Loader2 size={isMobile ? 18 : 20} className="animate-spin" />
-                                ) : (
-                                    <Send size={isMobile ? 18 : 20} />
-                                )}
-                                {queueCount > 0 && (
-                                    <span className="absolute -top-1 -right-1 bg-amber-500 text-slate-950 font-bold rounded-full w-4 h-4 flex items-center justify-center text-[10px]">
-                                        {queueCount}
-                                    </span>
-                                )}
-                            </button>
-                        )
-                    )}
+                            {(loading || isStreaming) && !hasContent ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+                            {queueCount > 0 && <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-bold text-slate-950">{queueCount}</span>}
+                        </button>)}
+                    </div>
                 </div>
             </div>
-
-            <p aria-live="polite" className="mt-1 px-2 text-[10px] text-slate-500">
-                {draftCharacterCount > 0
-                    ? `${draftCharacterCount.toLocaleString()} characters · ~${draftTokenEstimate.toLocaleString()} draft tokens; estimate excludes conversation history and attachments.`
-                    : 'Model context is checked when you send; estimates include conversation history and attachments.'}
-            </p>
-
-            {/* Voice indicator */}
-            {isListening && (
-                <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-4 py-1.5 bg-red-500/20 border border-red-500/50 rounded-full text-red-400 text-xs font-medium flex items-center gap-2 backdrop-blur-sm">
-                    <span className="w-2 h-2 bg-red-400 rounded-full animate-pulse" />
-                    Listening...
-                </div>
-            )}
+            {isListening && <div role="status" className="absolute -top-9 left-1/2 -translate-x-1/2 rounded-full border border-rose-400/30 bg-rose-950/90 px-3 py-1 text-xs text-rose-200 shadow-lg">Listening</div>}
+            <output aria-live="polite" className="sr-only">{draftCharacterCount > 0 ? `${draftCharacterCount} characters in draft, approximately ${draftTokenEstimate} tokens` : ''}</output>
         </form>
     );
 };

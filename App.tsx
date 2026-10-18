@@ -9,7 +9,7 @@ import { initializeSync, setWorkspaceCloudSyncConsent as setSyncWorkspaceCloudSy
 import { mergeData, mergeMessages, mergeChatSessions, mergeCloudSettings } from './services/firestoreSync';
 import { hasWorkspaceCloudSyncConsent, subscribeToWorkspaceCloudSyncConsent } from './services/workspaceSyncConsent';
 import { preventDoubleClick } from './utils/debounce';
-import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers, Sparkles, LayoutDashboard, Settings } from 'lucide-react';
+import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers, Sparkles, LayoutDashboard, Settings, Library } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import OpsPreviewForm from './components/OpsPreviewForm';
 import Dashboard from './components/Dashboard';
@@ -28,7 +28,7 @@ import WorkspaceStatus from './components/WorkspaceStatus';
 import { MessageVersionNav } from './components/MessageVersionNav';
 import { DeveloperModeDrawer } from './components/DeveloperModeDrawer';
 import { resolveBranchHistory } from './utils/conversationGraph';
-import { EntityKind, ToonOperation, ChatSession, Entity, TurnExecutor, BranchQueueItem } from './types';
+import { EntityKind, ToonOperation, ChatSession, Entity, TurnExecutor, BranchQueueItem, ViewType } from './types';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfirmedExecutionPlan } from './services/kernel';
 
@@ -36,7 +36,7 @@ import { reconcileEntityCollection, globalPendingMutationQueue } from './service
 import { projectKernelEntitiesToLegacy } from './store/kernelProjection';
 import { setupCrossTabSync } from './services/storage';
 import { getLatestReviewDraft, deleteReviewDraft, revalidateReviewDraft, type ReviewDraft } from './services/action-review';
-import { mobileGestureThreshold, resolveMobileGestureIntent } from './utils/mobileNavigationGestures';
+import { MOBILE_GESTURE_EDGE_PX, mobileGestureThreshold, mobileSidebarCloseThreshold, resolveMobileGestureIntent } from './utils/mobileNavigationGestures';
 import OnboardingFlow from './components/OnboardingFlow';
 import { buildOnboardingChatDraft, hasCompletedOnboarding } from './services/onboardingProfile';
 
@@ -73,7 +73,6 @@ const LiveVoiceModal = lazyWithRetry(() => import('./components/LiveVoiceModal')
 const CreateEntityModal = lazyWithRetry(() => import('./components/CreateEntityModal'));
 const KnowledgeView = lazyWithRetry(() => import('./components/KnowledgeView'));
 const AnalyticsView = lazyWithRetry(() => import('./components/AnalyticsView'));
-const TimelineView = lazyWithRetry(() => import('./components/TimelineView'));
 const SchedulesView = lazyWithRetry(() => import('./components/SchedulesView'));
 const FoodTracker = lazyWithRetry(() => import('./components/FoodTracker'));
 const AttendanceTracker = lazyWithRetry(() => import('./components/AttendanceTracker'));
@@ -170,19 +169,28 @@ const App: React.FC = () => {
   const managedAiDialogRef = useRef<HTMLElement | null>(null);
   const [chatWidth, setChatWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
+  const chatPaneRef = useRef<HTMLDivElement>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [mobileSidebarDragX, setMobileSidebarDragX] = useState(0);
   const mobileSidebarRef = useRef<HTMLDivElement>(null);
   const mobileSidebarCloseRef = useRef<HTMLButtonElement>(null);
+  const mobileSidebarGestureRef = useRef<{ x: number; y: number; lastX: number; lastY: number } | null>(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [mobileGestureOffset, setMobileGestureOffset] = useState({ x: 0, y: 0 });
   const [isMobileRefreshing, setIsMobileRefreshing] = useState(false);
+  const lastNonChatViewRef = useRef<ViewType>(currentView === 'chat' ? 'dashboard' : currentView);
   const mobileTouchStartRef = useRef<{
     x: number;
     y: number;
     startX: number;
     startedAtTop: boolean;
     canNavigateToChat: boolean;
+    canReturnToView: boolean;
   } | null>(null);
+
+  useEffect(() => {
+    if (currentView !== 'chat') lastNonChatViewRef.current = currentView;
+  }, [currentView]);
 
   useEffect(() => {
     if (!isMobileSidebarOpen) return;
@@ -279,6 +287,7 @@ const App: React.FC = () => {
       startX: touch.clientX,
       startedAtTop,
       canNavigateToChat: currentView !== 'chat',
+      canReturnToView: currentView === 'chat' && lastNonChatViewRef.current !== 'chat',
     };
   };
 
@@ -302,7 +311,7 @@ const App: React.FC = () => {
     const isHorizontal = Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
     const isPullingDown = deltaY > 0 && Math.abs(deltaY) > Math.abs(deltaX) * 1.2 && start.startedAtTop;
 
-    if (isHorizontal && ((deltaX < 0 && start.canNavigateToChat) || (deltaX > 0 && start.startX <= 28))) {
+    if (isHorizontal && ((deltaX < 0 && start.canNavigateToChat) || (deltaX > 0 && (start.startX <= MOBILE_GESTURE_EDGE_PX || start.canReturnToView)))) {
       const dragLimit = Math.max(150, window.innerWidth * 0.78);
       setMobileGestureOffset({ x: Math.max(-dragLimit, Math.min(dragLimit, deltaX * 0.94)), y: 0 });
     } else if (isPullingDown && !loading && !isStreaming && !isLiveMode) {
@@ -326,12 +335,15 @@ const App: React.FC = () => {
       startX: start.startX,
       startedAtTop: start.startedAtTop,
       canNavigateToChat: start.canNavigateToChat,
+      canReturnToView: start.canReturnToView,
       distanceThresholdPx: mobileGestureThreshold(window.innerWidth),
     });
-
     setMobileGestureOffset({ x: 0, y: 0 });
-    if (intent === 'open-menu') setIsMobileSidebarOpen(true);
+    if (intent === 'open-menu') {
+      openMobileSidebar();
+    }
     if (intent === 'open-chat') setView('chat');
+    if (intent === 'return-view') setView(lastNonChatViewRef.current);
     if (intent === 'refresh' && !loading && !isStreaming && !isLiveMode) {
       try {
         sessionStorage.setItem('flowmate-mobile-refresh-draft', input);
@@ -355,6 +367,77 @@ const App: React.FC = () => {
   const handleMobileTouchCancel = () => {
     mobileTouchStartRef.current = null;
     setMobileGestureOffset({ x: 0, y: 0 });
+  };
+
+  const openMobileSidebar = () => {
+    setMobileSidebarDragX(-256);
+    setIsMobileSidebarOpen(true);
+    window.requestAnimationFrame(() => setMobileSidebarDragX(0));
+  };
+
+  const handleMobileSidebarTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!touch) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest('button, a, input, textarea, select, [data-swipe-lock]')) {
+      return;
+    }
+    mobileSidebarGestureRef.current = { x: touch.clientX, y: touch.clientY, lastX: touch.clientX, lastY: touch.clientY };
+  };
+
+  const handleMobileSidebarTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = mobileSidebarGestureRef.current;
+    const touch = event.touches[0];
+    if (!start || !touch) return;
+    start.lastX = touch.clientX;
+    start.lastY = touch.clientY;
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    if (deltaX < 0 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+      setMobileSidebarDragX(Math.max(-220, deltaX));
+    } else {
+      setMobileSidebarDragX(0);
+    }
+  };
+
+  const finishMobileSidebarGesture = (touch?: Pick<Touch, 'clientX' | 'clientY'>) => {
+    const start = mobileSidebarGestureRef.current;
+    mobileSidebarGestureRef.current = null;
+    if (!start) {
+      setMobileSidebarDragX(0);
+      return;
+    }
+    const end = touch || { clientX: start.lastX, clientY: start.lastY };
+    const intent = resolveMobileGestureIntent({
+      deltaX: end.clientX - start.x,
+      deltaY: end.clientY - start.y,
+      startX: start.x,
+      startedAtTop: false,
+      canNavigateToChat: false,
+      isSidebarOpen: true,
+      startedInSidebar: true,
+      distanceThresholdPx: mobileSidebarCloseThreshold(window.innerWidth),
+    });
+    if (intent === 'close-menu') {
+      setMobileSidebarDragX(-256);
+      window.setTimeout(() => {
+        setIsMobileSidebarOpen(false);
+        setMobileSidebarDragX(0);
+      }, 180);
+      return;
+    }
+    setMobileSidebarDragX(0);
+  };
+
+  const handleMobileSidebarTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const touch = event.changedTouches[0];
+    if (mobileSidebarGestureRef.current && touch) finishMobileSidebarGesture(touch);
+  };
+
+  const handleMobileSidebarTouchCancel = () => {
+    if (!mobileSidebarGestureRef.current) return;
+    mobileSidebarGestureRef.current = null;
+    setMobileSidebarDragX(0);
   };
 
   useEffect(() => {
@@ -415,8 +498,8 @@ const App: React.FC = () => {
   React.useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing) return;
-      const sidebarWidth = 64; // Sidebar width
-      const newWidth = e.clientX - sidebarWidth;
+      const paneLeft = chatPaneRef.current?.getBoundingClientRect().left ?? 224;
+      const newWidth = e.clientX - paneLeft;
       setChatWidth(Math.min(Math.max(newWidth, 300), 600));
     };
     const handleMouseUp = () => setIsResizing(false);
@@ -819,12 +902,9 @@ const App: React.FC = () => {
 
     const syncFromHash = () => {
       const hash = window.location.hash.replace('#', '');
-      if (hash === 'archive-intelligence') {
-        return;
-      }
       const validViews = [
         'dashboard', 'chat', 'chat_graph', 'analytics', 'goals',
-        'projects', 'knowledge', 'calendar', 'timeline', 'schedules',
+        'projects', 'knowledge', 'calendar', 'schedules',
         'food', 'attendance', 'settings'
       ];
       if (validViews.includes(hash)) {
@@ -859,9 +939,6 @@ const App: React.FC = () => {
       return;
     }
     const currentHash = window.location.hash.replace('#', '');
-    if (currentHash === 'archive-intelligence') {
-      return;
-    }
     if (currentHash !== currentView) {
       window.history.replaceState(null, '', `#${currentView}`);
     }
@@ -1183,8 +1260,6 @@ const App: React.FC = () => {
         return <KnowledgeView />;
       case 'calendar':
         return <CalendarView />;
-      case 'timeline':
-        return <TimelineView entities={safeEntities} />;
       case 'schedules':
       case 'food':
       case 'attendance':
@@ -1383,7 +1458,7 @@ const App: React.FC = () => {
             </button>
           ) : (
             <button
-              onClick={() => setIsMobileSidebarOpen(true)}
+              onClick={openMobileSidebar}
               className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 transition-colors"
               aria-label="Open navigation menu"
             >
@@ -1426,8 +1501,9 @@ const App: React.FC = () => {
       {isMobile && isMobileSidebarOpen && (
         <>
           <div
-            className="fixed inset-0 bg-black/60 z-40 animate-fade-in"
+            className="fixed inset-0 bg-black/60 z-40 animate-fade-in transition-opacity duration-150"
             onClick={() => setIsMobileSidebarOpen(false)}
+            style={{ opacity: Math.max(0, 1 - Math.abs(mobileSidebarDragX) / 280) }}
             aria-hidden="true"
           />
           <div
@@ -1436,7 +1512,17 @@ const App: React.FC = () => {
             aria-modal="true"
             aria-label="Mobile navigation"
             tabIndex={-1}
-            className="fixed left-0 top-0 h-full w-64 bg-slate-900 border-r border-slate-800 z-50 shadow-2xl animate-slide-in-left flex flex-col overflow-hidden"
+            className="fixed left-0 top-0 h-full w-64 bg-ideapad-surface border-r border-ideapad-border z-50 shadow-2xl flex flex-col overflow-hidden"
+            onTouchStart={handleMobileSidebarTouchStart}
+            onTouchMove={handleMobileSidebarTouchMove}
+            onTouchEnd={handleMobileSidebarTouchEnd}
+            onTouchCancel={handleMobileSidebarTouchCancel}
+            style={{
+              transform: `translate3d(${mobileSidebarDragX}px, 0, 0)`,
+              transition: mobileSidebarGestureRef.current ? 'none' : 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)',
+              touchAction: 'pan-y',
+            }}
+            data-testid="mobile-sidebar-panel"
           >
             {/* Close Button Header */}
             <div className="p-3 border-b border-slate-800 flex items-center justify-end shrink-0">
@@ -1508,14 +1594,19 @@ const App: React.FC = () => {
           {/* Desktop Chat Panel - Full width when Chat view, otherwise side panel */}
           {(currentView === 'chat' || (isChatOpen && !isZenMode)) && (
             <div
+              ref={chatPaneRef}
               className={`flex flex-col bg-slate-900 border-r border-slate-800 shrink-0 h-full relative ${currentView === 'chat' ? 'flex-1' : ''
                 }`}
+              data-testid="desktop-chat-pane"
               style={currentView === 'chat' ? {} : { width: `${chatWidth}px`, minWidth: '300px', maxWidth: '600px' }}
             >
               {/* Resize Handle - only show when not full-screen chat */}
               {currentView !== 'chat' && (
                 <div
                   onMouseDown={handleMouseDown}
+                  data-testid="chat-pane-resizer"
+                  role="separator"
+                  aria-label="Resize conversation pane"
                   className={`absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-500/40 transition-colors z-20 ${isResizing ? 'bg-indigo-500' : ''}`}
                 />
               )}
@@ -1687,11 +1778,18 @@ const App: React.FC = () => {
       {isMobile && (
         <div data-layout="mobile" className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] overflow-hidden relative">
           {/* Destination peeks stay beneath the moving page so the gesture feels like a screen being pulled. */}
-          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && (
+          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView !== 'chat' && (
             <div aria-hidden="true" className="absolute inset-y-0 left-0 z-0 w-64 overflow-hidden bg-slate-900 px-4 py-5 text-slate-300">
               <div className="mb-6 flex items-center gap-3 font-semibold text-slate-100"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600/80"><Sparkles size={18} /></span>Flowmate</div>
               <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Navigation</p>
-              <div className="space-y-2 text-sm">{['Home', 'Chat', 'Graph', 'Timeline', 'Calendar', 'Analytics', 'Library', 'Settings'].map((label, index) => <div key={label} className={`rounded-lg px-3 py-2 ${index === 0 ? 'bg-slate-800 text-emerald-200' : ''}`}>{label}</div>)}</div>
+              <div className="space-y-2 text-sm">{['Home', 'Chat', 'Graph', 'Calendar', 'Library', 'Analytics', 'Settings'].map((label, index) => <div key={label} className={`rounded-lg px-3 py-2 ${index === 0 ? 'bg-slate-800 text-emerald-200' : ''}`}>{label}</div>)}</div>
+            </div>
+          )}
+          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView === 'chat' && mobileTouchStartRef.current?.startX > MOBILE_GESTURE_EDGE_PX && (
+            <div aria-hidden="true" className="absolute inset-y-0 left-0 z-0 flex w-64 flex-col items-center justify-center bg-ideapad-surface px-6 text-center text-ideapad-muted">
+              <LayoutDashboard size={26} className="mb-3 text-ideapad-mint" />
+              <p className="text-sm font-semibold text-ideapad-text">Back to {lastNonChatViewRef.current === 'dashboard' ? 'Home' : lastNonChatViewRef.current === 'knowledge' ? 'Library' : lastNonChatViewRef.current[0].toUpperCase() + lastNonChatViewRef.current.slice(1)}</p>
+              <p className="mt-1 text-xs">Release to return</p>
             </div>
           )}
           {mobileGestureOffset.x < -18 && currentView !== 'chat' && (
@@ -1707,7 +1805,7 @@ const App: React.FC = () => {
           )}
           {/* Main content or full screen chat */}
           <div
-            className="relative z-10 flex-1 flex flex-col overflow-hidden pb-14 bg-slate-950"
+            className="relative z-10 flex-1 flex flex-col overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom))] bg-slate-950"
             onTouchStart={handleMobileTouchStart}
             onTouchMove={handleMobileTouchMove}
             onTouchEnd={handleMobileTouchEnd}
@@ -1878,62 +1976,21 @@ const App: React.FC = () => {
             )}
           </div>
 
-          {/* Persistent Mobile Bottom Navigation Bar with tactile animations */}
-          <nav className="fixed bottom-0 left-0 right-0 h-14 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800/80 flex items-center justify-around px-2 z-30 shadow-2xl safe-area-bottom" aria-label="Mobile Navigation">
-            <button
-              onClick={() => setView('dashboard')}
-              aria-current={currentView === 'dashboard' ? 'page' : undefined}
-              aria-label="Open Home"
-              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
-                currentView === 'dashboard' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <LayoutDashboard size={18} className={currentView === 'dashboard' ? 'stroke-[2.5]' : ''} />
-              <span className="mt-0.5">Home</span>
+          <nav className="fixed bottom-0 left-0 right-0 z-30 grid h-[calc(4rem+env(safe-area-inset-bottom))] grid-cols-5 items-center border-t border-ideapad-border bg-ideapad-surface/95 px-1 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-xl" aria-label="Mobile Navigation" data-testid="mobile-bottom-navigation">
+            <button onClick={() => setView('chat')} aria-current={currentView === 'chat' ? 'page' : undefined} aria-label="Open Chat" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'chat' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
+              <MessageSquare size={19} className={currentView === 'chat' ? 'stroke-[2.5]' : ''} /><span>Chat</span>
             </button>
-            <button
-              onClick={() => setView('chat_graph')}
-              aria-current={currentView === 'chat_graph' ? 'page' : undefined}
-              aria-label="Open Graph"
-              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
-                currentView === 'chat_graph' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Layers size={18} className={currentView === 'chat_graph' ? 'stroke-[2.5]' : ''} />
-              <span className="mt-0.5">Graph</span>
+            <button onClick={() => setView('knowledge')} aria-current={currentView === 'knowledge' ? 'page' : undefined} aria-label="Open Library" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'knowledge' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
+              <Library size={19} className={currentView === 'knowledge' ? 'stroke-[2.5]' : ''} /><span>Library</span>
             </button>
-            <button
-              onClick={() => setView('chat')}
-              aria-current={currentView === 'chat' ? 'page' : undefined}
-              aria-label="Open Chat"
-              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
-                currentView === 'chat' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <MessageSquare size={18} className={currentView === 'chat' ? 'stroke-[2.5]' : ''} />
-              <span className="mt-0.5">Chat</span>
+            <button onClick={() => setView('dashboard')} aria-current={currentView === 'dashboard' ? 'page' : undefined} aria-label="Open Home" className={`-mt-2 flex h-14 flex-col items-center justify-center gap-0.5 rounded-2xl text-[10px] font-semibold transition-transform active:scale-95 ${currentView === 'dashboard' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
+              <span className={`flex h-10 w-10 items-center justify-center rounded-2xl ${currentView === 'dashboard' ? 'bg-ideapad-surface-variant' : ''}`}><LayoutDashboard size={21} className={currentView === 'dashboard' ? 'stroke-[2.5]' : ''} /></span><span>Home</span>
             </button>
-            <button
-              onClick={() => setView('calendar')}
-              aria-current={currentView === 'calendar' ? 'page' : undefined}
-              aria-label="Open Calendar"
-              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
-                currentView === 'calendar' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Calendar size={18} className={currentView === 'calendar' ? 'stroke-[2.5]' : ''} />
-              <span className="mt-0.5">Calendar</span>
+            <button onClick={() => setView('calendar')} aria-current={currentView === 'calendar' ? 'page' : undefined} aria-label="Open Calendar" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'calendar' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
+              <Calendar size={19} className={currentView === 'calendar' ? 'stroke-[2.5]' : ''} /><span>Calendar</span>
             </button>
-            <button
-              onClick={() => setView('settings')}
-              aria-current={currentView === 'settings' ? 'page' : undefined}
-              aria-label="Open Settings"
-              className={`flex flex-col items-center justify-center py-1 px-3 rounded-xl text-[10px] font-medium transition-all active:scale-95 ${
-                currentView === 'settings' ? 'text-indigo-400 font-semibold' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Settings size={18} className={currentView === 'settings' ? 'stroke-[2.5]' : ''} />
-              <span className="mt-0.5">Settings</span>
+            <button onClick={() => setView('settings')} aria-current={currentView === 'settings' ? 'page' : undefined} aria-label="Open Settings" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'settings' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
+              <Settings size={19} className={currentView === 'settings' ? 'stroke-[2.5]' : ''} /><span>Settings</span>
             </button>
           </nav>
         </div>
