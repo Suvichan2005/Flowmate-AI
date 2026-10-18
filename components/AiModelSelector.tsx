@@ -1,9 +1,46 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Brain, ChevronDown, Loader2 } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Brain, Check } from 'lucide-react';
 import { useStore } from '../store';
 import { getByokLiveModelOptions, getByokModelOptions, hasAiApiKey, subscribeToApiKeyStatus } from '../services/ai/client';
 import { getManagedModelOptions, hasManagedAiIdentity, type ManagedLiveModelOption, type ManagedModelOption, type ReasoningLevel } from '../services/ai/managedClient';
 import { defaultReasoningForIdentity, GEMINI_4_ARGON_UNAVAILABLE_REASON, type ModelOption } from '../services/ai/modelCatalog';
+
+interface PickerPosition {
+  left: number;
+  top: number;
+  width: number;
+  maxHeight: number;
+  above: boolean;
+}
+
+const measurePickerPosition = (anchor: DOMRect, composerTop = anchor.top): PickerPosition => {
+  const viewport = window.visualViewport;
+  const viewportLeft = viewport?.offsetLeft ?? 0;
+  const viewportTop = viewport?.offsetTop ?? 0;
+  const viewportWidth = viewport?.width ?? window.innerWidth;
+  const viewportHeight = viewport?.height ?? window.innerHeight;
+  const viewportRight = viewportLeft + viewportWidth;
+  const viewportBottom = viewportTop + viewportHeight;
+  const width = Math.max(1, Math.min(288, viewportWidth - 24));
+  const aboveSpace = Math.max(0, composerTop - viewportTop - 10);
+  const belowSpace = Math.max(0, viewportBottom - anchor.bottom - 10);
+  const above = aboveSpace >= 220 || aboveSpace >= belowSpace;
+  const availableSpace = above ? aboveSpace : belowSpace;
+  const maxHeight = Math.max(120, Math.min(360, availableSpace));
+  const left = Math.min(
+    Math.max(anchor.right - width, viewportLeft + 12),
+    Math.max(viewportLeft + 12, viewportRight - width - 12),
+  );
+
+  return {
+    left,
+    top: above ? composerTop - 8 : anchor.bottom + 8,
+    width,
+    maxHeight,
+    above,
+  };
+};
 
 const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const settings = useStore(state => state.settings);
@@ -19,13 +56,20 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
   const [anonymousManaged, setAnonymousManaged] = useState(!currentUser);
   const compactRootRef = useRef<HTMLDivElement>(null);
   const compactTriggerRef = useRef<HTMLButtonElement>(null);
+  const compactPanelRef = useRef<HTMLDivElement>(null);
+  const compactOptionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [pickerPosition, setPickerPosition] = useState<PickerPosition | null>(null);
+  const pickerId = React.useId();
 
   useEffect(() => subscribeToApiKeyStatus(configured => setByok(configured)), []);
 
   useEffect(() => {
     if (!compact || !open) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Node && !compactRootRef.current?.contains(event.target)) setOpen(false);
+      if (!(event.target instanceof Node)) return;
+      const insideTrigger = compactRootRef.current?.contains(event.target);
+      const insidePanel = compactPanelRef.current?.contains(event.target);
+      if (!insideTrigger && !insidePanel) setOpen(false);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -34,13 +78,45 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
         compactTriggerRef.current?.focus();
       }
     };
-    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('pointerdown', handlePointerDown, true);
     document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [compact, open]);
+
+  useEffect(() => {
+    if (!compact || !open) return;
+    let frame = 0;
+    const updatePosition = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const anchor = compactTriggerRef.current?.getBoundingClientRect();
+        if (anchor) {
+          const composerTop = compactRootRef.current?.closest('[data-testid="chat-composer"]')?.getBoundingClientRect().top ?? anchor.top;
+          setPickerPosition(measurePickerPosition(anchor, composerTop));
+        }
+      });
+    };
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    window.visualViewport?.addEventListener('resize', updatePosition);
+    window.visualViewport?.addEventListener('scroll', updatePosition);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+      window.visualViewport?.removeEventListener('resize', updatePosition);
+      window.visualViewport?.removeEventListener('scroll', updatePosition);
+    };
+  }, [compact, open]);
+
+  useEffect(() => {
+    setOpen(false);
+    setPickerPosition(null);
+  }, [currentUser?.uid, byok]);
 
   useEffect(() => {
     let current = true;
@@ -114,6 +190,35 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
       ? { preferred_live_reasoning_level: model.reasoningLevels.includes(liveReasoning) ? liveReasoning : 'medium' }
       : {}),
   });
+
+  const openPicker = (focusOptions = false) => {
+    const anchor = compactTriggerRef.current?.getBoundingClientRect();
+    if (anchor) {
+      const composerTop = compactRootRef.current?.closest('[data-testid="chat-composer"]')?.getBoundingClientRect().top ?? anchor.top;
+      setPickerPosition(measurePickerPosition(anchor, composerTop));
+    }
+    setOpen(true);
+    if (focusOptions) {
+      requestAnimationFrame(() => {
+        const selectedIndex = options.findIndex(model => model.id === selected?.id);
+        compactOptionRefs.current[selectedIndex >= 0 ? selectedIndex : 0]?.focus();
+      });
+    }
+  };
+
+  const handlePickerKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') return;
+    const target = event.target;
+    if (!(target instanceof HTMLButtonElement) || target.getAttribute('role') !== 'option' || options.length === 0) return;
+    event.preventDefault();
+    const currentIndex = compactOptionRefs.current.indexOf(target);
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? options.length - 1
+        : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+    compactOptionRefs.current[nextIndex]?.focus();
+  };
 
   const controls = (
     <div className={compact ? 'space-y-3' : 'grid gap-4 sm:grid-cols-2'}>
@@ -189,52 +294,86 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
     {controls}
   </section>;
 
-  const compactModelLabel = selectedName.replace(/^Gemini\s+/i, '');
-  return <div ref={compactRootRef} className="relative z-30 shrink-0">
+  const compactAccessibleLabel = loading
+    ? `Choose AI model and reasoning. Checking availability. Current saved model: ${selectedName}.`
+    : `Choose AI model and reasoning. Current model: ${selectedName}; reasoning: ${reasoningNeedsChoice ? 'needs selection' : defaultReasoning}.`;
+  const picker = open && pickerPosition && typeof document !== 'undefined' ? createPortal(
+    <div
+      ref={compactPanelRef}
+      id={pickerId}
+      role="dialog"
+      aria-label="Model and reasoning"
+      onKeyDown={handlePickerKeyDown}
+      data-testid="ai-model-selector-popover"
+      className="fixed z-[90] overflow-y-auto overscroll-contain rounded-2xl border border-ideapad-border bg-ideapad-surface p-2.5 shadow-2xl shadow-black/30 [scrollbar-width:thin]"
+      style={{
+        left: pickerPosition.left,
+        top: pickerPosition.top,
+        width: pickerPosition.width,
+        maxHeight: pickerPosition.maxHeight,
+        transform: pickerPosition.above ? 'translateY(-100%)' : undefined,
+        WebkitOverflowScrolling: 'touch',
+      }}
+    >
+      <div className="mb-1 flex items-center gap-1.5 px-2 py-1 text-[10px] text-ideapad-muted">
+        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-ideapad-mint" />
+        <span>{byok ? 'Your API key' : privileged ? 'Owner access' : 'Flowmate access'}</span>
+      </div>
+      {options.length > 0 ? <div role="listbox" aria-label="Available AI models" className="space-y-0.5">
+        {options.map((model, index) => <button
+          key={model.id}
+          ref={node => { compactOptionRefs.current[index] = node; }}
+          type="button"
+          role="option"
+          aria-selected={selected?.id === model.id}
+          onClick={() => changeModel(model)}
+          className={`flex min-h-10 w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ideapad-mint ${selected?.id === model.id ? 'bg-ideapad-surface-variant text-ideapad-text' : 'text-ideapad-muted hover:bg-ideapad-surface-variant/70 hover:text-ideapad-text'}`}
+        >
+          <span aria-hidden="true" className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${selected?.id === model.id ? 'bg-ideapad-mint/15 text-ideapad-mint' : 'text-ideapad-muted'}`}>
+            {selected?.id === model.id ? <Check size={13} /> : <Brain size={13} />}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{model.name}</span>
+          {selected?.id === model.id && <span className="sr-only">Selected</span>}
+        </button>)}
+      </div> : <p role="status" className="rounded-xl bg-ideapad-surface-variant px-3 py-2 text-xs leading-5 text-ideapad-muted">{loading ? 'Checking available models…' : catalogError ? 'Model access could not be verified. No alternate was selected.' : settings.preferred_model ? `Saved model unavailable: ${settings.preferred_model}` : 'No model is available for this provider.'}</p>}
+      {selected && reasoningOptions.length > 0 && <div className="mt-2 border-t border-ideapad-border/70 px-1 pt-2">
+        <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
+          <h4 className="text-xs font-medium text-ideapad-text">Reasoning</h4>
+          <span className="text-[10px] text-ideapad-muted">{reasoningNeedsChoice ? 'Choose a level' : defaultReasoning[0].toUpperCase() + defaultReasoning.slice(1)}</span>
+        </div>
+        <div role="group" aria-label="Reasoning level" className={`grid ${reasoningOptions.length >= 4 ? 'grid-cols-4' : 'grid-cols-3'} gap-1 rounded-xl bg-ideapad-base p-1`}>
+          {reasoningOptions.map(level => <button key={level} type="button" aria-pressed={!reasoningNeedsChoice && defaultReasoning === level} onClick={() => changeReasoning(level)} className={`min-h-9 rounded-lg px-1.5 text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint ${!reasoningNeedsChoice && defaultReasoning === level ? 'bg-ideapad-surface-variant text-ideapad-mint shadow-sm' : 'text-ideapad-muted hover:text-ideapad-text'}`}>{level[0].toUpperCase() + level.slice(1)}</button>)}
+        </div>
+        {savedReasoningUnavailable && <p role="status" className="mt-2 px-1 text-[11px] leading-4 text-amber-300">The saved reasoning level is unavailable here. Choose a supported level.</p>}
+      </div>}
+      {selected?.id === 'gemini-4-argon' && <p role="status" className="mt-2 px-1 text-[11px] leading-4 text-amber-300">{GEMINI_4_ARGON_UNAVAILABLE_REASON}</p>}
+    </div>,
+    document.body,
+  ) : null;
+
+  return <div ref={compactRootRef} className="relative z-30 flex shrink-0">
     <button
       ref={compactTriggerRef}
       type="button"
       data-testid="ai-model-selector-trigger"
+      aria-controls={open ? pickerId : undefined}
       aria-haspopup="dialog"
       aria-expanded={open}
-      aria-label={`Model and reasoning: ${selectedName}, ${reasoningNeedsChoice ? 'choose level' : defaultReasoning}`}
+      aria-label={compactAccessibleLabel}
       title={`${selectedName} · ${reasoningNeedsChoice ? 'Choose reasoning' : defaultReasoning}`}
-      onClick={() => setOpen(value => !value)}
-      className="inline-flex h-10 max-w-[10rem] min-w-0 items-center gap-1.5 rounded-xl border border-ideapad-border bg-ideapad-surface px-2.5 text-xs text-ideapad-text transition-colors hover:bg-ideapad-surface-variant focus-visible:outline-offset-2 max-[380px]:max-w-[7.5rem]"
+      onClick={event => open ? setOpen(false) : openPicker(event.detail === 0)}
+      onKeyDown={event => {
+        if (event.key === 'ArrowDown' && !open) {
+          event.preventDefault();
+          openPicker(true);
+        }
+      }}
+      className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-transparent text-ideapad-muted transition-colors duration-150 hover:bg-ideapad-surface-variant hover:text-ideapad-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ideapad-mint active:scale-95 ${open ? 'bg-ideapad-surface-variant text-ideapad-mint' : 'bg-transparent'}`}
     >
-      {loading ? <Loader2 size={14} className="animate-spin shrink-0" /> : <Brain size={14} className="shrink-0 text-ideapad-mint" />}
-      <span className="min-w-0 truncate">{compactModelLabel}</span>
-      <span className="shrink-0 rounded-md bg-ideapad-surface-variant px-1.5 py-0.5 text-[10px] font-medium text-ideapad-mint">{reasoningNeedsChoice ? 'Set' : defaultReasoning[0].toUpperCase() + defaultReasoning.slice(1)}</span>
-      <ChevronDown size={13} className={`shrink-0 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
+      <Brain size={19} className={open ? 'text-ideapad-mint' : ''} aria-hidden="true" />
+      <span className="sr-only">{loading ? 'Models loading' : `${selectedName}, ${reasoningNeedsChoice ? 'reasoning needs selection' : `${defaultReasoning} reasoning`}`}</span>
     </button>
-    {open && <div role="dialog" aria-label="Model and reasoning" className="absolute bottom-full right-0 mb-12 w-[min(21rem,calc(100vw-1.5rem))] rounded-2xl border border-ideapad-border bg-ideapad-surface p-3 shadow-2xl sm:p-4">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-ideapad-text">Model</h3>
-        {privileged && <span className="rounded-full bg-ideapad-surface-variant px-2 py-1 text-[10px] text-ideapad-mint">Privileged</span>}
-      </div>
-      {options.length > 0 ? <div role="listbox" aria-label="Available AI models" className="max-h-48 space-y-1 overflow-y-auto">
-        {options.map(model => <button key={model.id} type="button" role="option" aria-selected={selected?.id === model.id} onClick={() => changeModel(model)} className={`flex w-full items-start gap-2 rounded-xl px-3 py-2.5 text-left transition-colors ${selected?.id === model.id ? 'bg-ideapad-surface-variant text-ideapad-text' : 'text-ideapad-muted hover:bg-ideapad-surface-variant/70'}`}>
-          <Brain size={15} className={`mt-0.5 shrink-0 ${selected?.id === model.id ? 'text-ideapad-mint' : 'text-ideapad-muted'}`} />
-          <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium">{model.name}</span>
-            <span className="mt-0.5 block text-[11px] leading-4 text-ideapad-muted">{model.description}</span>
-          </span>
-          {selected?.id === model.id && <span aria-hidden="true" className="mt-1 text-xs text-ideapad-mint">✓</span>}
-        </button>)}
-      </div> : <p role="status" className="rounded-xl bg-ideapad-surface-variant px-3 py-2 text-xs text-ideapad-muted">{loading ? 'Checking available models…' : catalogError ? 'Model access could not be verified.' : 'No model is available for this provider.'}</p>}
-      {selected && <>
-        <div className="mt-3 border-t border-ideapad-border pt-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <h4 className="text-xs font-semibold text-ideapad-text">Reasoning</h4>
-            <span className="text-[10px] text-ideapad-muted">{reasoningNeedsChoice ? 'Choose a supported level' : `${defaultReasoning[0].toUpperCase()} selected`}</span>
-          </div>
-          <div role="group" aria-label="Reasoning level" className="grid grid-cols-3 gap-1 rounded-xl bg-ideapad-base p-1">
-            {reasoningOptions.map(level => <button key={level} type="button" aria-pressed={!reasoningNeedsChoice && defaultReasoning === level} onClick={() => changeReasoning(level)} className={`rounded-lg px-2 py-2 text-xs font-medium transition-colors ${!reasoningNeedsChoice && defaultReasoning === level ? 'bg-ideapad-surface-variant text-ideapad-mint shadow-sm' : 'text-ideapad-muted hover:text-ideapad-text'}`}>{level[0].toUpperCase() + level.slice(1)}</button>)}
-          </div>
-        </div>
-        {savedReasoningUnavailable && <p role="status" className="mt-2 text-[11px] text-amber-300">Your saved reasoning level is unavailable for this model. Choose one above.</p>}
-      </>}
-    </div>}
+    {picker}
   </div>;
 };
 

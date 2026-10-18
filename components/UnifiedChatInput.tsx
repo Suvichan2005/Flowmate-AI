@@ -232,7 +232,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                     id="chat-file-input"
                 />
                 <div className="flex min-w-0 items-center justify-between gap-2 px-2 pb-2">
-                    <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file" title="Attach file" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-ideapad-muted transition-colors hover:bg-ideapad-surface-variant hover:text-ideapad-text">
+                    <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file" title="Attach file" className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-ideapad-muted transition-colors hover:bg-ideapad-surface-variant hover:text-ideapad-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint">
                         <Paperclip size={19} />
                     </button>
 
@@ -243,7 +243,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                             type="button"
                             onClick={onLiveVoice}
                             disabled={!canUseLiveVoice}
-                            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${canUseLiveVoice ? 'text-ideapad-mint hover:bg-ideapad-surface-variant' : 'cursor-not-allowed text-ideapad-muted/50'}`}
+                            className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors ${canUseLiveVoice ? 'text-ideapad-mint hover:bg-ideapad-surface-variant focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint' : 'cursor-not-allowed text-ideapad-muted/50'}`}
                             title={canUseLiveVoice ? 'Start Gemini Live voice' : 'Gemini Live is unavailable for this session'}
                             aria-label={canUseLiveVoice ? 'Start Gemini Live voice' : 'Gemini Live voice unavailable'}
                         ><Mic size={19} /></button>}
@@ -253,15 +253,15 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                             onClick={toggleListening}
                             aria-label={isListening ? 'Stop voice input' : 'Voice input'}
                             title={isListening ? 'Stop listening' : 'Voice input'}
-                            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${isListening ? 'bg-rose-500/15 text-rose-300' : 'text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text'}`}
+                            className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint ${isListening ? 'bg-rose-500/15 text-rose-300' : 'text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text'}`}
                         >{isListening ? <MicOff size={19} /> : <Mic size={19} />}</button>}
 
-                        {(loading || isStreaming) && !hasContent && onStop ? <button type="button" onClick={onStop} aria-label="Stop generating" title="Stop generating" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 transition-colors hover:bg-rose-500/20"><Square size={16} className="fill-current" /></button> : ((!isMobile || hasContent) && <button
+                        {(loading || isStreaming) && !hasContent && onStop ? <button type="button" onClick={onStop} aria-label="Stop generating" title="Stop generating" className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-rose-500/30 bg-rose-500/10 text-rose-300 transition-colors hover:bg-rose-500/20"><Square size={16} className="fill-current" /></button> : ((!isMobile || hasContent) && <button
                             type="submit"
                             disabled={!hasContent}
                             title={(loading || isStreaming) ? 'Queue message' : 'Send message'}
                             aria-label={(loading || isStreaming) ? 'Queue message' : 'Send message'}
-                            className={`relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${hasContent ? 'bg-ideapad-mint text-ideapad-base hover:brightness-110' : 'cursor-not-allowed bg-ideapad-surface-variant text-ideapad-muted/60'}`}
+                            className={`relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ideapad-mint ${hasContent ? 'bg-ideapad-mint text-ideapad-base hover:brightness-110' : 'cursor-not-allowed bg-ideapad-surface-variant text-ideapad-muted/60'}`}
                         >
                             {(loading || isStreaming) && !hasContent ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                             {queueCount > 0 && <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-bold text-slate-950">{queueCount}</span>}

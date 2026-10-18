@@ -82,6 +82,7 @@ test('mobile model control opens a validated catalogue and returns keyboard focu
       contentType: 'application/json',
       body: JSON.stringify({ models: [
         { name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['generateContent'], inputTokenLimit: 1048576, outputTokenLimit: 65536 },
+        { name: 'models/gemini-3.6-flash', supportedGenerationMethods: ['generateContent'], inputTokenLimit: 1048576, outputTokenLimit: 65536 },
         { name: 'models/gemini-3.8-live', supportedGenerationMethods: ['bidiGenerateContent'] },
       ] }),
     });
@@ -104,15 +105,49 @@ test('mobile model control opens a validated catalogue and returns keyboard focu
   const trigger = page.getByTestId('ai-model-selector-trigger');
   await expect(trigger).toBeVisible();
   await expect.poll(() => catalogRequests).toBeGreaterThan(0);
-  await expect(trigger).toContainText('3.8 Flash');
+  await expect(trigger).toHaveAttribute('aria-label', /Gemini 3\.8 Flash/);
+  await expect(trigger).toHaveAttribute('title', /Gemini 3\.8 Flash/);
+  expect(await trigger.evaluate(element => Math.round(element.getBoundingClientRect().width))).toBe(44);
   await trigger.click();
   const dialog = page.getByRole('dialog', { name: 'Model and reasoning' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('option', { name: /Gemini 3.8 Flash/ })).toBeVisible();
   await expect(dialog.getByRole('group', { name: 'Reasoning level' })).toBeVisible();
-  const dialogBox = await dialog.boundingBox();
-  const composerBox = await page.getByRole('textbox', { name: 'Message Flowmate' }).boundingBox();
-  expect(dialogBox && composerBox && dialogBox.y + dialogBox.height).toBeLessThanOrEqual(composerBox.y);
+  for (const width of [320, 360, 390, 430, 768, 1440]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(trigger, `model control should remain available at ${width}px`).toBeVisible();
+    if (!(await dialog.isVisible())) await trigger.click();
+    await expect(dialog, `model popover should open at ${width}px`).toBeVisible();
+    const dialogBox = await dialog.boundingBox();
+    const composerBox = await page.getByTestId('chat-composer').boundingBox();
+    expect(dialogBox, `model popover should remain visible at ${width}px`).not.toBeNull();
+    expect(dialogBox!.x).toBeGreaterThanOrEqual(0);
+    expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(width);
+    expect(dialogBox!.y).toBeGreaterThanOrEqual(0);
+    expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(composerBox!.y);
+  }
+
+  // Pointer entry and outside dismissal must leave the draft surface usable.
+  await page.setViewportSize({ width: 390, height: 844 });
+  if (!(await dialog.isVisible())) await trigger.click();
+  await page.getByRole('textbox', { name: 'Message Flowmate' }).fill('Keep this multiline draft.\nSecond line stays here.');
+  await expect(page.getByRole('textbox', { name: 'Message Flowmate' })).toHaveValue('Keep this multiline draft.\nSecond line stays here.');
+  await page.setViewportSize({ width: 768, height: 844 });
+  await expect(page.getByRole('textbox', { name: 'Message Flowmate' })).toHaveValue('Keep this multiline draft.\nSecond line stays here.');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('textbox', { name: 'Message Flowmate' })).toHaveValue('Keep this multiline draft.\nSecond line stays here.');
+  await page.getByRole('textbox', { name: 'Message Flowmate' }).click();
+  await expect(dialog).toBeHidden();
+  await trigger.press('ArrowDown');
+  await expect(dialog).toBeVisible();
+  const options = dialog.getByRole('option');
+  await expect(options.nth(0)).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(options.nth(1)).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
+  await dialog.getByRole('button', { name: 'High', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'High', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.screenshot({ path: 'qa-evidence/mobile-model-selector-design-review.png' });
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();

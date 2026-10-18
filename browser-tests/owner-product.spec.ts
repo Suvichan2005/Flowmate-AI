@@ -428,10 +428,15 @@ test('branch manager is an adjacent header action beside New Chat', async ({ pag
 });
 
 test('chat renders in collapsed navigation and compact command search stays inside the rail', async ({ page }) => {
+  const onboarding = page.getByRole('dialog', { name: 'Make Flowmate yours' });
+  if (await onboarding.isVisible().catch(() => false)) {
+    await onboarding.getByRole('button', { name: 'Close onboarding' }).click();
+    await expect(onboarding).toBeHidden();
+  }
   await page.getByRole('button', { name: 'Zen', exact: true }).click();
   await navigate(page, 'Chat');
   await expect(page.getByTestId('conversation-switcher')).toBeVisible();
-  await expect(page.getByText('Welcome to Flowmate. I am ready to organize your productivity graph.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Welcome to Flowmate. What would you like to talk through or work on?', { exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Message Flowmate' })).toBeVisible();
   const rail = page.locator('[data-surface="sidebar"]');
   const search = page.getByRole('button', { name: 'Open command palette' });

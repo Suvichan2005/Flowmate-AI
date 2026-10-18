@@ -314,7 +314,7 @@ export const useStore = create<FlowmateState>()(
                 {
                     id: 'init-1',
                     role: 'assistant',
-                    text: 'Welcome to Flowmate. I am ready to organize your productivity graph. What are you working on?',
+                    text: 'Welcome to Flowmate. What would you like to talk through or work on?',
                     created_at: new Date().toISOString(),
                     channelId: 'general'
                 }
