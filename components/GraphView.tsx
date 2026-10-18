@@ -712,7 +712,7 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
                 <span className="bg-slate-800 px-1.5 rounded border border-slate-700">Shift</span> + Drag to Link
             </div>
 
-            <div className="absolute top-4 left-4 bg-slate-950/80 p-2 rounded text-xs text-slate-400 pointer-events-none backdrop-blur-sm border border-slate-800/50">
+            <div data-testid="graph-summary" className="absolute top-4 left-16 bg-slate-950/80 p-2 rounded text-xs text-slate-400 pointer-events-none backdrop-blur-sm border border-slate-800/50">
                 {nodes.length} Nodes &bull; {links.length} Links
             </div>
 

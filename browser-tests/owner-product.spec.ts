@@ -434,6 +434,29 @@ test('branch manager is an adjacent header action beside New Chat', async ({ pag
   await page.screenshot({ path: 'qa-evidence/branch-control.png' });
 });
 
+test('collapsed chat toggle does not cover the graph summary', async ({ page }) => {
+  await page.getByRole('button', { name: 'New', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Create New Entity' });
+  await dialog.getByRole('button', { name: 'GOAL', exact: true }).click();
+  await dialog.getByRole('textbox', { name: 'Title', exact: true }).fill('Graph summary collision check');
+  await dialog.getByRole('button', { name: 'Create GOAL', exact: true }).click();
+  await dialog.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Close Chat', exact: true }).click();
+  const chatToggle = page.getByRole('button', { name: 'Open chat panel', exact: true });
+  await expect(chatToggle).toBeVisible();
+  await navigate(page, 'Graph');
+  const summary = page.getByTestId('graph-summary');
+  await expect(summary).toBeVisible();
+  const toggleRect = await chatToggle.boundingBox();
+  const summaryRect = await summary.boundingBox();
+  expect(toggleRect && summaryRect).not.toBeNull();
+  const overlaps = toggleRect!.x < summaryRect!.x + summaryRect!.width &&
+    toggleRect!.x + toggleRect!.width > summaryRect!.x &&
+    toggleRect!.y < summaryRect!.y + summaryRect!.height &&
+    toggleRect!.y + toggleRect!.height > summaryRect!.y;
+  expect(overlaps).toBe(false);
+});
+
 test('chat renders in collapsed navigation and compact command search stays inside the rail', async ({ page }) => {
   const onboarding = page.getByRole('dialog', { name: 'Make Flowmate yours' });
   if (await onboarding.isVisible().catch(() => false)) {

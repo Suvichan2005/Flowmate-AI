@@ -5,6 +5,19 @@ async function skipOptionalOnboarding(page: Page) {
   if (await skip.count()) await skip.click();
 }
 
+function allowedTestOrigins() {
+  const configured = process.env.FLOWMATE_TEST_ORIGIN || 'http://127.0.0.1:4195';
+  return new Set([new URL(configured).origin, 'http://127.0.0.1', 'http://localhost']);
+}
+
+async function blockExternalRequests(context: BrowserContext) {
+  const allowed = allowedTestOrigins();
+  await context.route('**/*', route => {
+    const origin = new URL(route.request().url()).origin;
+    return allowed.has(origin) ? route.continue() : route.abort();
+  });
+}
+
 async function dragTouch(context: BrowserContext, page: Page, points: Array<{ x: number; y: number }>, movingSelector: string) {
   const cdp = await context.newCDPSession(page);
   const [start, ...rest] = points;
@@ -29,10 +42,7 @@ async function dragTouch(context: BrowserContext, page: Page, points: Array<{ x:
 }
 
 test('mobile screen drag opens Chat, returns to Home, and opens then drags the sidebar closed', async ({ page, context }) => {
-  await context.route('**/*', route => {
-    const hostname = new URL(route.request().url()).hostname;
-    return hostname === '127.0.0.1' || hostname === 'localhost' ? route.continue() : route.abort();
-  });
+  await blockExternalRequests(context);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#dashboard');
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
@@ -92,10 +102,7 @@ test('mobile model control opens a validated catalogue and returns keyboard focu
       ] }),
     });
   });
-  await context.route('**/*', route => {
-    const hostname = new URL(route.request().url()).hostname;
-    return hostname === '127.0.0.1' || hostname === 'localhost' ? route.continue() : route.abort();
-  });
+  await blockExternalRequests(context);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#dashboard');
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
