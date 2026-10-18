@@ -2,7 +2,7 @@ import AppearanceSettings from './AppearanceSettings';
 import React, { useRef, useState, useEffect } from 'react';
 import { useFocusTrap } from '../utils/accessibility';
 import { useStore } from '../store';
-import { AlertTriangle, Download, Upload, FileText, Trash2, Bot, EyeOff, MapPin, Navigation, RefreshCw, Shield, Activity, Brain, Clock, Plus, ChevronDown } from 'lucide-react';
+import { AlertTriangle, Download, Upload, FileText, Trash2, EyeOff, MapPin, Navigation, RefreshCw, Shield, Activity, Brain, Clock, Plus, ChevronDown } from 'lucide-react';
 import { exportToMarkdown, downloadMarkdown } from '../utils/exportMarkdown';
 import {
   liveContext,
@@ -306,7 +306,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
       <header className="mb-5 flex flex-wrap items-end justify-between gap-3 border-b border-ideapad-border pb-4">
         <div>
           <h1 className="text-2xl font-bold text-ideapad-text">Settings</h1>
-          <p className="mt-1 text-sm text-ideapad-muted">Make Flowmate work the way you do.</p>
+          <p className="mt-1 text-sm text-ideapad-muted">Personalize your workspace, AI and privacy.</p>
         </div>
         <span className="pb-0.5 text-xs text-ideapad-muted">Changes save automatically</span>
       </header>
@@ -315,7 +315,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
 
         <details name="flowmate-settings-sections" data-testid="settings-group-general" className="settings-group">
           <summary className="settings-group-summary">
-            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">General</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Appearance, profile and everyday preferences</span></span>
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">General</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Appearance, profile and planning defaults</span></span>
             <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
           </summary>
           <div id="general-settings" className="settings-group-content space-y-5">
@@ -339,7 +339,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </section>
 
         <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-4">Features</h2>
+          <h2 className="text-lg font-semibold text-slate-200 mb-4">Productivity preferences</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
             <p className="text-sm text-slate-400 mb-2">
               Enable or disable features to customize your experience.
@@ -348,7 +348,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
 
             <div className="flex items-center justify-between py-2 border-b border-slate-800">
               <div>
-                <label className="block text-sm font-medium text-slate-200">🧠 Productivity Score Method</label>
+                <label className="block text-sm font-medium text-slate-200">Productivity score</label>
                 <p className="text-xs text-slate-500">
                   {settings.productivity_calc_method === 'AWAKE_TIME'
                     ? 'Relative to Awake Time (24h - Sleep)'
@@ -368,10 +368,14 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
 
             <div className="flex items-center justify-between py-2">
               <div>
-                <label className="block text-sm font-medium text-slate-200">👥 People Tracking</label>
+                <label className="block text-sm font-medium text-slate-200">People tracking</label>
                 <p className="text-xs text-slate-500">Track relationships, promises, and contacts</p>
               </div>
               <button
+                type="button"
+                role="switch"
+                aria-label="People tracking"
+                aria-checked={settings.feature_toggles?.people_tracking ?? true}
                 onClick={() => {
                   const current = settings.feature_toggles || DEFAULT_FEATURE_TOGGLES;
                   handleChange('feature_toggles', { ...current, people_tracking: !current.people_tracking });
@@ -386,7 +390,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
 
         {/* Environment */}
         <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-4">Environment</h2>
+          <h2 className="text-lg font-semibold text-slate-200 mb-4">Planning defaults</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-2">Timezone</label>
@@ -407,13 +411,13 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         {/* Model & API Key Settings */}
         <details open name="flowmate-settings-sections" data-testid="settings-group-ai" className="settings-group">
           <summary className="settings-group-summary">
-            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">AI & Models</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Model, usage, assistant style and your own key</span></span>
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">AI & Models</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Access, preferences and your own key</span></span>
             <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
           </summary>
           <div className="settings-group-content space-y-5">
-        <section id="ai-model-settings">
-          <AiModelSelector />
+        <section id="ai-model-settings" className="space-y-5">
           <ManagedAiUsagePanel />
+          <AiModelSelector />
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
             <div className="pt-4 border-t border-slate-800/80">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -425,7 +429,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
                     ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                     : 'bg-slate-800 text-slate-400 border border-slate-700'
                 }`}>
-                  {hasAiApiKey() ? 'Your key active' : hasManagedAiIdentity() ? 'Guest and account access available' : currentUser ? 'Managed access unavailable here' : 'AI provider unavailable here'}
+                  {hasAiApiKey() ? 'Using your key' : hasManagedAiIdentity() ? 'Included AI available' : 'No provider connected'}
                 </span>
               </div>
               <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
@@ -472,12 +476,12 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           </div>
         </section>
 
-        {/* AI Persona Settings */}
-        <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
-            <Bot size={18} /> AI Persona
-          </h2>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+        <details className="settings-subgroup">
+          <summary className="settings-subgroup-summary">
+            <span><span className="block text-sm font-medium text-slate-200">Assistant style</span><span className="mt-0.5 block text-xs text-slate-400">Optional response preferences</span></span>
+            <ChevronDown aria-hidden="true" size={16} className="settings-group-chevron" />
+          </summary>
+          <div className="settings-subgroup-content">
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-2">Custom System Instructions</label>
               <textarea
@@ -491,206 +495,18 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
               </p>
             </div>
           </div>
-        </section>
+        </details>
 
         <ManagedAiAdminPanel />
           </div>
         </details>
 
-        {/* Privacy & Context (P1-03) */}
-        <details name="flowmate-settings-sections" data-testid="settings-group-privacy" className="settings-group">
+        <details name="flowmate-settings-sections" data-testid="settings-group-context" className="settings-group">
           <summary className="settings-group-summary">
-            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Privacy & Sync</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Personal context, connected services and workspace sync consent</span></span>
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Personal context</span><span className="mt-0.5 block text-xs font-normal text-slate-400">What Flowmate remembers and uses for planning</span></span>
             <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
           </summary>
           <div className="settings-group-content space-y-5">
-        <section id="privacy-settings-section">
-          <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
-            <Shield size={18} className="text-indigo-400" /> Privacy & Context
-          </h2>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-            <p className="text-sm text-ideapad-muted leading-relaxed">Choose what Flowmate can save, sync or share with AI. Workspace sync and AI context are separate choices.</p>
-
-            {/* Live Context Capabilities */}
-            <div className="space-y-4">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Live Device Capabilities</h3>
-
-              {/* Device Location Capability */}
-              <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-4 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-start gap-2.5">
-                    <Navigation className="text-indigo-400 w-4 h-4 mt-0.5 shrink-0" />
-                    <div>
-                      <div className="text-sm font-medium text-slate-200">Device Geolocation</div>
-                      <div className="text-xs text-slate-500">
-                        Authoritative request-time GPS coordinates for travel routing and commute planning.
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 self-end sm:self-auto">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] text-slate-500">Hardware:</span>
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                        permission === 'granted'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                          : permission === 'denied'
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                          : permission === 'unsupported'
-                          ? 'bg-slate-700 text-slate-300'
-                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      }`}>
-                        {permission.toUpperCase()}
-                      </span>
-                    </div>
-
-                    <select
-                      value={currentPrivacyPolicy.capabilities.device_location?.read || 'ask'}
-                      onChange={(e) => handleUpdateCapabilityMode('device_location', e.target.value as any)}
-                      className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
-                    >
-                      <option value="ask">Ask on Demand</option>
-                      <option value="allow">Allow Always</option>
-                      <option value="deny">Deny Access</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Ephemeral reading monitor */}
-                {liveReading ? (
-                  <div className="bg-slate-900/90 rounded-md p-3 border border-slate-800/80 text-xs space-y-1.5">
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span className="font-mono">
-                        {liveReading.lat.toFixed(5)}°N, {liveReading.lon.toFixed(5)}°E
-                      </span>
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                        liveReading.freshnessTier === 'fresh'
-                          ? 'bg-emerald-500/20 text-emerald-400'
-                          : liveReading.freshnessTier === 'recent'
-                          ? 'bg-blue-500/20 text-blue-400'
-                          : 'bg-amber-500/20 text-amber-400'
-                      }`}>
-                        {liveReading.freshnessTier} (±{Math.round(liveReading.accuracy_meters)}m)
-                      </span>
-                    </div>
-                    {reverseGeoAddress && (
-                      <div className="text-slate-400 truncate">
-                        <span className="text-slate-500">Reverse Geocoded:</span> {reverseGeoAddress}
-                      </div>
-                    )}
-                    <div className="text-[11px] text-slate-500">
-                      Acquired {Math.max(0, Math.round((Date.now() - liveReading.timestamp) / 1000))}s ago ({liveReading.source})
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-500">
-                    No active device location reading. Ephemeral live location is requested on-demand when calculating travel routes.
-                  </p>
-                )}
-
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleAcquireLocation}
-                    disabled={isAcquiring}
-                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-900/50 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isAcquiring ? 'animate-spin' : ''}`} />
-                    {isAcquiring ? 'Acquiring GPS...' : 'Acquire Fresh Location'}
-                  </button>
-
-                  {liveReading && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={handleSetAsHome}
-                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 border border-slate-700"
-                      >
-                        <MapPin className="w-3.5 h-3.5 text-indigo-400" />
-                        Set as Home Base
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleClearLocationCache}
-                        className="px-2.5 py-1.5 text-slate-400 hover:text-rose-400 rounded-lg text-xs transition-colors"
-                      >
-                        Clear Cache
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Connected Services (Extensible Architecture Placeholder) */}
-            <div className="space-y-3">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Connected Services (Preview)</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
-                  <span className="text-slate-300 font-medium">Google Calendar</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">SIMULATED / NOT CONNECTED</span>
-                </div>
-                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
-                  <span className="text-slate-300 font-medium">Gmail</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
-                </div>
-                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
-                  <span className="text-slate-300 font-medium">Contacts & People</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
-                </div>
-                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
-                  <span className="text-slate-300 font-medium">Drive / Files</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
-                </div>
-              </div>
-              <p className="text-[11px] text-slate-500 italic">
-                Flowmate strictly enforces separate Read and Mutation permissions for all future personal data integrations.
-              </p>
-            </div>
-
-            {/* Sensitive Context Access Audit Log */}
-            <div className="space-y-3 pt-2 border-t border-slate-800">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Activity size={15} className="text-indigo-400" />
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Sensitive Access Audit History</h3>
-                </div>
-                {auditLogs.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleClearAudit}
-                    className="text-[11px] text-slate-400 hover:text-rose-400 transition-colors"
-                  >
-                    Clear History
-                  </button>
-                )}
-              </div>
-
-              {auditLogs.length > 0 ? (
-                <div className="bg-slate-950 border border-slate-800 rounded-lg divide-y divide-slate-800/60 max-h-48 overflow-y-auto">
-                  {auditLogs.map((entry) => (
-                    <div key={entry.id} className="p-2.5 text-xs flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-300">
-                          {entry.capabilityId}
-                        </span>
-                        <span className="text-slate-300 truncate">{entry.reason}</span>
-                      </div>
-                      <span className="text-[10px] text-slate-500 shrink-0">
-                        {Math.max(0, Math.round((Date.now() - entry.timestamp) / 1000))}s ago
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-slate-500 bg-slate-950/40 border border-slate-800/50 rounded-lg p-3">
-                  No sensitive context accessed yet in this session.
-                </p>
-              )}
-            </div>
-          </div>
-        </section>
-
         {/* Persistent Memory & Situational State (P1-07) */}
         <section id="context-memory-section">
           <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
@@ -882,6 +698,203 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
                 />
                 <p className="text-xs text-slate-500 mt-1">Buffer time before flight departure for check-in & security.</p>
               </div>
+            </div>
+          </div>
+        </section>
+
+          </div>
+        </details>
+
+        {/* Privacy & Context (P1-03) */}
+        <details name="flowmate-settings-sections" data-testid="settings-group-privacy" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Privacy & Sync</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Control connected services and decide what is saved or synced</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
+          <div className="settings-group-content space-y-5">
+        <section id="privacy-settings-section">
+          <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
+            <Shield size={18} className="text-indigo-400" /> Privacy & Context
+          </h2>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+            <p className="text-sm text-ideapad-muted leading-relaxed">Choose what Flowmate can save, sync or share with AI. Workspace sync and AI context are separate choices.</p>
+
+            {/* Live Context Capabilities */}
+            <div className="space-y-4">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Live Device Capabilities</h3>
+
+              {/* Device Location Capability */}
+              <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <Navigation className="text-indigo-400 w-4 h-4 mt-0.5 shrink-0" />
+                    <div>
+                      <div className="text-sm font-medium text-slate-200">Device Geolocation</div>
+                      <div className="text-xs text-slate-500">
+                        Authoritative request-time GPS coordinates for travel routing and commute planning.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 self-end sm:self-auto">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-slate-500">Hardware:</span>
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                        permission === 'granted'
+                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          : permission === 'denied'
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                          : permission === 'unsupported'
+                          ? 'bg-slate-700 text-slate-300'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      }`}>
+                        {permission.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <select
+                      value={currentPrivacyPolicy.capabilities.device_location?.read || 'ask'}
+                      onChange={(e) => handleUpdateCapabilityMode('device_location', e.target.value as any)}
+                      className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                    >
+                      <option value="ask">Ask on Demand</option>
+                      <option value="allow">Allow Always</option>
+                      <option value="deny">Deny Access</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Ephemeral reading monitor */}
+                {liveReading ? (
+                  <div className="bg-slate-900/90 rounded-md p-3 border border-slate-800/80 text-xs space-y-1.5">
+                    <div className="flex items-center justify-between text-slate-300">
+                      <span className="font-mono">
+                        {liveReading.lat.toFixed(5)}°N, {liveReading.lon.toFixed(5)}°E
+                      </span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
+                        liveReading.freshnessTier === 'fresh'
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : liveReading.freshnessTier === 'recent'
+                          ? 'bg-blue-500/20 text-blue-400'
+                          : 'bg-amber-500/20 text-amber-400'
+                      }`}>
+                        {liveReading.freshnessTier} (±{Math.round(liveReading.accuracy_meters)}m)
+                      </span>
+                    </div>
+                    {reverseGeoAddress && (
+                      <div className="text-slate-400 truncate">
+                        <span className="text-slate-500">Reverse Geocoded:</span> {reverseGeoAddress}
+                      </div>
+                    )}
+                    <div className="text-[11px] text-slate-500">
+                      Acquired {Math.max(0, Math.round((Date.now() - liveReading.timestamp) / 1000))}s ago ({liveReading.source})
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">
+                    No active device location reading. Ephemeral live location is requested on-demand when calculating travel routes.
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleAcquireLocation}
+                    disabled={isAcquiring}
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-900/50 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isAcquiring ? 'animate-spin' : ''}`} />
+                    {isAcquiring ? 'Acquiring GPS...' : 'Acquire Fresh Location'}
+                  </button>
+
+                  {liveReading && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleSetAsHome}
+                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 border border-slate-700"
+                      >
+                        <MapPin className="w-3.5 h-3.5 text-indigo-400" />
+                        Set as Home Base
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearLocationCache}
+                        className="px-2.5 py-1.5 text-slate-400 hover:text-rose-400 rounded-lg text-xs transition-colors"
+                      >
+                        Clear Cache
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Connected Services (Extensible Architecture Placeholder) */}
+            <div className="space-y-3">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Connected Services (Preview)</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Google Calendar</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">SIMULATED / NOT CONNECTED</span>
+                </div>
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Gmail</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
+                </div>
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Contacts & People</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
+                </div>
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Drive / Files</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500 italic">
+                Flowmate strictly enforces separate Read and Mutation permissions for all future personal data integrations.
+              </p>
+            </div>
+
+            {/* Sensitive Context Access Audit Log */}
+            <div className="space-y-3 pt-2 border-t border-slate-800">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Activity size={15} className="text-indigo-400" />
+                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Sensitive Access Audit History</h3>
+                </div>
+                {auditLogs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAudit}
+                    className="text-[11px] text-slate-400 hover:text-rose-400 transition-colors"
+                  >
+                    Clear History
+                  </button>
+                )}
+              </div>
+
+              {auditLogs.length > 0 ? (
+                <div className="bg-slate-950 border border-slate-800 rounded-lg divide-y divide-slate-800/60 max-h-48 overflow-y-auto">
+                  {auditLogs.map((entry) => (
+                    <div key={entry.id} className="p-2.5 text-xs flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-300">
+                          {entry.capabilityId}
+                        </span>
+                        <span className="text-slate-300 truncate">{entry.reason}</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 shrink-0">
+                        {Math.max(0, Math.round((Date.now() - entry.timestamp) / 1000))}s ago
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 bg-slate-950/40 border border-slate-800/50 rounded-lg p-3">
+                  No sensitive context accessed yet in this session.
+                </p>
+              )}
             </div>
           </div>
         </section>

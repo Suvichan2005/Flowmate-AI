@@ -232,13 +232,14 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                     id="chat-file-input"
                 />
                 <div data-testid="chat-composer-actions" className="flex min-w-0 items-center justify-between gap-2 px-2 pb-2">
-                    <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file" title="Attach file" className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ideapad-muted transition-colors hover:bg-ideapad-surface-variant hover:text-ideapad-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint">
-                        <Paperclip size={19} />
-                    </button>
-
                     <div className="flex min-w-0 items-center gap-1">
-                        <AiModelSelector compact />
+                        <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file" title="Attach file" className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ideapad-muted transition-colors hover:bg-ideapad-surface-variant hover:text-ideapad-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint">
+                            <Paperclip size={19} />
+                        </button>
+                    </div>
 
+                    <div className="flex shrink-0 items-center gap-1">
+                        <AiModelSelector compact />
                         {onLiveVoice && <button
                             type="button"
                             onClick={onLiveVoice}

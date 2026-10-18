@@ -416,6 +416,62 @@ h1, h2, h3, .font-serif-heading {
   text-underline-offset: 0.2em;
 }
 
+.settings-subgroup {
+  overflow: clip;
+  border: 1px solid var(--color-ideapad-border);
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--color-ideapad-base) 50%, transparent);
+}
+
+.settings-subgroup-summary {
+  display: flex;
+  min-height: 3.75rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-subgroup-summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-subgroup-summary:hover {
+  background: var(--color-ideapad-surface-variant);
+}
+
+.settings-subgroup-summary:focus-visible {
+  outline-offset: -3px;
+}
+
+.settings-subgroup[open] > .settings-subgroup-summary {
+  border-bottom: 1px solid var(--color-ideapad-border);
+}
+
+.settings-subgroup[open] > .settings-subgroup-summary .settings-group-chevron {
+  transform: rotate(180deg);
+}
+
+.settings-subgroup-content {
+  padding: 1rem;
+}
+
+.model-picker-panel {
+  transform-origin: bottom left;
+  animation: model-picker-enter 120ms ease-out both;
+}
+
+@keyframes model-picker-enter {
+  from { opacity: 0; scale: 0.98; }
+  to { opacity: 1; scale: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .model-picker-panel { animation: none; }
+}
+
 @media (min-width: 768px) {
   .settings-group-content {
     padding: 1.25rem;

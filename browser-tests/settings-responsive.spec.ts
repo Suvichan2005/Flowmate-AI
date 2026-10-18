@@ -77,10 +77,12 @@ test('Settings is organized into native expandable groups instead of jump button
   await expect(page.getByRole('navigation', { name: 'Settings sections' })).toHaveCount(0);
   const general = page.getByTestId('settings-group-general');
   const ai = page.getByTestId('settings-group-ai');
+  const context = page.getByTestId('settings-group-context');
   const privacy = page.getByTestId('settings-group-privacy');
   const data = page.getByTestId('settings-group-data');
   await expect(general.locator(':scope > summary')).toContainText('General');
   await expect(ai.locator(':scope > summary')).toContainText('AI & Models');
+  await expect(context.locator(':scope > summary')).toContainText('Personal context');
   await expect(privacy.locator(':scope > summary')).toContainText('Privacy & Sync');
   await expect(data.locator(':scope > summary')).toContainText('Data & Backup');
   await expect(page.getByTestId('settings-group-preferences')).toHaveCount(0);
@@ -90,15 +92,22 @@ test('Settings is organized into native expandable groups instead of jump button
   await privacy.locator(':scope > summary').click();
   expect(await privacy.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
   await expect(privacy.getByRole('heading', { name: 'Privacy & Context' })).toBeVisible();
+  await expect(privacy.getByRole('heading', { name: 'Persistent Memory & Situational State' })).toHaveCount(0);
+  await context.locator(':scope > summary').click();
+  await expect(context.getByRole('heading', { name: 'Persistent Memory & Situational State' })).toBeVisible();
+  await expect(context.getByRole('heading', { name: 'Location & Travel' })).toBeVisible();
   await ai.locator(':scope > summary').click();
   expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
   expect(await privacy.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
-  await expect(ai.getByRole('heading', { name: 'AI Persona' })).toBeVisible();
+  await expect(ai.locator('details.settings-subgroup > summary')).toContainText('Assistant style');
+  expect(await ai.locator('details.settings-subgroup').evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+  await ai.locator('details.settings-subgroup > summary').click();
+  await expect(ai.getByText('Custom System Instructions')).toBeVisible();
 
   await general.locator(':scope > summary').click();
   expect(await general.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
   await expect(general.getByRole('heading', { name: 'Your Flowmate profile' })).toBeVisible();
-  await expect(general.getByRole('heading', { name: 'Environment' })).toBeVisible();
+  await expect(general.getByRole('heading', { name: 'Planning defaults' })).toBeVisible();
   await expect(general.getByRole('switch', { name: 'Debug Mode' })).toHaveCount(0);
   expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
 
@@ -146,4 +155,35 @@ test('narrow composer keeps model, voice, attachment and send actions inside one
   await expect(composer.getByRole('button', { name: /voice unavailable/i })).toBeVisible();
   await expect(composer.getByRole('button', { name: 'Send message' })).toBeVisible();
   expect(await page.locator('body').evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(320);
+});
+
+test('composer places model selection beside voice and offers a path to connect when unavailable', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/#chat');
+  const composer = page.getByTestId('chat-composer');
+  const actions = composer.getByTestId('chat-composer-actions');
+  const attach = await actions.getByRole('button', { name: 'Attach file' }).boundingBox();
+  const model = await actions.getByTestId('ai-model-selector-trigger').boundingBox();
+  const voice = await actions.getByRole('button', { name: /voice unavailable/i }).boundingBox();
+  const send = await actions.getByRole('button', { name: 'Send message' }).boundingBox();
+  expect(attach).not.toBeNull();
+  expect(model).not.toBeNull();
+  expect(voice).not.toBeNull();
+  expect(send).not.toBeNull();
+  expect(attach!.x).toBeLessThan(model!.x);
+  expect(model!.x).toBeLessThan(voice!.x);
+  expect(voice!.x).toBeLessThan(send!.x);
+  await actions.getByTestId('ai-model-selector-trigger').click();
+  const picker = page.getByRole('dialog', { name: 'Model and reasoning' });
+  await expect(picker).toBeVisible();
+  const pickerBox = await picker.boundingBox();
+  const desktopPaneBox = await page.locator('[data-layout="desktop"]').boundingBox();
+  expect(pickerBox).not.toBeNull();
+  expect(desktopPaneBox).not.toBeNull();
+  expect(pickerBox!.x).toBeGreaterThanOrEqual(desktopPaneBox!.x);
+  expect(pickerBox!.x + pickerBox!.width).toBeLessThanOrEqual(1280);
+  await expect(page.getByText(/Saved model unavailable|Connect an AI provider to start a conversation/)).toBeVisible();
+  await expect(page.getByText('No provider connected')).toBeVisible();
+  await page.getByRole('button', { name: 'Open AI settings' }).click();
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
 });

@@ -29,7 +29,7 @@ const measurePickerPosition = (anchor: DOMRect, composerTop = anchor.top): Picke
   const availableSpace = above ? aboveSpace : belowSpace;
   const maxHeight = Math.max(120, Math.min(360, availableSpace));
   const left = Math.min(
-    Math.max(anchor.right - width, viewportLeft + 12),
+    Math.max(anchor.left, viewportLeft + 12),
     Math.max(viewportLeft + 12, viewportRight - width - 12),
   );
 
@@ -46,6 +46,7 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
   const settings = useStore(state => state.settings);
   const currentUser = useStore(state => state.currentUser);
   const updateSettings = useStore(state => state.updateSettings);
+  const setView = useStore(state => state.setView);
   const [open, setOpen] = useState(false);
   const [options, setOptions] = useState<ModelOption[]>([]);
   const [liveOptions, setLiveOptions] = useState<ManagedLiveModelOption[]>([]);
@@ -266,7 +267,6 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
           {selectedLive.reasoningLevels.map(level => <option key={level} value={level}>{level[0].toUpperCase() + level.slice(1)}</option>)}
         </select>
       </label>}
-      <p className="text-[11px] text-slate-500 sm:col-span-2">Voice use is tracked separately from chat and briefings.</p>
       <label className="block text-sm">
         <span className="mb-1.5 block font-medium text-slate-300">Reasoning</span>
         <select
@@ -287,7 +287,7 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
         <p className="mt-1.5 leading-5">{selected.description} {selected.inputTokenLimit && selected.outputTokenLimit ? `Provider limits: ${selected.inputTokenLimit.toLocaleString()} input and ${selected.outputTokenLimit.toLocaleString()} output tokens.` : ''}</p>
       </details>}
       <p role={catalogError || !selected ? 'status' : undefined} className={`text-[11px] sm:col-span-2 ${catalogError ? 'text-amber-300' : 'text-slate-500'}`}>
-        {catalogError ? 'Model access could not be verified. No alternate model was selected.' : !providerReady ? 'No AI provider is available for this session.' : byok ? 'Using your key for this browser session.' : privileged ? 'Flowmate managed access · owner account.' : 'Flowmate managed access · supported everyday models.'}
+        {catalogError ? 'Could not verify model access. No fallback was selected.' : !providerReady ? 'Add your own Gemini key below to choose a model.' : byok ? 'Using your key in this browser session.' : privileged ? 'Flowmate managed access · owner account.' : 'Flowmate managed access · supported models.'}
         {' '}{settings.sync_ai_preferences ? 'Preferences sync is on.' : 'Preferences stay on this device.'}
       </p>
       {selected?.id === 'gemini-4-argon' && <p className="text-xs text-slate-500 sm:col-span-2">{GEMINI_4_ARGON_UNAVAILABLE_REASON}</p>}
@@ -296,18 +296,18 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
 
   if (!compact) return <section aria-label="Model and reasoning preferences" className="space-y-3 border-b border-ideapad-border pb-5">
     <h3 className="text-base font-semibold text-slate-100">Model and reasoning</h3>
-    <p className="text-sm text-slate-400">Choose the models and reasoning Flowmate should use for text and voice.</p>
+    <p className="text-sm text-slate-400">Choose your text model, reasoning level and voice model.</p>
     {controls}
   </section>;
 
   const compactAccessibleLabel = loading
     ? `Choose model. Checking access. Current saved model: ${selectedName}.`
-    : !providerReady
-      ? 'Model unavailable. Add a Gemini key in Settings to choose a model.'
+      : !providerReady
+        ? 'AI unavailable. Open model options to connect a provider in Settings.'
       : `Choose model and reasoning. Current model: ${selectedName}; reasoning: ${reasoningNeedsChoice ? 'needs selection' : defaultReasoning}.`;
   const compactModelLabel = selected
     ? selected.name.replace(/^Gemini\s+/i, '')
-    : loading ? 'Checking…' : 'Unavailable';
+    : loading ? 'Checking…' : providerReady ? 'Unavailable' : 'Connect AI';
   const picker = open && pickerPosition && typeof document !== 'undefined' ? createPortal(
     <div
       ref={compactPanelRef}
@@ -316,7 +316,7 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
       aria-label="Model and reasoning"
       onKeyDown={handlePickerKeyDown}
       data-testid="ai-model-selector-popover"
-      className="fixed z-[90] overflow-y-auto overscroll-contain rounded-2xl border border-ideapad-border bg-ideapad-surface p-2.5 shadow-2xl shadow-black/30 [scrollbar-width:thin]"
+      className="model-picker-panel fixed z-[90] overflow-y-auto overscroll-contain rounded-2xl border border-ideapad-border bg-ideapad-surface p-2.5 shadow-2xl shadow-black/30 [scrollbar-width:thin]"
       style={{
         left: pickerPosition.left,
         top: pickerPosition.top,
@@ -327,8 +327,8 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
       }}
     >
       <div className="mb-1 flex items-center gap-1.5 px-2 py-1 text-[10px] text-ideapad-muted">
-        <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-ideapad-mint" />
-        <span>{byok ? 'Your API key' : privileged ? 'Owner access' : 'Flowmate access'}</span>
+        <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${providerReady ? 'bg-ideapad-mint' : 'bg-ideapad-muted'}`} />
+        <span>{byok ? 'Your API key' : privileged ? 'Owner access' : providerReady ? 'Flowmate access' : 'No provider connected'}</span>
       </div>
       {options.length > 0 ? <div role="listbox" aria-label="Available AI models" className="space-y-0.5">
         {options.map((model, index) => <button
@@ -346,7 +346,10 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{model.name}</span>
           {selected?.id === model.id && <span className="sr-only">Selected</span>}
         </button>)}
-      </div> : <p role="status" className="rounded-xl bg-ideapad-surface-variant px-3 py-2 text-xs leading-5 text-ideapad-muted">{loading ? 'Checking available models…' : catalogError ? 'Model access could not be verified. No alternate was selected.' : settings.preferred_model ? `Saved model unavailable: ${settings.preferred_model}` : 'No model is available for this provider.'}</p>}
+      </div> : <div className="rounded-xl bg-ideapad-surface-variant px-3 py-2.5">
+        <p role="status" className="text-xs leading-5 text-ideapad-muted">{loading ? 'Checking available models…' : catalogError ? 'Model access could not be verified. No alternate was selected.' : settings.preferred_model ? `Saved model unavailable: ${settings.preferred_model}` : 'Connect an AI provider to start a conversation.'}</p>
+        {!loading && <button type="button" onClick={() => { setOpen(false); setView('settings'); }} className="mt-2 min-h-9 rounded-lg border border-ideapad-border px-3 text-xs font-medium text-ideapad-text transition-colors hover:bg-ideapad-surface focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint">Open AI settings</button>}
+      </div>}
       {selected && reasoningOptions.length > 0 && <div className="mt-2 border-t border-ideapad-border/70 px-1 pt-2">
         <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
           <h4 className="text-xs font-medium text-ideapad-text">Reasoning</h4>
@@ -370,9 +373,8 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
       aria-controls={open ? pickerId : undefined}
       aria-haspopup="dialog"
       aria-expanded={open}
-      disabled={!providerReady}
       aria-label={compactAccessibleLabel}
-      title={providerReady ? `${selectedName} · ${reasoningNeedsChoice ? 'Choose reasoning' : defaultReasoning}` : 'Add your Gemini key in Settings to choose a model'}
+      title={providerReady ? `${selectedName} · ${reasoningNeedsChoice ? 'Choose reasoning' : defaultReasoning}` : 'Connect an AI provider'}
       onClick={event => open ? setOpen(false) : openPicker(event.detail === 0)}
       onKeyDown={event => {
         if (event.key === 'ArrowDown' && !open) {
@@ -380,7 +382,7 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
           openPicker(true);
         }
       }}
-      className={`inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-ideapad-border px-2.5 transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ideapad-mint active:scale-[0.98] ${!providerReady ? 'cursor-not-allowed text-ideapad-muted/55' : open ? 'bg-ideapad-surface-variant text-ideapad-mint' : 'bg-transparent text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text'}`}
+      className={`inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-ideapad-border px-2.5 transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ideapad-mint active:scale-[0.98] ${!providerReady ? 'text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text' : open ? 'bg-ideapad-surface-variant text-ideapad-mint' : 'bg-transparent text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text'}`}
     >
       <Brain size={17} className={open ? 'text-ideapad-mint' : ''} aria-hidden="true" />
       <span className="hidden text-xs font-medium leading-none min-[420px]:inline">{compactModelLabel}</span>

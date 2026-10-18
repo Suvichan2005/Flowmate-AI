@@ -10,7 +10,7 @@ test('desktop composer stays centered at a readable width', async ({ page }) => 
   expect(bounds).not.toBeNull();
   expect(bounds!.width).toBeLessThanOrEqual(860);
   expect(bounds!.x).toBeGreaterThan(224);
-  await expect(page.getByTestId('ai-model-selector-trigger').getByText('Unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('ai-model-selector-trigger').getByText('Connect AI', { exact: true })).toBeVisible();
 });
 
 test('mobile composer keeps model, voice, attachment and send actions readable around a multiline draft', async ({ page }) => {
@@ -20,13 +20,13 @@ test('mobile composer keeps model, voice, attachment and send actions readable a
   const composer = page.getByTestId('chat-composer');
   await expect(composer).toBeVisible();
   const draft = page.getByRole('textbox', { name: 'Message Flowmate' });
-  const model = composer.getByRole('button', { name: /Model unavailable/ });
+  const model = composer.getByRole('button', { name: /AI unavailable/ });
   const attach = composer.getByRole('button', { name: 'Attach file' });
   const voice = composer.getByRole('button', { name: /voice unavailable/ });
   const send = composer.getByRole('button', { name: 'Send message' });
 
   await expect(model).toBeVisible();
-  await expect(model).toBeDisabled();
+  await expect(model).toBeEnabled();
   await expect(attach).toBeVisible();
   await expect(voice).toBeVisible();
   await expect(voice).toBeDisabled();
