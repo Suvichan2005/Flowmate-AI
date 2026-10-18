@@ -305,6 +305,9 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
     : !providerReady
       ? 'Model unavailable. Add a Gemini key in Settings to choose a model.'
       : `Choose model and reasoning. Current model: ${selectedName}; reasoning: ${reasoningNeedsChoice ? 'needs selection' : defaultReasoning}.`;
+  const compactModelLabel = selected
+    ? selected.name.replace(/^Gemini\s+/i, '')
+    : loading ? 'Checking…' : 'Unavailable';
   const picker = open && pickerPosition && typeof document !== 'undefined' ? createPortal(
     <div
       ref={compactPanelRef}
@@ -380,8 +383,8 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
       className={`inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-ideapad-border px-2.5 transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ideapad-mint active:scale-[0.98] ${!providerReady ? 'cursor-not-allowed text-ideapad-muted/55' : open ? 'bg-ideapad-surface-variant text-ideapad-mint' : 'bg-transparent text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text'}`}
     >
       <Brain size={17} className={open ? 'text-ideapad-mint' : ''} aria-hidden="true" />
-      <span className="text-xs font-medium">Model</span>
-      <span aria-hidden="true" className="rounded-full bg-ideapad-surface-variant px-1.5 py-0.5 text-[10px] font-medium leading-none text-ideapad-muted">{reasoningNeedsChoice ? 'Set' : defaultReasoning}</span>
+      <span className="text-xs font-medium leading-none">{compactModelLabel}</span>
+      {selected && reasoningOptions.length > 0 && <span aria-hidden="true" className="rounded-full bg-ideapad-surface-variant px-1.5 py-0.5 text-[10px] font-medium leading-none text-ideapad-muted">{reasoningNeedsChoice ? 'Set' : defaultReasoning}</span>}
       <ChevronDown size={13} className={`text-ideapad-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
       <span className="sr-only">{loading ? 'Models loading' : `${selectedName}, ${reasoningNeedsChoice ? 'reasoning needs selection' : `${defaultReasoning} reasoning`}`}</span>
     </button>

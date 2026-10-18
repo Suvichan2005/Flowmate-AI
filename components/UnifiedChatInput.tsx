@@ -219,7 +219,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                     onKeyDown={handleKeyDown}
                     placeholder={isListening ? 'Listening…' : placeholder}
                     rows={1}
-                    className={`block w-full min-w-0 resize-none bg-transparent px-4 pt-3 pb-1 text-ideapad-text outline-none placeholder:text-ideapad-muted ${isMobile ? 'text-base' : 'text-sm'} max-h-[160px] min-h-[44px] leading-6`}
+                    className={`block w-full min-w-0 resize-none bg-transparent px-4 pt-2 pb-0 text-ideapad-text outline-none placeholder:text-ideapad-muted ${isMobile ? 'text-base' : 'text-sm'} max-h-[160px] min-h-[40px] leading-6`}
                     style={{ lineHeight: '1.5' }}
                 />
 
@@ -231,7 +231,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                     className="hidden"
                     id="chat-file-input"
                 />
-                <div data-testid="chat-composer-actions" className="flex min-w-0 items-center justify-between gap-2 px-2.5 pb-2.5">
+                <div data-testid="chat-composer-actions" className="flex min-w-0 items-center justify-between gap-2 px-2 pb-2">
                     <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file" title="Attach file" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-ideapad-muted transition-colors hover:bg-ideapad-surface-variant hover:text-ideapad-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint">
                         <Paperclip size={19} />
                     </button>
