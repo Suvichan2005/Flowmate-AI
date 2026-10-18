@@ -72,3 +72,49 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
   await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(surface).toBeVisible();
 });
+
+test('mobile model control opens a validated catalogue and returns keyboard focus', async ({ page, context }) => {
+  let catalogRequests = 0;
+  await page.route('**/v1beta/models**', async route => {
+    catalogRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ models: [
+        { name: 'models/gemini-3.8-flash', supportedGenerationMethods: ['generateContent'], inputTokenLimit: 1048576, outputTokenLimit: 65536 },
+        { name: 'models/gemini-3.8-live', supportedGenerationMethods: ['bidiGenerateContent'] },
+      ] }),
+    });
+  });
+  await context.route('**/*', route => {
+    const hostname = new URL(route.request().url()).hostname;
+    return hostname === '127.0.0.1' || hostname === 'localhost' ? route.continue() : route.abort();
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/#dashboard');
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+  await skipOptionalOnboarding(page);
+
+  const nav = page.getByRole('navigation', { name: 'Mobile Navigation' });
+  await nav.getByRole('button', { name: 'Open Settings', exact: true }).click();
+  await page.getByPlaceholder('Paste your Gemini API key to use BYOK').fill('synthetic-ui-only-key');
+  await page.getByRole('button', { name: 'Save Key', exact: true }).click();
+  await nav.getByRole('button', { name: 'Open Chat', exact: true }).click();
+
+  const trigger = page.getByTestId('ai-model-selector-trigger');
+  await expect(trigger).toBeVisible();
+  await expect.poll(() => catalogRequests).toBeGreaterThan(0);
+  await expect(trigger).toContainText('3.8 Flash');
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: 'Model and reasoning' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('option', { name: /Gemini 3.8 Flash/ })).toBeVisible();
+  await expect(dialog.getByRole('group', { name: 'Reasoning level' })).toBeVisible();
+  const dialogBox = await dialog.boundingBox();
+  const composerBox = await page.getByRole('textbox', { name: 'Message Flowmate' }).boundingBox();
+  expect(dialogBox && composerBox && dialogBox.y + dialogBox.height).toBeLessThanOrEqual(composerBox.y);
+  await page.screenshot({ path: 'qa-evidence/mobile-model-selector-design-review.png' });
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+});

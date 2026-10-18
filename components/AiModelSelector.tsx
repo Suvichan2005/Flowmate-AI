@@ -207,7 +207,7 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
       <span className="shrink-0 rounded-md bg-ideapad-surface-variant px-1.5 py-0.5 text-[10px] font-medium text-ideapad-mint">{reasoningNeedsChoice ? 'Set' : defaultReasoning[0].toUpperCase() + defaultReasoning.slice(1)}</span>
       <ChevronDown size={13} className={`shrink-0 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
     </button>
-    {open && <div role="dialog" aria-label="Model and reasoning" className="absolute bottom-full right-0 mb-2 w-[min(21rem,calc(100vw-1.5rem))] rounded-2xl border border-ideapad-border bg-ideapad-surface p-3 shadow-2xl sm:p-4">
+    {open && <div role="dialog" aria-label="Model and reasoning" className="absolute bottom-full right-0 mb-12 w-[min(21rem,calc(100vw-1.5rem))] rounded-2xl border border-ideapad-border bg-ideapad-surface p-3 shadow-2xl sm:p-4">
       <div className="mb-2 flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-ideapad-text">Model</h3>
         {privileged && <span className="rounded-full bg-ideapad-surface-variant px-2 py-1 text-[10px] text-ideapad-mint">Privileged</span>}
