@@ -235,11 +235,11 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
           }}
           className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-emerald-500"
         >
-          {!selected && <option value="__unavailable__">{loading ? 'Checking model access…' : options.length === 0 ? 'Connect a Gemini provider to choose a model' : settings.preferred_model ? 'Saved model is not available from this provider' : 'No compatible model available'}</option>}
+          {!selected && <option value="__unavailable__">{loading ? 'Checking access…' : options.length === 0 ? 'Not connected' : settings.preferred_model ? 'Saved model unavailable' : 'No compatible model'}</option>}
           {options.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
         </select>
       </label>
-      <label className="block text-sm sm:col-span-2">
+      <label className="block text-sm">
         <span className="mb-1.5 block font-medium text-slate-300">Live voice model</span>
         <select
           aria-label="Live voice model"
@@ -251,7 +251,7 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
           }}
           className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-slate-100 outline-none focus:border-emerald-500"
         >
-          {!selectedLive && <option value="__live_unavailable__">{loading ? 'Checking voice access…' : liveOptions.length === 0 ? 'Connect a provider to choose a voice model' : 'Saved voice model is not available here'}</option>}
+          {!selectedLive && <option value="__live_unavailable__">{loading ? 'Checking access…' : liveOptions.length === 0 ? 'Not connected' : 'Saved model unavailable'}</option>}
           {liveOptions.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
         </select>
       </label>
@@ -266,7 +266,7 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
           {selectedLive.reasoningLevels.map(level => <option key={level} value={level}>{level[0].toUpperCase() + level.slice(1)}</option>)}
         </select>
       </label>}
-      <p className="text-[11px] text-slate-500 sm:col-span-2">Voice sessions use separate provider usage and do not consume chat or briefing allowances.</p>
+      <p className="text-[11px] text-slate-500 sm:col-span-2">Voice use is tracked separately from chat and briefings.</p>
       <label className="block text-sm">
         <span className="mb-1.5 block font-medium text-slate-300">Reasoning</span>
         <select
@@ -282,18 +282,21 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
         </select>
       </label>
       {savedReasoningUnavailable && <p role="status" className="text-xs text-amber-300 sm:col-span-2">Your saved {savedReasoning} reasoning level is not available for this account and model. Choose a supported level before sending another managed request.</p>}
-      {selected && <p className="text-xs text-slate-400 sm:col-span-2">{selected.description} {selected.inputTokenLimit && selected.outputTokenLimit ? `Provider limits: ${selected.inputTokenLimit.toLocaleString()} input and ${selected.outputTokenLimit.toLocaleString()} output tokens.` : ''}</p>}
+      {selected && <details className="text-xs text-slate-400 sm:col-span-2">
+        <summary className="w-fit cursor-pointer text-slate-300">Model capabilities</summary>
+        <p className="mt-1.5 leading-5">{selected.description} {selected.inputTokenLimit && selected.outputTokenLimit ? `Provider limits: ${selected.inputTokenLimit.toLocaleString()} input and ${selected.outputTokenLimit.toLocaleString()} output tokens.` : ''}</p>
+      </details>}
       <p role={catalogError || !selected ? 'status' : undefined} className={`text-[11px] sm:col-span-2 ${catalogError ? 'text-amber-300' : 'text-slate-500'}`}>
-        {catalogError ? 'Model access could not be verified. Flowmate will not switch models automatically.' : !providerReady ? 'Add your Gemini key in Settings to choose a model.' : byok ? 'Using your key for this browser session.' : privileged ? 'Flowmate managed access · owner account.' : 'Flowmate managed access · supported everyday models.'}
+        {catalogError ? 'Model access could not be verified. No alternate model was selected.' : !providerReady ? 'No AI provider is available for this session.' : byok ? 'Using your key for this browser session.' : privileged ? 'Flowmate managed access · owner account.' : 'Flowmate managed access · supported everyday models.'}
         {' '}{settings.sync_ai_preferences ? 'Preferences sync is on.' : 'Preferences stay on this device.'}
       </p>
       {selected?.id === 'gemini-4-argon' && <p className="text-xs text-slate-500 sm:col-span-2">{GEMINI_4_ARGON_UNAVAILABLE_REASON}</p>}
     </div>
   );
 
-  if (!compact) return <section aria-label="Model and reasoning preferences" className="rounded-xl border border-slate-800 bg-slate-900 p-5 space-y-2">
+  if (!compact) return <section aria-label="Model and reasoning preferences" className="space-y-3 border-b border-ideapad-border pb-5">
     <h3 className="text-base font-semibold text-slate-100">Model and reasoning</h3>
-    <p className="text-sm text-slate-400">Choose the model and effort Flowmate will request. Unsupported choices are rejected instead of silently substituted.</p>
+    <p className="text-sm text-slate-400">Choose the models and reasoning Flowmate should use for text and voice.</p>
     {controls}
   </section>;
 
@@ -374,10 +377,11 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
           openPicker(true);
         }
       }}
-      className={`inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-ideapad-border/70 px-2.5 transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ideapad-mint active:scale-[0.98] ${!providerReady ? 'cursor-not-allowed text-ideapad-muted/55' : open ? 'bg-ideapad-surface-variant text-ideapad-mint' : 'bg-transparent text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text'}`}
+      className={`inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-ideapad-border px-2.5 transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ideapad-mint active:scale-[0.98] ${!providerReady ? 'cursor-not-allowed text-ideapad-muted/55' : open ? 'bg-ideapad-surface-variant text-ideapad-mint' : 'bg-transparent text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text'}`}
     >
       <Brain size={17} className={open ? 'text-ideapad-mint' : ''} aria-hidden="true" />
       <span className="text-xs font-medium">Model</span>
+      <span aria-hidden="true" className="rounded-full bg-ideapad-surface-variant px-1.5 py-0.5 text-[10px] font-medium leading-none text-ideapad-muted">{reasoningNeedsChoice ? 'Set' : defaultReasoning}</span>
       <ChevronDown size={13} className={`text-ideapad-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
       <span className="sr-only">{loading ? 'Models loading' : `${selectedName}, ${reasoningNeedsChoice ? 'reasoning needs selection' : `${defaultReasoning} reasoning`}`}</span>
     </button>

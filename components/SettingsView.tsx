@@ -302,17 +302,18 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
   };
 
   return (
-    <div className="flex-1 w-full min-w-0 overflow-y-auto bg-slate-950 p-4 sm:p-6 md:p-8">
-      <header className="mb-6 border-b border-slate-800 pb-5">
-        <h1 className="text-2xl font-bold text-slate-100">Settings</h1>
-        <p className="text-slate-400 text-sm mt-1">
-          Make Flowmate work the way you do. Changes are saved as you make them.
-        </p>
+    <div className="flex-1 w-full min-w-0 overflow-y-auto bg-ideapad-base p-4 sm:p-6 lg:p-8">
+      <header className="mb-5 flex flex-wrap items-end justify-between gap-3 border-b border-ideapad-border pb-4">
+        <div>
+          <h1 className="text-2xl font-bold text-ideapad-text">Settings</h1>
+          <p className="mt-1 text-sm text-ideapad-muted">Make Flowmate work the way you do.</p>
+        </div>
+        <span className="pb-0.5 text-xs text-ideapad-muted">Most preferences save automatically</span>
       </header>
 
-      <div data-testid="settings-content" className="w-full max-w-none min-w-0 space-y-4">
+      <div data-testid="settings-content" className="w-full max-w-none min-w-0 space-y-3">
 
-        <details open data-testid="settings-group-general" className="settings-group">
+        <details open name="flowmate-settings-sections" data-testid="settings-group-general" className="settings-group">
           <summary className="settings-group-summary">
             <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">General</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Appearance and personal profile</span></span>
             <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
@@ -340,45 +341,20 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </details>
 
         {/* Model & API Key Settings */}
-        <details data-testid="settings-group-ai" className="settings-group">
+        <details name="flowmate-settings-sections" data-testid="settings-group-ai" className="settings-group">
           <summary className="settings-group-summary">
             <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">AI & Models</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Choose your model, review included access or add your own key</span></span>
             <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
           </summary>
           <div className="settings-group-content space-y-5">
         <section id="ai-model-settings">
-          <p className="mb-4 text-sm text-slate-400">Choose a model, check your included access and manage your own Gemini key.</p>
           <AiModelSelector />
-          <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm">
-            <input
-              type="checkbox"
-              checked={settings.sync_ai_preferences === true}
-              onChange={event => updateSettings({ sync_ai_preferences: event.target.checked })}
-              className="mt-0.5 accent-emerald-500"
-            />
-            <span>
-              <span className="block font-medium text-slate-200">Sync model and reasoning choices to my account</span>
-              <span className="mt-1 block text-xs leading-5 text-slate-400">Off by default. When enabled, your selected text and Live models and reasoning levels sync across your signed-in devices. Turning it off removes those preferences from cloud settings.</span>
-            </span>
-          </label>
           <ManagedAiUsagePanel />
-          <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm">
-            <input
-              type="checkbox"
-              checked={settings.save_voice_transcripts === true}
-              onChange={event => updateSettings({ save_voice_transcripts: event.target.checked })}
-              className="mt-0.5 accent-emerald-500"
-            />
-            <span>
-              <span className="block font-medium text-slate-200">Save Live voice transcripts in chat history</span>
-              <span className="mt-1 block text-xs leading-5 text-slate-400">Off by default. Live captions remain visible during the current session, but spoken text is not added to saved conversations unless you turn this on. Raw audio is not stored by Flowmate.</span>
-            </span>
-          </label>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
             <div className="pt-4 border-t border-slate-800/80">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <label className="block text-sm font-medium text-slate-200">
-                  Your Gemini API Key (Optional BYOK)
+                <label className="block text-sm font-semibold text-ideapad-text">
+                  Use your own Gemini key
                 </label>
                 <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
                   hasAiApiKey()
@@ -424,7 +400,10 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
               {keySavedToast && (
                 <p className="text-xs text-emerald-400 mt-2 font-medium">✓ Runtime key updated in memory.</p>
               )}
-              <p className="mt-2 text-xs leading-5 text-slate-400">Your key stays in this browser session and is sent directly to Google. Flowmate does not persist it. Included access and daily briefing usage are shown above.</p>
+              <details className="mt-3 rounded-lg border border-ideapad-border/70 px-3 py-2 text-xs text-ideapad-muted">
+                <summary className="cursor-pointer font-medium text-ideapad-text">How your key is handled</summary>
+                <p className="mt-2 leading-5">Your key stays in this browser session and is sent directly to Google. Flowmate does not persist it. Included access and daily briefing usage are shown above.</p>
+              </details>
             </div>
           </div>
         </section>
@@ -434,7 +413,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </details>
 
         {/* Feature Toggles */}
-        <details data-testid="settings-group-preferences" className="settings-group">
+        <details name="flowmate-settings-sections" data-testid="settings-group-preferences" className="settings-group">
           <summary className="settings-group-summary">
             <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Preferences</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Productivity, assistant style and time settings</span></span>
             <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
@@ -539,7 +518,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </details>
 
         {/* Privacy & Context (P1-03) */}
-        <details data-testid="settings-group-privacy" className="settings-group">
+        <details name="flowmate-settings-sections" data-testid="settings-group-privacy" className="settings-group">
           <summary className="settings-group-summary">
             <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Privacy & Sync</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Personal context, connected services and workspace sync consent</span></span>
             <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
@@ -550,10 +529,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
             <Shield size={18} className="text-indigo-400" /> Privacy & Context
           </h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Flowmate is built privacy-first. Every sensitive context source operates under explicit capability permissions.
-              Live context is ephemeral and never silently written to persistent memory.
-            </p>
+            <p className="text-sm text-ideapad-muted leading-relaxed">Choose what Flowmate can save, sync or share with AI. Workspace sync and AI context are separate choices.</p>
 
             {/* Live Context Capabilities */}
             <div className="space-y-4">
@@ -934,6 +910,16 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         <section id="privacy-sync-settings" className="scroll-mt-16">
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Privacy, Sync & Backup</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+            <div className="space-y-3">
+              <label className="flex items-start gap-3 rounded-lg border border-ideapad-border bg-ideapad-base p-4 text-sm">
+                <input type="checkbox" checked={settings.sync_ai_preferences === true} onChange={event => updateSettings({ sync_ai_preferences: event.target.checked })} className="mt-0.5 accent-emerald-500" />
+                <span><span className="block font-medium text-ideapad-text">Sync AI preferences to my account</span><span className="mt-1 block text-xs leading-5 text-ideapad-muted">When enabled, model and reasoning choices sync across signed-in devices.</span></span>
+              </label>
+              <label className="flex items-start gap-3 rounded-lg border border-ideapad-border bg-ideapad-base p-4 text-sm">
+                <input type="checkbox" checked={settings.save_voice_transcripts === true} onChange={event => updateSettings({ save_voice_transcripts: event.target.checked })} className="mt-0.5 accent-emerald-500" />
+                <span><span className="block font-medium text-ideapad-text">Save voice transcripts in chat history</span><span className="mt-1 block text-xs leading-5 text-ideapad-muted">Off by default. Raw audio is not stored by Flowmate.</span></span>
+              </label>
+            </div>
             <div className="rounded-lg border border-slate-700 bg-slate-950/50 p-4 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                 <div>
@@ -994,7 +980,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </details>
 
         {/* Data Management */}
-        <details data-testid="settings-group-data" className="settings-group">
+        <details name="flowmate-settings-sections" data-testid="settings-group-data" className="settings-group">
           <summary className="settings-group-summary">
             <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Data & Backup</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Export, restore or reset this workspace</span></span>
             <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
@@ -1054,7 +1040,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </details>
 
         {/* Debug Tools */}
-        <details data-testid="settings-group-advanced" className="settings-group">
+        <details name="flowmate-settings-sections" data-testid="settings-group-advanced" className="settings-group">
           <summary className="settings-group-summary">
             <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Advanced</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Troubleshooting and maintenance tools</span></span>
             <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />

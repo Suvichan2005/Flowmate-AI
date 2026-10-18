@@ -349,16 +349,21 @@ h1, h2, h3, .font-serif-heading {
   overflow: clip;
   border: 1px solid var(--color-ideapad-border);
   border-radius: 1rem;
-  background: color-mix(in srgb, var(--color-ideapad-surface) 72%, transparent);
+  background: var(--color-ideapad-surface);
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.settings-group[open] {
+  border-color: color-mix(in srgb, var(--color-ideapad-mint) 40%, var(--color-ideapad-border));
 }
 
 .settings-group-summary {
   display: flex;
-  min-height: 4.5rem;
+  min-height: 4.25rem;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.9rem 1rem;
+  padding: 0.85rem 1rem;
   cursor: pointer;
   list-style: none;
 }
@@ -368,7 +373,7 @@ h1, h2, h3, .font-serif-heading {
 }
 
 .settings-group-summary:hover {
-  background: color-mix(in srgb, var(--color-ideapad-surface-variant) 48%, transparent);
+  background: var(--color-ideapad-surface-variant);
 }
 
 .settings-group-summary:focus-visible {
@@ -394,6 +399,14 @@ h1, h2, h3, .font-serif-heading {
 .settings-group-content {
   min-width: 0;
   padding: 1rem;
+}
+
+.settings-group-content > section + section {
+  margin-top: 1.5rem;
+}
+
+.settings-group-content summary {
+  text-underline-offset: 0.2em;
 }
 
 @media (min-width: 768px) {

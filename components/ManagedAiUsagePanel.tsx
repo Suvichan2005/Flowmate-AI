@@ -27,17 +27,21 @@ const ManagedAiUsagePanel: React.FC = () => {
     ? new Date(Date.parse(`${usage.briefings.date}T00:00:00+05:30`) + 24 * 60 * 60 * 1000)
         .toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })
     : null;
-  return <section aria-label="Managed AI usage" className="mb-5 rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+  return <section aria-label="Managed AI usage" className="mb-5 rounded-2xl border border-ideapad-border bg-ideapad-surface p-4 sm:p-5">
     <div className="mb-3 flex items-center justify-between gap-3">
-      <h3 className="font-semibold text-slate-100">Flowmate AI usage</h3>
-      {usage && <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-emerald-300">{usage.tier}</span>}
+      <h3 className="font-semibold text-ideapad-text">Included AI use</h3>
+      {usage && <span className="rounded-full border border-ideapad-border bg-ideapad-base px-2.5 py-1 text-[10px] uppercase tracking-wide text-ideapad-muted">{usage.tier}</span>}
     </div>
-    {usage ? <div className="grid gap-3 text-sm sm:grid-cols-3">
-      <div><div className="text-slate-400">Chat allowance</div><div className="font-medium text-slate-100">{usage.chat.lifetimeLimit === null ? `${usage.chat.successfulTurns} successful turns · no Flowmate cap` : `${Math.max(0, usage.chat.lifetimeLimit - usage.chat.successfulTurns)} / ${usage.chat.lifetimeLimit} lifetime turns remaining`}</div></div>
-      <div><div className="text-slate-400">Briefings available today</div><div className="font-medium text-slate-100">{usage.briefings.dailyLimit === null ? 'No Flowmate briefing cap' : `${Math.max(0, usage.briefings.dailyLimit - usage.briefings.successfulToday)} / ${usage.briefings.dailyLimit} available`}</div>{briefingReset && usage.briefings.dailyLimit !== null && <div className="mt-1 text-xs text-slate-500">Resets {briefingReset} IST</div>}</div>
-      <div><div className="text-slate-400">Model calls this month</div><div className="font-medium text-slate-100">{usage.modelCalls.thisMonth} · usage tracked</div></div>
-      <p className="text-xs text-slate-500 sm:col-span-3">Model calls are usage telemetry, not a Flowmate quota. Google AI Studio spending and provider quota settings are separate; verify project controls, which may be delayed and are not a guaranteed hard invoice ceiling. Briefings use a separate daily allowance and Gemini 3.8 Flash at Low reasoning. Failed provider attempts remain counted as model calls when submitted; prompts and responses are not stored in this usage record.</p>
-    </div> : <p role="status" className="text-sm text-amber-300">Usage could not be read from the verified managed-AI service.</p>}
+    {usage ? <>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="rounded-xl bg-ideapad-base p-3"><div className="text-xs text-ideapad-muted">Chat turns</div><div className="mt-1 font-semibold text-ideapad-text">{usage.chat.lifetimeLimit === null ? `${usage.chat.successfulTurns} used · uncapped` : `${Math.max(0, usage.chat.lifetimeLimit - usage.chat.successfulTurns)} of ${usage.chat.lifetimeLimit} left`}</div></div>
+        <div className="rounded-xl bg-ideapad-base p-3"><div className="text-xs text-ideapad-muted">Briefings today</div><div className="mt-1 font-semibold text-ideapad-text">{usage.briefings.dailyLimit === null ? 'Uncapped' : `${Math.max(0, usage.briefings.dailyLimit - usage.briefings.successfulToday)} of ${usage.briefings.dailyLimit} left`}</div>{briefingReset && usage.briefings.dailyLimit !== null && <div className="mt-1 text-[11px] text-ideapad-muted">Resets {briefingReset} IST</div>}</div>
+      </div>
+      <details className="mt-3 border-t border-ideapad-border pt-3 text-xs text-ideapad-muted">
+        <summary className="cursor-pointer font-medium text-ideapad-text">Usage details</summary>
+        <p className="mt-2 leading-5">Chat turns and daily briefings have separate allowances. {usage.modelCalls.thisMonth} provider model calls are tracked this month but do not define a Flowmate allowance. Google AI Studio billing and provider limits are separate; their dashboards may be delayed. Failed requests count when a model call is submitted. Prompts and responses are not stored in this usage record.</p>
+      </details>
+    </> : <p role="status" className="text-sm text-amber-300">Usage is temporarily unavailable. Your current workspace is unchanged.</p>}
   </section>;
 };
 

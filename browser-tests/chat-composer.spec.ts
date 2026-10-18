@@ -36,6 +36,7 @@ test('mobile composer keeps model, voice, attachment and send actions readable a
   await draft.type('Second line');
   await expect(draft).toHaveValue('First line\nSecond line');
   await expect(send).toBeEnabled();
+  await page.screenshot({ path: 'qa-evidence/flowmate-composer-mobile.png', fullPage: true });
 
   const bounds = await composer.boundingBox();
   expect(bounds).not.toBeNull();

@@ -79,14 +79,37 @@ test('Settings is organized into native expandable groups instead of jump button
   const ai = page.getByTestId('settings-group-ai');
   const privacy = page.getByTestId('settings-group-privacy');
   const data = page.getByTestId('settings-group-data');
-  await expect(general.locator('summary')).toContainText('General');
-  await expect(ai.locator('summary')).toContainText('AI & Models');
-  await expect(privacy.locator('summary')).toContainText('Privacy & Sync');
-  await expect(data.locator('summary')).toContainText('Data & Backup');
+  await expect(general.locator(':scope > summary')).toContainText('General');
+  await expect(ai.locator(':scope > summary')).toContainText('AI & Models');
+  await expect(privacy.locator(':scope > summary')).toContainText('Privacy & Sync');
+  await expect(data.locator(':scope > summary')).toContainText('Data & Backup');
   expect(await general.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
   expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
   expect(await privacy.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
-  await privacy.locator('summary').click();
+  await privacy.locator(':scope > summary').click();
   expect(await privacy.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
   await expect(privacy.getByRole('heading', { name: 'Privacy & Context' })).toBeVisible();
+  await ai.locator(':scope > summary').click();
+  expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
+  expect(await privacy.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+  expect(await general.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+
+  await ai.locator(':scope > summary').focus();
+  await ai.locator(':scope > summary').press('Enter');
+  expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+});
+
+test('AI settings keep model, usage and own-key controls in one focused flow', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openSettings(page);
+  const ai = page.getByTestId('settings-group-ai');
+  await ai.locator(':scope > summary').click();
+
+  await expect(ai.getByRole('heading', { name: 'Model and reasoning' })).toBeVisible();
+  await expect(ai.getByLabel('AI model')).toBeVisible();
+  await expect(ai.getByText('Use your own Gemini key')).toBeVisible();
+  await expect(ai.getByLabel('Your Gemini API key')).toBeVisible();
+  await expect(ai.getByText('Sync AI preferences to my account')).toHaveCount(0);
+  await expect(ai.getByText('Save voice transcripts in chat history')).toHaveCount(0);
+  await page.screenshot({ path: 'qa-evidence/flowmate-settings-ai-clean.png', fullPage: true });
 });
