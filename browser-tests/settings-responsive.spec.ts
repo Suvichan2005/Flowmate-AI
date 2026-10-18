@@ -70,17 +70,23 @@ test('Settings remains within the viewport on mobile', async ({ page }) => {
   expect(await page.locator('body').evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
-test('Settings section shortcuts reach AI, privacy, and data controls', async ({ page }) => {
+test('Settings is organized into native expandable groups instead of jump buttons', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openSettings(page);
 
-  const shortcuts = page.getByRole('navigation', { name: 'Settings sections' });
-  for (const [label, target] of [
-    ['AI & Models', 'ai-model-settings'],
-    ['Privacy & Sync', 'privacy-sync-settings'],
-    ['Data & Backup', 'data-backup-settings'],
-  ]) {
-    await shortcuts.getByRole('button', { name: label, exact: true }).click();
-    await expect(page.locator(`#${target}`)).toBeInViewport();
-  }
+  await expect(page.getByRole('navigation', { name: 'Settings sections' })).toHaveCount(0);
+  const general = page.getByTestId('settings-group-general');
+  const ai = page.getByTestId('settings-group-ai');
+  const privacy = page.getByTestId('settings-group-privacy');
+  const data = page.getByTestId('settings-group-data');
+  await expect(general.locator('summary')).toContainText('General');
+  await expect(ai.locator('summary')).toContainText('AI & Models');
+  await expect(privacy.locator('summary')).toContainText('Privacy & Sync');
+  await expect(data.locator('summary')).toContainText('Data & Backup');
+  expect(await general.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
+  expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+  expect(await privacy.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+  await privacy.locator('summary').click();
+  expect(await privacy.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
+  await expect(privacy.getByRole('heading', { name: 'Privacy & Context' })).toBeVisible();
 });

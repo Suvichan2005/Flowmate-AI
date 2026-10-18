@@ -341,3 +341,69 @@ h1, h2, h3, .font-serif-heading {
 .hamburger-open .hamburger-line:nth-child(3) {
   transform: rotate(-45deg) translate(5px, -5px);
 }
+
+/* Settings uses native disclosure groups so the page reads as a small set of
+   tasks instead of one uninterrupted wall of controls. */
+.settings-group {
+  min-width: 0;
+  overflow: clip;
+  border: 1px solid var(--color-ideapad-border);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--color-ideapad-surface) 72%, transparent);
+}
+
+.settings-group-summary {
+  display: flex;
+  min-height: 4.5rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-group-summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-group-summary:hover {
+  background: color-mix(in srgb, var(--color-ideapad-surface-variant) 48%, transparent);
+}
+
+.settings-group-summary:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline-offset: -3px;
+}
+
+.settings-group[open] > .settings-group-summary {
+  border-bottom: 1px solid var(--color-ideapad-border);
+}
+
+.settings-group-chevron {
+  flex: none;
+  color: var(--color-ideapad-muted);
+  transition: transform 160ms ease;
+}
+
+.settings-group[open] > .settings-group-summary .settings-group-chevron {
+  transform: rotate(180deg);
+}
+
+.settings-group-content {
+  min-width: 0;
+  padding: 1rem;
+}
+
+@media (min-width: 768px) {
+  .settings-group-content {
+    padding: 1.25rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-group-chevron {
+    transition: none;
+  }
+}

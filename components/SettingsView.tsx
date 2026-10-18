@@ -1,9 +1,8 @@
-import WorkspaceStatus from './WorkspaceStatus';
 import AppearanceSettings from './AppearanceSettings';
 import React, { useRef, useState, useEffect } from 'react';
 import { useFocusTrap } from '../utils/accessibility';
 import { useStore } from '../store';
-import { AlertTriangle, Download, Upload, FileText, Trash2, Bot, EyeOff, MapPin, Navigation, RefreshCw, Shield, Activity, Brain, Clock, Plus } from 'lucide-react';
+import { AlertTriangle, Download, Upload, FileText, Trash2, Bot, EyeOff, MapPin, Navigation, RefreshCw, Shield, Activity, Brain, Clock, Plus, ChevronDown } from 'lucide-react';
 import { exportToMarkdown, downloadMarkdown } from '../utils/exportMarkdown';
 import {
   liveContext,
@@ -303,30 +302,22 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
   };
 
   return (
-    <div className="flex-1 w-full min-w-0 overflow-y-auto bg-slate-950 p-6 md:p-8">
-      <header className="mb-8 border-b border-slate-800 pb-6 pl-14">
+    <div className="flex-1 w-full min-w-0 overflow-y-auto bg-slate-950 p-4 sm:p-6 md:p-8">
+      <header className="mb-6 border-b border-slate-800 pb-5">
         <h1 className="text-2xl font-bold text-slate-100">Settings</h1>
         <p className="text-slate-400 text-sm mt-1">
-          Configure your Flowmate preferences and environment.
+          Make Flowmate work the way you do. Changes are saved as you make them.
         </p>
       </header>
 
-      <nav aria-label="Settings sections" className="sticky top-0 z-20 -mx-2 mb-6 flex min-w-0 gap-2 overflow-x-auto border-b border-slate-800 bg-slate-950/95 px-2 py-2 backdrop-blur">
-        {[
-          ['general-settings', 'General'],
-          ['ai-model-settings', 'AI & Models'],
-          ['privacy-sync-settings', 'Privacy & Sync'],
-          ['data-backup-settings', 'Data & Backup'],
-        ].map(([id, label]) => <button key={id} type="button" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-          className="shrink-0 rounded-full border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-emerald-400/60 hover:text-emerald-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">
-          {label}
-        </button>)}
-      </nav>
+      <div data-testid="settings-content" className="w-full max-w-none min-w-0 space-y-4">
 
-      <div data-testid="settings-content" className="w-full min-w-0 space-y-8">
-
-        <div id="general-settings" className="scroll-mt-16 space-y-8">
-        <WorkspaceStatus detailed />
+        <details open data-testid="settings-group-general" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">General</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Appearance and personal profile</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
+          <div id="general-settings" className="settings-group-content space-y-5">
         <AppearanceSettings />
         <section className="rounded-xl border border-slate-800 bg-slate-900 p-5">
           <h2 className="text-lg font-semibold text-slate-100">Your Flowmate profile</h2>
@@ -345,18 +336,18 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           </div>
           {profileMessage && <p role="status" className="mt-2 text-xs text-slate-400">{profileMessage}</p>}
         </section>
-        {import.meta.env.DEV && <details aria-label="Developer and experimental tools" className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-          <summary className="cursor-pointer text-sm font-medium text-slate-200">Developer / Experimental</summary>
-          <div className="mt-3 space-y-3">
-            <p className="text-sm text-slate-400">Development-only prototypes, separate from normal workspace behavior.</p>
-            <button onClick={() => useStore.getState().toggleDeveloperMode()}>Toggle diagnostics</button>
-          </div>
-        </details>}
         </div>
+        </details>
 
         {/* Model & API Key Settings */}
-        <section id="ai-model-settings" className="scroll-mt-16">
-          <h2 className="text-lg font-semibold text-slate-200 mb-4">AI Model & Runtime Access</h2>
+        <details data-testid="settings-group-ai" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">AI & Models</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Choose your model, review included access or add your own key</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
+          <div className="settings-group-content space-y-5">
+        <section id="ai-model-settings">
+          <p className="mb-4 text-sm text-slate-400">Choose a model, check your included access and manage your own Gemini key.</p>
           <AiModelSelector />
           <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm">
             <input
@@ -385,7 +376,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           </label>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
             <div className="pt-4 border-t border-slate-800/80">
-              <div className="flex items-center justify-between mb-2">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                 <label className="block text-sm font-medium text-slate-200">
                   Your Gemini API Key (Optional BYOK)
                 </label>
@@ -397,13 +388,16 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
                   {hasAiApiKey() ? 'Your key active' : hasManagedAiIdentity() ? 'Guest and account access available' : currentUser ? 'Managed access unavailable here' : 'AI provider unavailable here'}
                 </span>
               </div>
-              <div className="flex gap-2">
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
                 <input
                   type="password"
                   value={apiKeyInput}
                   onChange={(e) => setApiKeyInput(e.target.value)}
                   placeholder="Paste your Gemini API key to use BYOK"
-                  className="flex-1 bg-slate-950 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                  aria-label="Your Gemini API key"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-mono text-slate-200 outline-none focus:ring-2 focus:ring-emerald-500/40"
                 />
                 <button
                   onClick={() => {
@@ -411,7 +405,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
                     setKeySavedToast(true);
                     setTimeout(() => setKeySavedToast(false), 3000);
                   }}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors"
+                  className="min-h-10 shrink-0 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
                 >
                   Save Key
                 </button>
@@ -421,7 +415,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
                       setApiKeyInput('');
                       setEphemeralApiKey(null);
                     }}
-                    className="px-3 py-2 bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 border border-slate-700 rounded-lg text-xs font-medium transition-colors"
+                    className="min-h-10 shrink-0 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-rose-900/40 hover:text-rose-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
                   >
                     Clear
                   </button>
@@ -430,22 +424,22 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
               {keySavedToast && (
                 <p className="text-xs text-emerald-400 mt-2 font-medium">✓ Runtime key updated in memory.</p>
               )}
-              <div className="mt-3 p-3 bg-slate-950/60 rounded-lg border border-slate-800/80 text-xs text-slate-400 space-y-1">
-                <p className="font-semibold text-slate-300">Security & Privacy Disclosures:</p>
-                <ul className="list-disc list-inside space-y-0.5 text-slate-400">
-                  <li>Your key is held <strong>in memory for this browser session only</strong>.</li>
-                  <li>It is <strong>never</strong> written to disk, localStorage, or git.</li>
-                  <li>It is sent directly from your browser only to Google's official Gemini endpoint.</li>
-                  <li>Guests receive 10 successful managed AI chat turns. A verified account receives 50 lifetime turns; after either allowance, add your own key here to continue. BYOK keys remain browser-session-only.</li>
-                </ul>
-              </div>
+              <p className="mt-2 text-xs leading-5 text-slate-400">Your key stays in this browser session and is sent directly to Google. Flowmate does not persist it. Included access and daily briefing usage are shown above.</p>
             </div>
           </div>
         </section>
 
         <ManagedAiAdminPanel />
+          </div>
+        </details>
 
         {/* Feature Toggles */}
+        <details data-testid="settings-group-preferences" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Preferences</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Productivity, assistant style and time settings</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
+          <div className="settings-group-content space-y-5">
         <section>
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Features</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
@@ -541,8 +535,16 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
             </div>
           </div>
         </section>
+          </div>
+        </details>
 
         {/* Privacy & Context (P1-03) */}
+        <details data-testid="settings-group-privacy" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Privacy & Sync</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Personal context, connected services and workspace sync consent</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
+          <div className="settings-group-content space-y-5">
         <section id="privacy-settings-section">
           <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
             <Shield size={18} className="text-indigo-400" /> Privacy & Context
@@ -988,9 +990,17 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
             )}
           </div>
         </section>
+          </div>
+        </details>
 
         {/* Data Management */}
-        <section id="data-backup-settings" className="scroll-mt-16">
+        <details data-testid="settings-group-data" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Data & Backup</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Export, restore or reset this workspace</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
+          <div className="settings-group-content">
+        <section id="data-backup-settings">
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Data Management</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
             <p className="text-sm text-slate-400 mb-4">
@@ -1040,10 +1050,15 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
             </div>
           </div>
         </section>
+          </div>
+        </details>
 
         {/* Debug Tools */}
-        <details className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-          <summary className="cursor-pointer text-sm font-medium text-slate-300">Advanced troubleshooting</summary>
+        <details data-testid="settings-group-advanced" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Advanced</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Troubleshooting and maintenance tools</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
           <section className="mt-4">
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Debug Tools</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
@@ -1052,6 +1067,10 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
             </p>
 
             <div className="space-y-3">
+              {import.meta.env.DEV && <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                <p className="mb-2 text-xs text-slate-400">Development-only prototypes, separate from normal workspace behavior.</p>
+                <button type="button" onClick={() => useStore.getState().toggleDeveloperMode()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Toggle diagnostics</button>
+              </div>}
               <button
                 onClick={async () => {
                   const accessToken = localStorage.getItem('flowmate_google_calendar_token');
