@@ -308,14 +308,14 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           <h1 className="text-2xl font-bold text-ideapad-text">Settings</h1>
           <p className="mt-1 text-sm text-ideapad-muted">Make Flowmate work the way you do.</p>
         </div>
-        <span className="pb-0.5 text-xs text-ideapad-muted">Most preferences save automatically</span>
+        <span className="pb-0.5 text-xs text-ideapad-muted">Changes save automatically</span>
       </header>
 
       <div data-testid="settings-content" className="w-full max-w-none min-w-0 space-y-3">
 
-        <details open name="flowmate-settings-sections" data-testid="settings-group-general" className="settings-group">
+        <details name="flowmate-settings-sections" data-testid="settings-group-general" className="settings-group">
           <summary className="settings-group-summary">
-            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">General</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Appearance and personal profile</span></span>
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">General</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Appearance, profile and everyday preferences</span></span>
             <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
           </summary>
           <div id="general-settings" className="settings-group-content space-y-5">
@@ -337,13 +337,77 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           </div>
           {profileMessage && <p role="status" className="mt-2 text-xs text-slate-400">{profileMessage}</p>}
         </section>
+
+        <section>
+          <h2 className="text-lg font-semibold text-slate-200 mb-4">Features</h2>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+            <p className="text-sm text-slate-400 mb-2">
+              Enable or disable features to customize your experience.
+            </p>
+
+
+            <div className="flex items-center justify-between py-2 border-b border-slate-800">
+              <div>
+                <label className="block text-sm font-medium text-slate-200">🧠 Productivity Score Method</label>
+                <p className="text-xs text-slate-500">
+                  {settings.productivity_calc_method === 'AWAKE_TIME'
+                    ? 'Relative to Awake Time (24h - Sleep)'
+                    : 'Relative to Logged Time'}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  const method = settings.productivity_calc_method === 'AWAKE_TIME' ? 'LOGGED_TIME' : 'AWAKE_TIME';
+                  handleChange('productivity_calc_method', method);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${settings.productivity_calc_method === 'AWAKE_TIME' ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300'}`}
+              >
+                {settings.productivity_calc_method === 'AWAKE_TIME' ? 'Awake Time' : 'Logged Time'}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <label className="block text-sm font-medium text-slate-200">👥 People Tracking</label>
+                <p className="text-xs text-slate-500">Track relationships, promises, and contacts</p>
+              </div>
+              <button
+                onClick={() => {
+                  const current = settings.feature_toggles || DEFAULT_FEATURE_TOGGLES;
+                  handleChange('feature_toggles', { ...current, people_tracking: !current.people_tracking });
+                }}
+                className={`w-12 h-6 rounded-full transition-colors relative ${(settings.feature_toggles?.people_tracking ?? true) ? 'bg-indigo-600' : 'bg-slate-700'}`}
+              >
+                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${(settings.feature_toggles?.people_tracking ?? true) ? 'translate-x-6' : ''}`} />
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Environment */}
+        <section>
+          <h2 className="text-lg font-semibold text-slate-200 mb-4">Environment</h2>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-2">Timezone</label>
+              <input
+                type="text"
+                value={settings.timezone}
+                onChange={(e) => handleChange('timezone', e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
+              />
+            </div>
+
+          </div>
+        </section>
+
         </div>
         </details>
 
         {/* Model & API Key Settings */}
-        <details name="flowmate-settings-sections" data-testid="settings-group-ai" className="settings-group">
+        <details open name="flowmate-settings-sections" data-testid="settings-group-ai" className="settings-group">
           <summary className="settings-group-summary">
-            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">AI & Models</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Choose your model, review included access or add your own key</span></span>
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">AI & Models</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Model, usage, assistant style and your own key</span></span>
             <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
           </summary>
           <div className="settings-group-content space-y-5">
@@ -408,63 +472,6 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           </div>
         </section>
 
-        <ManagedAiAdminPanel />
-          </div>
-        </details>
-
-        {/* Feature Toggles */}
-        <details name="flowmate-settings-sections" data-testid="settings-group-preferences" className="settings-group">
-          <summary className="settings-group-summary">
-            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Preferences</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Productivity, assistant style and time settings</span></span>
-            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
-          </summary>
-          <div className="settings-group-content space-y-5">
-        <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-4">Features</h2>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-            <p className="text-sm text-slate-400 mb-2">
-              Enable or disable features to customize your experience.
-            </p>
-
-
-            <div className="flex items-center justify-between py-2 border-b border-slate-800">
-              <div>
-                <label className="block text-sm font-medium text-slate-200">🧠 Productivity Score Method</label>
-                <p className="text-xs text-slate-500">
-                  {settings.productivity_calc_method === 'AWAKE_TIME'
-                    ? 'Relative to Awake Time (24h - Sleep)'
-                    : 'Relative to Logged Time'}
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  const method = settings.productivity_calc_method === 'AWAKE_TIME' ? 'LOGGED_TIME' : 'AWAKE_TIME';
-                  handleChange('productivity_calc_method', method);
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${settings.productivity_calc_method === 'AWAKE_TIME' ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300'}`}
-              >
-                {settings.productivity_calc_method === 'AWAKE_TIME' ? 'Awake Time' : 'Logged Time'}
-              </button>
-            </div>
-
-            <div className="flex items-center justify-between py-2">
-              <div>
-                <label className="block text-sm font-medium text-slate-200">👥 People Tracking</label>
-                <p className="text-xs text-slate-500">Track relationships, promises, and contacts</p>
-              </div>
-              <button
-                onClick={() => {
-                  const current = settings.feature_toggles || DEFAULT_FEATURE_TOGGLES;
-                  handleChange('feature_toggles', { ...current, people_tracking: !current.people_tracking });
-                }}
-                className={`w-12 h-6 rounded-full transition-colors relative ${(settings.feature_toggles?.people_tracking ?? true) ? 'bg-indigo-600' : 'bg-slate-700'}`}
-              >
-                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${(settings.feature_toggles?.people_tracking ?? true) ? 'translate-x-6' : ''}`} />
-              </button>
-            </div>
-          </div>
-        </section>
-
         {/* AI Persona Settings */}
         <section>
           <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
@@ -486,34 +493,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           </div>
         </section>
 
-        {/* Environment */}
-        <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-4">Environment</h2>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Timezone</label>
-              <input
-                type="text"
-                value={settings.timezone}
-                onChange={(e) => handleChange('timezone', e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
-              />
-            </div>
-
-            <div className="flex items-center justify-between pt-2">
-              <div>
-                <label className="block text-sm font-medium text-slate-200">Debug Mode</label>
-                <p className="text-xs text-slate-500">Show raw orchestrator outputs in console.</p>
-              </div>
-              <button
-                onClick={() => handleChange('debug_mode', !settings.debug_mode)}
-                className={`w-12 h-6 rounded-full transition-colors relative ${settings.debug_mode ? 'bg-indigo-600' : 'bg-slate-700'}`}
-              >
-                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${settings.debug_mode ? 'translate-x-6' : ''}`} />
-              </button>
-            </div>
-          </div>
-        </section>
+        <ManagedAiAdminPanel />
           </div>
         </details>
 
@@ -1051,6 +1031,23 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
             <p className="text-sm text-slate-400">
               Advanced tools for troubleshooting and maintenance.
             </p>
+
+            <div className="flex items-center justify-between rounded-lg border border-ideapad-border bg-ideapad-base p-4">
+              <div>
+                <label className="block text-sm font-medium text-ideapad-text">Debug Mode</label>
+                <p className="text-xs text-ideapad-muted">Show raw orchestrator outputs in the browser console.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={settings.debug_mode}
+                aria-label="Debug Mode"
+                onClick={() => handleChange('debug_mode', !settings.debug_mode)}
+                className={`w-12 h-6 rounded-full transition-colors relative ${settings.debug_mode ? 'bg-ideapad-mint' : 'bg-slate-700'}`}
+              >
+                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${settings.debug_mode ? 'translate-x-6' : ''}`} />
+              </button>
+            </div>
 
             <div className="space-y-3">
               {import.meta.env.DEV && <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">

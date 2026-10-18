@@ -145,7 +145,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
     useEffect(() => {
         if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
-            textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 150) + 'px';
+            textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 180) + 'px';
         }
     }, [input]);
 
@@ -210,7 +210,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                 </div>
             )}
 
-            <div className="min-w-0 rounded-[1.35rem] border border-ideapad-border bg-ideapad-surface shadow-sm transition-[border-color,box-shadow] focus-within:border-ideapad-mint/60 focus-within:ring-2 focus-within:ring-ideapad-mint/10" data-testid="chat-composer">
+            <div className="min-w-0 rounded-[1.5rem] border border-ideapad-border bg-ideapad-surface shadow-sm transition-[border-color,box-shadow] focus-within:border-ideapad-mint/60 focus-within:ring-2 focus-within:ring-ideapad-mint/10" data-testid="chat-composer">
                 <textarea
                     aria-label="Message Flowmate"
                     ref={textareaRef}
@@ -219,7 +219,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                     onKeyDown={handleKeyDown}
                     placeholder={isListening ? 'Listening…' : placeholder}
                     rows={1}
-                    className={`block w-full min-w-0 resize-none bg-transparent px-4 pt-2 pb-0 text-ideapad-text outline-none placeholder:text-ideapad-muted ${isMobile ? 'text-base' : 'text-sm'} max-h-[160px] min-h-[40px] leading-6`}
+                    className={`block w-full min-w-0 resize-none bg-transparent px-3 pt-3 pb-1 text-ideapad-text outline-none placeholder:text-ideapad-muted sm:px-4 ${isMobile ? 'text-base' : 'text-sm'} max-h-[180px] min-h-[48px] leading-6`}
                     style={{ lineHeight: '1.5' }}
                 />
 
@@ -232,7 +232,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                     id="chat-file-input"
                 />
                 <div data-testid="chat-composer-actions" className="flex min-w-0 items-center justify-between gap-2 px-2 pb-2">
-                    <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file" title="Attach file" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-ideapad-muted transition-colors hover:bg-ideapad-surface-variant hover:text-ideapad-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint">
+                    <button type="button" onClick={() => fileInputRef.current?.click()} aria-label="Attach file" title="Attach file" className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-ideapad-muted transition-colors hover:bg-ideapad-surface-variant hover:text-ideapad-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint">
                         <Paperclip size={19} />
                     </button>
 
@@ -243,7 +243,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                             type="button"
                             onClick={onLiveVoice}
                             disabled={!canUseLiveVoice}
-                            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${canUseLiveVoice ? 'text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-mint focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint' : 'cursor-not-allowed text-ideapad-muted/50'}`}
+                            className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${canUseLiveVoice ? 'text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-mint focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint' : 'cursor-not-allowed text-ideapad-muted/50'}`}
                             title={canUseLiveVoice ? 'Start Gemini Live voice' : 'Gemini Live is unavailable for this session'}
                             aria-label={canUseLiveVoice ? 'Start Gemini Live voice' : 'Gemini Live voice unavailable'}
                         ><Mic size={19} /></button>}
@@ -253,7 +253,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                             onClick={toggleListening}
                             aria-label={isListening ? 'Stop voice input' : 'Voice input'}
                             title={isListening ? 'Stop listening' : 'Voice input'}
-                            className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint ${isListening ? 'bg-rose-500/15 text-rose-300' : 'text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text'}`}
+                            className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint ${isListening ? 'bg-rose-500/15 text-rose-300' : 'text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text'}`}
                         >{isListening ? <MicOff size={19} /> : <Mic size={19} />}</button>}
 
                         {(loading || isStreaming) && !hasContent && onStop ? <button type="button" onClick={onStop} aria-label="Stop generating" title="Stop generating" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 transition-colors hover:bg-rose-500/20"><Square size={16} className="fill-current" /></button> : <button
@@ -261,7 +261,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                             disabled={!hasContent}
                             title={(loading || isStreaming) ? 'Queue message' : 'Send message'}
                             aria-label={(loading || isStreaming) ? 'Queue message' : 'Send message'}
-                            className={`relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-[background-color,color,transform] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ideapad-mint active:scale-95 ${hasContent ? 'bg-ideapad-mint text-ideapad-base hover:brightness-110' : 'cursor-not-allowed bg-ideapad-surface-variant text-ideapad-muted/60'}`}
+                            className={`relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-[background-color,color,transform] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ideapad-mint active:scale-95 ${hasContent ? 'bg-ideapad-mint text-ideapad-base hover:brightness-110' : 'cursor-not-allowed bg-ideapad-surface-variant text-ideapad-muted/60'}`}
                         >
                             {(loading || isStreaming) && !hasContent ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                             {queueCount > 0 && <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-bold text-slate-950">{queueCount}</span>}

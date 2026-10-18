@@ -10,6 +10,7 @@ test('desktop composer stays centered at a readable width', async ({ page }) => 
   expect(bounds).not.toBeNull();
   expect(bounds!.width).toBeLessThanOrEqual(860);
   expect(bounds!.x).toBeGreaterThan(224);
+  await expect(page.getByTestId('ai-model-selector-trigger').getByText('Unavailable', { exact: true })).toBeVisible();
 });
 
 test('mobile composer keeps model, voice, attachment and send actions readable around a multiline draft', async ({ page }) => {
@@ -36,6 +37,7 @@ test('mobile composer keeps model, voice, attachment and send actions readable a
   await draft.type('Second line');
   await expect(draft).toHaveValue('First line\nSecond line');
   await expect(send).toBeEnabled();
+  expect(await draft.evaluate(element => getComputedStyle(element).outlineStyle)).toBe('none');
   await page.screenshot({ path: 'qa-evidence/flowmate-composer-mobile.png', fullPage: true });
 
   const bounds = await composer.boundingBox();

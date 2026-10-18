@@ -282,6 +282,13 @@ h1, h2, h3, .font-serif-heading {
   outline-offset: 2px;
 }
 
+/* The composer owns its focus treatment as a single rounded surface. The
+   global keyboard outline should not draw a second rectangular frame around
+   only the textarea. */
+[data-testid="chat-composer"] textarea:focus-visible {
+  outline: none;
+}
+
 /* Prevent text selection during resize */
 .no-select {
   -webkit-user-select: none;

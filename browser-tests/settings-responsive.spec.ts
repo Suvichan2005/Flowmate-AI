@@ -83,8 +83,9 @@ test('Settings is organized into native expandable groups instead of jump button
   await expect(ai.locator(':scope > summary')).toContainText('AI & Models');
   await expect(privacy.locator(':scope > summary')).toContainText('Privacy & Sync');
   await expect(data.locator(':scope > summary')).toContainText('Data & Backup');
-  expect(await general.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
-  expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+  await expect(page.getByTestId('settings-group-preferences')).toHaveCount(0);
+  expect(await general.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+  expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
   expect(await privacy.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
   await privacy.locator(':scope > summary').click();
   expect(await privacy.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
@@ -92,18 +93,31 @@ test('Settings is organized into native expandable groups instead of jump button
   await ai.locator(':scope > summary').click();
   expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
   expect(await privacy.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+  await expect(ai.getByRole('heading', { name: 'AI Persona' })).toBeVisible();
+
+  await general.locator(':scope > summary').click();
+  expect(await general.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
+  await expect(general.getByRole('heading', { name: 'Your Flowmate profile' })).toBeVisible();
+  await expect(general.getByRole('heading', { name: 'Environment' })).toBeVisible();
+  await expect(general.getByRole('switch', { name: 'Debug Mode' })).toHaveCount(0);
+  expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+
+  await general.locator(':scope > summary').focus();
+  await general.locator(':scope > summary').press('Enter');
   expect(await general.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
 
-  await ai.locator(':scope > summary').focus();
-  await ai.locator(':scope > summary').press('Enter');
-  expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
+  const advanced = page.getByTestId('settings-group-advanced');
+  await advanced.locator(':scope > summary').click();
+  await expect(advanced.getByRole('switch', { name: 'Debug Mode' })).toBeVisible();
 });
 
 test('AI settings keep model, usage and own-key controls in one focused flow', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openSettings(page);
   const ai = page.getByTestId('settings-group-ai');
-  await ai.locator(':scope > summary').click();
+  if (!(await ai.evaluate(element => (element as HTMLDetailsElement).open))) {
+    await ai.locator(':scope > summary').click();
+  }
 
   await expect(ai.getByRole('heading', { name: 'Model and reasoning' })).toBeVisible();
   await expect(ai.getByLabel('AI model')).toBeVisible();
@@ -112,4 +126,24 @@ test('AI settings keep model, usage and own-key controls in one focused flow', a
   await expect(ai.getByText('Sync AI preferences to my account')).toHaveCount(0);
   await expect(ai.getByText('Save voice transcripts in chat history')).toHaveCount(0);
   await page.screenshot({ path: 'qa-evidence/flowmate-settings-ai-clean.png', fullPage: true });
+});
+
+test('narrow composer keeps model, voice, attachment and send actions inside one surface', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 800 });
+  await page.goto('/#chat');
+
+  const composer = page.getByTestId('chat-composer');
+  await expect(composer).toBeVisible();
+  const actions = composer.getByTestId('chat-composer-actions');
+  const model = composer.getByTestId('ai-model-selector-trigger');
+  const bounds = await actions.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(320);
+  await expect(model).toBeVisible();
+  await expect(model.getByText('Unavailable', { exact: true })).toBeHidden();
+  await expect(composer.getByRole('button', { name: 'Attach file' })).toBeVisible();
+  await expect(composer.getByRole('button', { name: /voice unavailable/i })).toBeVisible();
+  await expect(composer.getByRole('button', { name: 'Send message' })).toBeVisible();
+  expect(await page.locator('body').evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(320);
 });
