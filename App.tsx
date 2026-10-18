@@ -1797,8 +1797,8 @@ const App: React.FC = () => {
               <div className="-mx-6 -mt-5 mb-5 flex h-14 items-center justify-center border-b border-slate-800 bg-slate-900 font-semibold text-slate-100">Chat</div>
               <div className="flex h-[70%] flex-col items-center justify-center text-center">
                 <MessageSquare size={28} className="mb-3 text-emerald-300" />
-                <p className="font-medium text-slate-100">Your conversation</p>
-                <p className="mt-1 text-xs text-slate-400">Release to open Chat</p>
+                <p className="font-medium text-slate-100">Go to Chat</p>
+                <p className="mt-1 text-xs text-slate-400">Release to open</p>
               </div>
               <div className="rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm text-slate-500">Message…</div>
             </div>

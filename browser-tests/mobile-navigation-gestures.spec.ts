@@ -18,7 +18,7 @@ async function blockExternalRequests(context: BrowserContext) {
   });
 }
 
-async function dragTouch(context: BrowserContext, page: Page, points: Array<{ x: number; y: number }>, movingSelector: string) {
+async function dragTouch(context: BrowserContext, page: Page, points: Array<{ x: number; y: number }>, movingSelector: string, onMove?: () => Promise<void>) {
   const cdp = await context.newCDPSession(page);
   const [start, ...rest] = points;
   await cdp.send('Input.dispatchTouchEvent', {
@@ -32,6 +32,7 @@ async function dragTouch(context: BrowserContext, page: Page, points: Array<{ x:
       touchPoints: [{ id: 1, x: point.x, y: point.y, radiusX: 1, radiusY: 1, force: 1 }],
     });
     offsets.push(await page.locator(movingSelector).evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41));
+    await onMove?.();
   }
   await cdp.send('Input.dispatchTouchEvent', {
     type: 'touchEnd',
@@ -51,9 +52,17 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
   const nav = page.getByRole('navigation', { name: 'Mobile Navigation' });
   const openChatOffsets = await dragTouch(context, page, [
     { x: 250, y: 430 }, { x: 210, y: 430 }, { x: 170, y: 430 }, { x: 130, y: 430 },
-  ], '[data-testid="mobile-gesture-surface"]');
+  ], '[data-testid="mobile-gesture-surface"]', async () => {
+    await expect(page.getByText('Go to Chat', { exact: true })).toBeVisible();
+  });
   expect(openChatOffsets.some(offset => offset < 0)).toBe(true);
   await expect(nav.getByRole('button', { name: 'Open Chat', exact: true })).toHaveAttribute('aria-current', 'page');
+  const send = page.getByRole('button', { name: 'Send message', exact: true });
+  await expect(send).toBeVisible();
+  await expect(send).toBeDisabled();
+  await page.getByRole('textbox', { name: 'Message Flowmate' }).fill('A short mobile draft');
+  await expect(send).toBeEnabled();
+  await page.getByRole('textbox', { name: 'Message Flowmate' }).fill('');
   await page.screenshot({ path: 'qa-evidence/mobile-chat-composer-design-review.png' });
 
   const surface = page.getByTestId('mobile-gesture-surface');

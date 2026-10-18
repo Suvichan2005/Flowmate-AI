@@ -311,8 +311,21 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </p>
       </header>
 
+      <nav aria-label="Settings sections" className="sticky top-0 z-20 -mx-2 mb-6 flex min-w-0 gap-2 overflow-x-auto border-b border-slate-800 bg-slate-950/95 px-2 py-2 backdrop-blur">
+        {[
+          ['general-settings', 'General'],
+          ['ai-model-settings', 'AI & Models'],
+          ['privacy-sync-settings', 'Privacy & Sync'],
+          ['data-backup-settings', 'Data & Backup'],
+        ].map(([id, label]) => <button key={id} type="button" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          className="shrink-0 rounded-full border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-emerald-400/60 hover:text-emerald-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">
+          {label}
+        </button>)}
+      </nav>
+
       <div data-testid="settings-content" className="w-full min-w-0 space-y-8">
 
+        <div id="general-settings" className="scroll-mt-16 space-y-8">
         <WorkspaceStatus detailed />
         <AppearanceSettings />
         <section className="rounded-xl border border-slate-800 bg-slate-900 p-5">
@@ -332,14 +345,17 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           </div>
           {profileMessage && <p role="status" className="mt-2 text-xs text-slate-400">{profileMessage}</p>}
         </section>
-        {import.meta.env.DEV && <section aria-label="Developer and experimental tools" className="p-4 border border-slate-700 rounded-lg space-y-3">
-          <h2 className="text-lg text-slate-100">Developer / Experimental</h2>
-          <p className="text-sm text-slate-400">Development-only prototypes, separate from normal workspace behavior.</p>
-          <button onClick={() => useStore.getState().toggleDeveloperMode()}>Toggle diagnostics</button>
-        </section>}
+        {import.meta.env.DEV && <details aria-label="Developer and experimental tools" className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+          <summary className="cursor-pointer text-sm font-medium text-slate-200">Developer / Experimental</summary>
+          <div className="mt-3 space-y-3">
+            <p className="text-sm text-slate-400">Development-only prototypes, separate from normal workspace behavior.</p>
+            <button onClick={() => useStore.getState().toggleDeveloperMode()}>Toggle diagnostics</button>
+          </div>
+        </details>}
+        </div>
 
         {/* Model & API Key Settings */}
-        <section>
+        <section id="ai-model-settings" className="scroll-mt-16">
           <h2 className="text-lg font-semibold text-slate-200 mb-4">AI Model & Runtime Access</h2>
           <AiModelSelector />
           <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm">
@@ -913,7 +929,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </section>
 
         {/* Sync Settings */}
-        <section>
+        <section id="privacy-sync-settings" className="scroll-mt-16">
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Privacy, Sync & Backup</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
             <div className="rounded-lg border border-slate-700 bg-slate-950/50 p-4 space-y-3">
@@ -974,7 +990,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </section>
 
         {/* Data Management */}
-        <section>
+        <section id="data-backup-settings" className="scroll-mt-16">
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Data Management</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
             <p className="text-sm text-slate-400 mb-4">
@@ -1026,7 +1042,9 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         </section>
 
         {/* Debug Tools */}
-        <section>
+        <details className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+          <summary className="cursor-pointer text-sm font-medium text-slate-300">Advanced troubleshooting</summary>
+          <section className="mt-4">
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Debug Tools</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
             <p className="text-sm text-slate-400">
@@ -1211,7 +1229,8 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
               Use these if sync created duplicate events. Always backup first!
             </p>
           </div>
-        </section>
+          </section>
+        </details>
 
       </div>
       {showWorkspaceSyncConsent && currentUser && (

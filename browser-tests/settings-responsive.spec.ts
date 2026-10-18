@@ -69,3 +69,18 @@ test('Settings remains within the viewport on mobile', async ({ page }) => {
   expect(contentBox!.x + contentBox!.width).toBeLessThanOrEqual(390);
   expect(await page.locator('body').evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(390);
 });
+
+test('Settings section shortcuts reach AI, privacy, and data controls', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openSettings(page);
+
+  const shortcuts = page.getByRole('navigation', { name: 'Settings sections' });
+  for (const [label, target] of [
+    ['AI & Models', 'ai-model-settings'],
+    ['Privacy & Sync', 'privacy-sync-settings'],
+    ['Data & Backup', 'data-backup-settings'],
+  ]) {
+    await shortcuts.getByRole('button', { name: label, exact: true }).click();
+    await expect(page.locator(`#${target}`)).toBeInViewport();
+  }
+});

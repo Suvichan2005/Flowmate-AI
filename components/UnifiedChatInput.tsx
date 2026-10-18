@@ -256,7 +256,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                             className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-ideapad-mint ${isListening ? 'bg-rose-500/15 text-rose-300' : 'text-ideapad-muted hover:bg-ideapad-surface-variant hover:text-ideapad-text'}`}
                         >{isListening ? <MicOff size={19} /> : <Mic size={19} />}</button>}
 
-                        {(loading || isStreaming) && !hasContent && onStop ? <button type="button" onClick={onStop} aria-label="Stop generating" title="Stop generating" className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-rose-500/30 bg-rose-500/10 text-rose-300 transition-colors hover:bg-rose-500/20"><Square size={16} className="fill-current" /></button> : ((!isMobile || hasContent) && <button
+                        {(loading || isStreaming) && !hasContent && onStop ? <button type="button" onClick={onStop} aria-label="Stop generating" title="Stop generating" className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-rose-500/30 bg-rose-500/10 text-rose-300 transition-colors hover:bg-rose-500/20"><Square size={16} className="fill-current" /></button> : <button
                             type="submit"
                             disabled={!hasContent}
                             title={(loading || isStreaming) ? 'Queue message' : 'Send message'}
@@ -265,7 +265,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                         >
                             {(loading || isStreaming) && !hasContent ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
                             {queueCount > 0 && <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[10px] font-bold text-slate-950">{queueCount}</span>}
-                        </button>)}
+                        </button>}
                     </div>
                 </div>
             </div>
