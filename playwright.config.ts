@@ -13,5 +13,21 @@ export default defineConfig({
   } : {
     command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4195 --strictPort',
     url: baseURL, reuseExistingServer: true, timeout: 30000,
+    // Local browser tests must fail closed to the demo emulators. A missing
+    // flag must never send Auth or Firestore requests to a real Firebase project.
+    env: {
+      ...process.env,
+      VITE_FIREBASE_API_KEY: 'demo-api-key',
+      VITE_FIREBASE_AUTH_DOMAIN: 'demo-flowmate-next.firebaseapp.com',
+      VITE_FIREBASE_PROJECT_ID: 'demo-flowmate-next',
+      VITE_FIREBASE_STORAGE_BUCKET: 'demo-flowmate-next.appspot.com',
+      VITE_FIREBASE_MESSAGING_SENDER_ID: '000000000000',
+      VITE_FIREBASE_APP_ID: '1:000000000000:web:demo',
+      VITE_FIREBASE_EMULATORS: 'true',
+      VITE_FIREBASE_APPCHECK_SITE_KEY: '',
+      VITE_FIREBASE_MEASUREMENT_ID: '',
+      VITE_MANAGED_AI_ENDPOINT: '',
+      VITE_GEMINI_API_KEY: '',
+    },
   },
 });
