@@ -39,6 +39,9 @@ test('provider-reported output, including thinking tokens, is costed and missing
   assert.equal(actualTextGenerationCost('gemini-3.8-flash', {
     promptTokenCount: 10_000, candidatesTokenCount: 2_000, thoughtsTokenCount: 500, totalTokenCount: 12_001,
   }, new Date('2026-10-20T12:00:00Z')), null, 'inconsistent provider totals cannot settle the reservation');
+  assert.equal(actualTextGenerationCost('gemini-3.8-flash', {
+    promptTokenCount: null, candidatesTokenCount: 2_000, toolUsePromptTokenCount: 1, totalTokenCount: 2_001,
+  }, new Date('2026-10-20T12:00:00Z')), null, 'null counters cannot be coerced into authoritative zeroes');
   assert.equal(actualTextGenerationCost('gemini-3.8-flash', { promptTokenCount: 10_000 }, new Date('2026-10-20T12:00:00Z')), null);
 });
 

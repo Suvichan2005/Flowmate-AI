@@ -327,9 +327,11 @@ export async function reserveGenerationCall(db: Firestore, refs: TurnLedgerRefs)
 }
 
 function trustedCounter(value: unknown): number {
-  const number = value === undefined ? 0 : Number(value);
-  if (!Number.isSafeInteger(number) || number < 0) throw new RequestFailure('MANAGED_AI_BUDGET_UNAVAILABLE', 503);
-  return number;
+  if (value === undefined) return 0;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new RequestFailure('MANAGED_AI_BUDGET_UNAVAILABLE', 503);
+  }
+  return value;
 }
 
 /** Reserve estimated provider exposure before sending the generation request. */
@@ -538,8 +540,8 @@ export async function failTurn(db: Firestore, refs: TurnLedgerRefs, callReserved
 export function sanitizeUsageMetadata(usageMetadata: Record<string, unknown> | null | undefined): Record<string, number> {
   const numericFields = ['promptTokenCount', 'candidatesTokenCount', 'totalTokenCount', 'cachedContentTokenCount', 'thoughtsTokenCount', 'toolUsePromptTokenCount'];
   return Object.fromEntries(numericFields.flatMap(field => {
-    const value = Number(usageMetadata?.[field]);
-    return Number.isSafeInteger(value) && value >= 0 ? [[field, value]] : [];
+    const value = usageMetadata?.[field];
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? [[field, value]] : [];
   }));
 }
 

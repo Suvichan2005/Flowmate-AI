@@ -137,6 +137,8 @@ export const managedGemini = onRequest({
           reservedMicroUsd: Number(personalCostUsage.get('reservedMicroUsd') || 0),
           monthlyLimitMicroUsd: costPolicy.get('enabled') === true && Number.isSafeInteger(costPolicy.get('userMonthlyLimitMicroUsd'))
             ? Number(costPolicy.get('userMonthlyLimitMicroUsd')) : null,
+          maxTurnExposureMicroUsd: costPolicy.get('enabled') === true && Number.isSafeInteger(costPolicy.get('maxTurnExposureMicroUsd'))
+            ? Number(costPolicy.get('maxTurnExposureMicroUsd')) : null,
         },
         tokens: {
           inputThisMonth: Number(monthlyUsage.get('inputTokens') || 0),

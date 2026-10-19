@@ -103,11 +103,20 @@ export function actualTextGenerationCost(
   usage: Record<string, unknown> | null | undefined,
   at = new Date(),
 ): { actualMicroUsd: number; pricingVersion: string } | null {
-  const input = Number(usage?.promptTokenCount);
-  const candidateOutput = Number(usage?.candidatesTokenCount);
-  const thoughts = usage?.thoughtsTokenCount === undefined ? null : Number(usage.thoughtsTokenCount);
-  const total = usage?.totalTokenCount === undefined ? null : Number(usage.totalTokenCount);
-  const extraToolInput = Number(usage?.toolUsePromptTokenCount || 0);
+  const rawInput = usage?.promptTokenCount;
+  const rawCandidateOutput = usage?.candidatesTokenCount;
+  const rawThoughts = usage?.thoughtsTokenCount;
+  const rawTotal = usage?.totalTokenCount;
+  const rawExtraToolInput = usage?.toolUsePromptTokenCount;
+  if (typeof rawInput !== 'number' || typeof rawCandidateOutput !== 'number' ||
+      (rawThoughts !== undefined && typeof rawThoughts !== 'number') ||
+      (rawTotal !== undefined && typeof rawTotal !== 'number') ||
+      (rawExtraToolInput !== undefined && typeof rawExtraToolInput !== 'number')) return null;
+  const input = rawInput as number;
+  const candidateOutput = rawCandidateOutput as number;
+  const thoughts = rawThoughts === undefined ? null : rawThoughts as number;
+  const total = rawTotal === undefined ? null : rawTotal as number;
+  const extraToolInput = rawExtraToolInput === undefined ? 0 : rawExtraToolInput as number;
   if (![input, candidateOutput, extraToolInput].every(value => Number.isSafeInteger(value) && value >= 0) || input + extraToolInput <= 0 ||
       (thoughts !== null && (!Number.isSafeInteger(thoughts) || thoughts < 0)) ||
       (total !== null && (!Number.isSafeInteger(total) || total < 0))) return null;

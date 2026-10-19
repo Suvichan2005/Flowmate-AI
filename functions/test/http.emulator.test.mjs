@@ -61,7 +61,7 @@ test('usage response contains only the caller personal allowances and token tota
   const uidHash = createHash('sha256').update(guestUid).digest('hex');
   const personalCostRef = db.doc(`managedAiCostUserMonthly/${month}_${uidHash}`);
   await personalCostRef.set({ settledMicroUsd: 25000, reservedMicroUsd: 5000 });
-  await db.doc('system/managedAiBudgetPolicy').set({ enabled: true, userMonthlyLimitMicroUsd: 5000000 });
+  await db.doc('system/managedAiBudgetPolicy').set({ enabled: true, userMonthlyLimitMicroUsd: 5000000, maxTurnExposureMicroUsd: 500000 });
   const response = await fetch(`${endpoint}/usage`, {
     headers: { Origin: 'https://flowmate-ai.web.app', Authorization: `Bearer ${anonymousIdToken}` },
   });
@@ -73,7 +73,7 @@ test('usage response contains only the caller personal allowances and token tota
   assert.equal(usage.briefings.dailyLimit, 3);
   assert.equal(usage.briefings.successfulToday, 0);
   assert.equal(usage.tokens.totalThisMonth, 0);
-  assert.deepEqual(usage.cost, { currency: 'USD', month, estimatedSettledMicroUsd: 25000, reservedMicroUsd: 5000, monthlyLimitMicroUsd: 5000000 });
+  assert.deepEqual(usage.cost, { currency: 'USD', month, estimatedSettledMicroUsd: 25000, reservedMicroUsd: 5000, monthlyLimitMicroUsd: 5000000, maxTurnExposureMicroUsd: 500000 });
   assert.equal('projectMonthlyLimitMicroUsd' in usage.cost, false);
   assert.notEqual(usage.chat.resetAt, usage.briefings.resetAt);
   assert.equal('modelCalls' in usage, false);

@@ -110,6 +110,7 @@ const ManagedAiUsagePanel: React.FC = () => {
           </div>
         </div>
         <p className="mt-2 text-xs leading-5 text-ideapad-muted">A monthly safety limit for managed AI, separate from your Chat and Briefing counts. Estimates include pending or uncertain requests and may differ from Google’s invoice. Your own Gemini key is not included.</p>
+        {usage.cost.maxTurnExposureMicroUsd != null && <p className="mt-1 text-xs leading-5 text-ideapad-muted">One request can use up to {money(usage.cost.maxTurnExposureMicroUsd)} of this allowance. Large contexts cost more; there is no separate token quota.</p>}
       </div>}
     </> : <p role="status" className="text-sm text-amber-300">Usage is temporarily unavailable. Your current workspace is unchanged.</p>}
   </section>;

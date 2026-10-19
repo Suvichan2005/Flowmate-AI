@@ -51,7 +51,7 @@ export interface ManagedAiUsage {
   tier: 'guest' | 'account' | 'privileged';
   chat: { successfulTurns: number; monthlyLimit: number | null; month: string; resetAt: string };
   briefings: { successfulToday: number; dailyLimit: number | null; day: string; resetAt: string };
-  cost: { currency: 'USD'; estimatedSettledMicroUsd: number; reservedMicroUsd: number; monthlyLimitMicroUsd: number | null; month: string };
+  cost: { currency: 'USD'; estimatedSettledMicroUsd: number; reservedMicroUsd: number; monthlyLimitMicroUsd: number | null; maxTurnExposureMicroUsd?: number | null; month: string };
   tokens: { inputThisMonth: number; outputThisMonth: number; thinkingThisMonth: number; totalThisMonth: number; usageCallsThisMonth: number; month: string };
 }
 
@@ -209,7 +209,9 @@ export async function getManagedAiUsage(): Promise<ManagedAiUsage> {
   const costValid = cost?.currency === 'USD' && typeof cost.month === 'string' &&
     Number.isSafeInteger(cost.estimatedSettledMicroUsd) && Number(cost.estimatedSettledMicroUsd) >= 0 &&
     Number.isSafeInteger(cost.reservedMicroUsd) && Number(cost.reservedMicroUsd) >= 0 &&
-    (cost.monthlyLimitMicroUsd === null || (Number.isSafeInteger(cost.monthlyLimitMicroUsd) && Number(cost.monthlyLimitMicroUsd) > 0));
+    (cost.monthlyLimitMicroUsd === null || (Number.isSafeInteger(cost.monthlyLimitMicroUsd) && Number(cost.monthlyLimitMicroUsd) > 0)) &&
+    (cost.maxTurnExposureMicroUsd === undefined || cost.maxTurnExposureMicroUsd === null ||
+      (Number.isSafeInteger(cost.maxTurnExposureMicroUsd) && Number(cost.maxTurnExposureMicroUsd) > 0));
   if (!response.ok || !payload || typeof payload !== 'object' || !('chat' in payload) || !('briefings' in payload) || !('tokens' in payload) || !costValid) {
     const code = (payload as { error?: { code?: unknown } })?.error?.code;
     throw new ManagedAiError(typeof code === 'string' ? code : 'USAGE_READ_UNAVAILABLE', response.status || 503);

@@ -68,8 +68,9 @@ export const SUPPORTED_MANAGED_MODELS: ManagedModelPolicy[] = [
 
 export type ManagedModelId = typeof SUPPORTED_MANAGED_MODELS[number]['id'];
 // Successful chat turns use a monthly allowance; briefings use a daily one.
-// Model context/output limits, provider quotas, per-identity rate limits and
-// single-flight reservations are the guardrails; token totals are informational.
+// Model context/output limits, atomic application-side monetary reservations,
+// per-identity rate limits and single-flight reservations are the guardrails;
+// reported token totals are informational rather than an additional allowance.
 export const GUEST_CHAT_TURN_LIMIT = 30;
 export const ACCOUNT_CHAT_TURN_LIMIT = 150;
 export const GUEST_DAILY_BRIEFING_LIMIT = 3;

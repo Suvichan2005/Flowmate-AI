@@ -294,3 +294,22 @@ test('reported provider cost above its reserve settles exact metadata and opens 
   assert.equal(project.get('settledMicroUsd'), 12_500);
   await db.doc('system/managedAiBudgetPolicy').delete();
 });
+
+test('malformed monetary counters fail closed instead of authorizing another provider call', async () => {
+  const budgetDate = new Date('2026-12-16T12:00:00+05:30');
+  const policyRef = db.doc('system/managedAiBudgetPolicy');
+  const projectRef = db.doc(`managedAiCostProjectMonthly/${monthKey(budgetDate)}`);
+  await policyRef.set({
+    enabled: true, currency: 'USD', projectMonthlyLimitMicroUsd: 100_000,
+    userMonthlyLimitMicroUsd: 100_000, maxTurnExposureMicroUsd: 100_000,
+    emergencyStop: false,
+  });
+  await projectRef.set({ reservedMicroUsd: null, settledMicroUsd: 0 });
+  const refs = turnLedgerRefs(db, uid(), 'turn_bad_counter_0001', 'call_bad_counter_00001', budgetDate);
+  await reserveTurn(db, refs);
+  await reserveGenerationCall(db, refs);
+  await assert.rejects(reserveCostExposure(db, refs, {
+    estimatedMicroUsd: 1_000, pricingVersion: 'test-price-v1', inputTokens: 100, maximumOutputTokens: 100,
+  }, budgetDate), error => error.code === 'MANAGED_AI_BUDGET_UNAVAILABLE');
+  await Promise.all([policyRef.delete(), projectRef.delete()]);
+});
