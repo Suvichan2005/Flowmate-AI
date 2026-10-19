@@ -187,6 +187,7 @@ const App: React.FC = () => {
     canNavigateToChat: boolean;
     canReturnToView: boolean;
     canOpenSidebar: boolean;
+    sidebarDragActive: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -290,6 +291,7 @@ const App: React.FC = () => {
       canNavigateToChat: currentView !== 'chat',
       canReturnToView: currentView === 'chat' && lastNonChatViewRef.current !== 'chat',
       canOpenSidebar: currentView !== 'chat',
+      sidebarDragActive: false,
     };
   };
 
@@ -313,7 +315,16 @@ const App: React.FC = () => {
     const isHorizontal = Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
     const isPullingDown = deltaY > 0 && Math.abs(deltaY) > Math.abs(deltaX) * 1.2 && start.startedAtTop;
 
-    if (isHorizontal && ((deltaX < 0 && start.canNavigateToChat) || (deltaX > 0 && (start.canOpenSidebar || start.canReturnToView)))) {
+    if (isHorizontal && deltaX > 0 && start.canOpenSidebar) {
+      // Reveal the real drawer over a stationary page. The page itself only
+      // slides for Chat navigation, which has a separate destination preview.
+      if (deltaX > 8) {
+        start.sidebarDragActive = true;
+        setIsMobileSidebarOpen(true);
+        setMobileSidebarDragX(Math.min(0, -256 + deltaX));
+      }
+      setMobileGestureOffset({ x: 0, y: 0 });
+    } else if (isHorizontal && ((deltaX < 0 && start.canNavigateToChat) || (deltaX > 0 && start.canReturnToView))) {
       const dragLimit = Math.max(150, window.innerWidth * 0.78);
       setMobileGestureOffset({ x: Math.max(-dragLimit, Math.min(dragLimit, deltaX * 0.94)), y: 0 });
     } else if (isPullingDown && !loading && !isStreaming && !isLiveMode) {
@@ -328,6 +339,21 @@ const App: React.FC = () => {
     mobileTouchStartRef.current = null;
     if (!start) {
       setMobileGestureOffset({ x: 0, y: 0 });
+      return;
+    }
+
+    if (start.sidebarDragActive) {
+      const shouldOpen = deltaX >= mobileSidebarOpenThreshold(window.innerWidth) && Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
+      if (shouldOpen) {
+        setIsMobileSidebarOpen(true);
+        setMobileSidebarDragX(0);
+      } else {
+        setMobileSidebarDragX(-256);
+        window.setTimeout(() => {
+          setIsMobileSidebarOpen(false);
+          setMobileSidebarDragX(0);
+        }, 180);
+      }
       return;
     }
 
@@ -397,6 +423,7 @@ const App: React.FC = () => {
       canNavigateToChat: currentView !== 'chat',
       canReturnToView: currentView === 'chat' && lastNonChatViewRef.current !== 'chat',
       canOpenSidebar: currentView !== 'chat',
+      sidebarDragActive: false,
     };
   };
 
@@ -1550,7 +1577,7 @@ const App: React.FC = () => {
       {isMobile && isMobileSidebarOpen && (
         <>
           <div
-            className="fixed inset-0 bg-black/60 z-40 animate-fade-in transition-opacity duration-150"
+            className="fixed inset-0 bg-black/60 z-40 animate-fade-in"
             onClick={() => setIsMobileSidebarOpen(false)}
             style={{ opacity: Math.max(0, 1 - Math.abs(mobileSidebarDragX) / 280) }}
             aria-hidden="true"
@@ -1568,7 +1595,7 @@ const App: React.FC = () => {
             onTouchCancel={handleMobileSidebarTouchCancel}
             style={{
               transform: `translate3d(${mobileSidebarDragX}px, 0, 0)`,
-              transition: mobileSidebarGestureRef.current ? 'none' : 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)',
+              transition: mobileSidebarGestureRef.current || mobileTouchStartRef.current?.sidebarDragActive ? 'none' : 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)',
               touchAction: 'pan-y',
             }}
             data-testid="mobile-sidebar-panel"
@@ -1826,14 +1853,7 @@ const App: React.FC = () => {
       {/* Mobile Layout: Full Content + Persistent Bottom Navigation */}
       {isMobile && (
         <div data-layout="mobile" className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] overflow-hidden relative">
-          {/* Destination peeks stay beneath the moving page so the gesture feels like a screen being pulled. */}
-          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView !== 'chat' && mobileTouchStartRef.current?.canOpenSidebar && (
-            <div aria-hidden="true" className="absolute inset-y-0 left-0 z-0 w-64 overflow-hidden bg-slate-900 px-4 py-5 text-slate-300">
-              <div className="mb-6 flex items-center gap-3 font-semibold text-slate-100"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600/80"><Sparkles size={18} /></span>Flowmate</div>
-              <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Navigation</p>
-              <div className="space-y-2 text-sm">{['Home', 'Chat', 'Graph', 'Calendar', 'Library', 'Analytics', 'Settings'].map((label, index) => <div key={label} className={`rounded-lg px-3 py-2 ${index === 0 ? 'bg-slate-800 text-emerald-200' : ''}`}>{label}</div>)}</div>
-            </div>
-          )}
+          {/* Chat back-navigation reveals the previous page beneath the moving Chat screen. */}
           {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView === 'chat' && mobileTouchStartRef.current?.canReturnToView && (
             <div aria-hidden="true" className="absolute inset-y-0 left-0 z-0 flex w-64 flex-col items-center justify-center bg-ideapad-surface px-6 text-center text-ideapad-muted">
               <LayoutDashboard size={26} className="mb-3 text-ideapad-mint" />
@@ -1842,14 +1862,14 @@ const App: React.FC = () => {
             </div>
           )}
           {mobileGestureOffset.x < -18 && currentView !== 'chat' && (
-            <div aria-hidden="true" className="absolute inset-y-0 left-full z-0 w-full overflow-hidden bg-slate-900 px-6 py-5 text-slate-300">
-              <div className="-mx-6 -mt-5 mb-5 flex h-14 items-center justify-center border-b border-slate-800 bg-slate-900 font-semibold text-slate-100">Chat</div>
-              <div className="flex h-[70%] flex-col items-center justify-center text-center">
-                <MessageSquare size={28} className="mb-3 text-emerald-300" />
+            <div aria-hidden="true" data-testid="chat-navigation-preview" className="absolute inset-y-0 left-full z-0 flex w-full flex-col overflow-hidden border-l border-slate-700/70 bg-slate-900 px-6 py-5 text-slate-300 shadow-2xl">
+              <div className="-mx-6 -mt-5 mb-5 flex h-14 shrink-0 items-center justify-center gap-2 border-b border-slate-800 bg-slate-900 font-semibold text-slate-100"><MessageSquare size={18} className="text-emerald-300" /> Chat</div>
+              <div className="flex flex-1 flex-col items-center justify-center text-center">
+                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-400/20 bg-emerald-400/10 text-emerald-300"><MessageSquare size={24} /></div>
                 <p className="font-medium text-slate-100">Go to Chat</p>
-                <p className="mt-1 text-xs text-slate-400">Release to open</p>
+                <p className="mt-1 text-xs text-slate-400">Release to open your conversation</p>
               </div>
-              <div className="rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm text-slate-500">Message…</div>
+              <div className="shrink-0 rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm text-slate-500">Message…</div>
             </div>
           )}
           {/* Main content or full screen chat */}

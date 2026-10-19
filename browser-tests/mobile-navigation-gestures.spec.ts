@@ -54,6 +54,7 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
     { x: 250, y: 430 }, { x: 210, y: 430 }, { x: 170, y: 430 }, { x: 130, y: 430 },
   ], '[data-testid="mobile-gesture-surface"]', async () => {
     await expect(page.getByText('Go to Chat', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('chat-navigation-preview')).toBeVisible();
   });
   expect(openChatOffsets.some(offset => offset < 0)).toBe(true);
   await expect(nav.getByRole('button', { name: 'Open Chat', exact: true })).toHaveAttribute('aria-current', 'page');
@@ -72,16 +73,20 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
   expect(chatReturnOffsets.some(offset => offset > 0)).toBe(true);
   await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
 
-  // A short deliberate rightward drag from the middle of the page opens the sidebar.
+  // The sidebar itself follows the drag over a stationary Dashboard surface.
   // Let the previous screen's return animation finish before starting a new drag;
   // otherwise the test can begin a second gesture while the surface is still moving.
   await expect.poll(() => page.getByTestId('mobile-gesture-surface').evaluate(
     element => new DOMMatrix(getComputedStyle(element).transform).m41,
   )).toBe(0);
-  const openMenuOffsets = await dragTouch(context, page, [
+  const gestureSurface = page.getByTestId('mobile-gesture-surface');
+  const openingPanelOffsets = await dragTouch(context, page, [
     { x: 150, y: 430 }, { x: 172, y: 430 }, { x: 196, y: 430 }, { x: 222, y: 430 },
-  ], '[data-testid="mobile-gesture-surface"]');
-  expect(openMenuOffsets.some(offset => offset > 0)).toBe(true);
+  ], '[data-testid="mobile-sidebar-panel"]', async () => {
+    await expect(gestureSurface).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
+    await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+  });
+  expect(openingPanelOffsets.some(offset => offset > -256 && offset < 0)).toBe(true);
   const sidebar = page.getByRole('dialog', { name: 'Mobile navigation' });
   await expect(sidebar).toBeVisible();
   const panel = page.getByTestId('mobile-sidebar-panel');
