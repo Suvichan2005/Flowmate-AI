@@ -384,9 +384,23 @@ export const managedGemini = onRequest({
           ...(Array.isArray(input.config.tools) ? { tools: input.config.tools as Tool[] } : {}),
         },
       });
-    } catch {
+    } catch (error) {
       // Do not send a request whose model-specific context size could not be
       // verified. In particular, Argon uses one shared input/output window.
+      // Record only provider classification metadata so a blocked capability
+      // can be diagnosed without logging prompts, tool arguments, or secrets.
+      const detail = error && typeof error === 'object' ? error as {
+        status?: unknown; code?: unknown; name?: unknown;
+      } : {};
+      const providerStatus = typeof detail.status === 'number' && Number.isInteger(detail.status)
+        ? detail.status : undefined;
+      const providerCode = typeof detail.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(detail.code)
+        ? detail.code : undefined;
+      const providerErrorName = typeof detail.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(detail.name)
+        ? detail.name : undefined;
+      logger.warn('Managed input token count unavailable', {
+        code: 'MODEL_CATALOG_UNAVAILABLE', providerStatus, providerCode, providerErrorName,
+      });
       throw new RequestFailure('MODEL_CATALOG_UNAVAILABLE', 503);
     }
     const inputTokens = Number(count.totalTokens);
