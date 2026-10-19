@@ -177,6 +177,7 @@ const App: React.FC = () => {
   const mobileSidebarGestureRef = useRef<{ x: number; y: number; lastX: number; lastY: number } | null>(null);
   const suppressSidebarClickRef = useRef(false);
   const mobileNavigationLockUntilRef = useRef(0);
+  const mobileSidebarCloseTimerRef = useRef<number | null>(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [mobileGestureOffset, setMobileGestureOffset] = useState({ x: 0, y: 0 });
   const [isMobileRefreshing, setIsMobileRefreshing] = useState(false);
@@ -194,6 +195,10 @@ const App: React.FC = () => {
     canOpenSidebar: boolean;
     sidebarDragActive: boolean;
   } | null>(null);
+
+  useEffect(() => () => {
+    if (mobileSidebarCloseTimerRef.current !== null) window.clearTimeout(mobileSidebarCloseTimerRef.current);
+  }, []);
 
   useEffect(() => {
     mobileCurrentViewRef.current = currentView;
@@ -268,7 +273,7 @@ const App: React.FC = () => {
   const { currentUser, setCurrentUser, loadFromCloud, syncToCloud } = useStore();
 
   const handleMobileTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (!isMobile || isMobileSidebarOpen || loading || isStreaming || isLiveMode) {
+    if (!isMobile || Date.now() < mobileNavigationLockUntilRef.current || isMobileSidebarOpen || loading || isStreaming || isLiveMode) {
       mobileTouchStartRef.current = null;
       return;
     }
@@ -349,7 +354,7 @@ const App: React.FC = () => {
       const dragLimit = Math.max(150, window.innerWidth * 0.78);
       setMobileGestureOffset({ x: Math.max(-dragLimit, Math.min(dragLimit, deltaX * 0.94)), y: 0 });
     } else if (isPullingDown && !loading && !isStreaming && !isLiveMode) {
-      setMobileGestureOffset({ x: 0, y: Math.min(88, deltaY * 0.42) });
+      setMobileGestureOffset({ x: 0, y: Math.min(80, deltaY * 0.55) });
     } else {
       setMobileGestureOffset({ x: 0, y: 0 });
     }
@@ -364,6 +369,7 @@ const App: React.FC = () => {
     }
 
     if (start.sidebarDragActive) {
+      mobileNavigationLockUntilRef.current = Date.now() + 300;
       const shouldOpen = deltaX >= mobileSidebarOpenThreshold(window.innerWidth) && Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
       if (shouldOpen) {
         mobileNavigationLockUntilRef.current = Date.now() + 260;
@@ -371,9 +377,10 @@ const App: React.FC = () => {
         setMobileSidebarDragX(0);
       } else {
         setMobileSidebarDragX(-256);
-        window.setTimeout(() => {
+        mobileSidebarCloseTimerRef.current = window.setTimeout(() => {
           setIsMobileSidebarOpen(false);
           setMobileSidebarDragX(0);
+          mobileSidebarCloseTimerRef.current = null;
         }, 180);
       }
       return;
@@ -397,12 +404,16 @@ const App: React.FC = () => {
       openMobileSidebar();
     }
     if (intent === 'open-chat') {
+      // Keep a short settle window beyond the 220ms page transition so a
+      // rapid reverse drag cannot race the view swap / gesture preview.
+      mobileNavigationLockUntilRef.current = Date.now() + 560;
       const activeView = mobileCurrentViewRef.current;
       if (activeView !== 'chat') lastNonChatViewRef.current = activeView;
       mobileCurrentViewRef.current = 'chat';
       setView('chat');
     }
     if (intent === 'return-view') {
+      mobileNavigationLockUntilRef.current = Date.now() + 560;
       const destination = getMobileReturnView();
       lastNonChatViewRef.current = destination;
       mobileCurrentViewRef.current = destination;
@@ -435,7 +446,11 @@ const App: React.FC = () => {
   };
 
   const openMobileSidebar = () => {
-    mobileNavigationLockUntilRef.current = Date.now() + 260;
+    if (mobileSidebarCloseTimerRef.current !== null) {
+      window.clearTimeout(mobileSidebarCloseTimerRef.current);
+      mobileSidebarCloseTimerRef.current = null;
+    }
+    mobileNavigationLockUntilRef.current = Date.now() + 300;
     setMobileSidebarDragX(-256);
     setIsMobileSidebarOpen(true);
     window.requestAnimationFrame(() => setMobileSidebarDragX(0));
@@ -455,7 +470,7 @@ const App: React.FC = () => {
   // swipes there too, so starting beside the hamburger does not silently miss.
   const handleMobileHeaderTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
     const touch = event.touches[0];
-    if (!isMobile || isMobileSidebarOpen || loading || isStreaming || isLiveMode || event.touches.length !== 1 || !touch) {
+    if (!isMobile || Date.now() < mobileNavigationLockUntilRef.current || isMobileSidebarOpen || loading || isStreaming || isLiveMode || event.touches.length !== 1 || !touch) {
       mobileTouchStartRef.current = null;
       return;
     }
@@ -488,6 +503,7 @@ const App: React.FC = () => {
   };
 
   const handleMobileSidebarTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (Date.now() < mobileNavigationLockUntilRef.current) return;
     const touch = event.touches[0];
     if (!touch) return;
     const target = event.target instanceof Element ? event.target : null;
@@ -536,13 +552,14 @@ const App: React.FC = () => {
       distanceThresholdPx: mobileSidebarCloseThreshold(window.innerWidth),
     });
     if (intent === 'close-menu') {
-      mobileNavigationLockUntilRef.current = Date.now() + 260;
+      mobileNavigationLockUntilRef.current = Date.now() + 300;
       setMobileSidebarDragX(-256);
       suppressSidebarClickRef.current = true;
-      window.setTimeout(() => {
+      mobileSidebarCloseTimerRef.current = window.setTimeout(() => {
         setIsMobileSidebarOpen(false);
         setMobileSidebarDragX(0);
         suppressSidebarClickRef.current = false;
+        mobileSidebarCloseTimerRef.current = null;
       }, 180);
       return;
     }
@@ -1956,6 +1973,26 @@ const App: React.FC = () => {
               <div className="shrink-0 rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm text-slate-500">Message…</div>
             </div>
           )}
+          {mobileGestureOffset.y > 32 || isMobileRefreshing ? (
+            <div
+              data-testid="mobile-refresh-indicator"
+              role="status"
+              aria-live="polite"
+              className="pointer-events-none absolute left-1/2 z-50 inline-flex -translate-x-1/2 items-center gap-2 rounded-full border border-emerald-300/30 bg-slate-800 px-3 py-1.5 text-[11px] font-medium text-emerald-100 shadow-lg"
+              style={{
+                top: `${Math.max(0, (mobileGestureOffset.y - 32) / 2)}px`,
+                opacity: isMobileRefreshing ? 1 : Math.min(1, mobileGestureOffset.y / 34),
+              }}
+            >
+              {isMobileRefreshing ? (
+                <span className="flex items-center gap-2"><RefreshCw size={12} className="animate-spin" />Refreshing workspace</span>
+              ) : mobileGestureOffset.y >= mobileGestureThreshold(window.innerWidth) * 0.55 ? (
+                <><RefreshCw size={12} /> Release to update</>
+              ) : (
+                <><RefreshCw size={12} className="opacity-70" /> Pull to update</>
+              )}
+            </div>
+          ) : null}
           {/* Main content or full screen chat */}
           <div
             className="relative z-10 flex-1 flex flex-col overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom))] bg-slate-950"
@@ -1976,17 +2013,6 @@ const App: React.FC = () => {
             }}
             data-testid="mobile-gesture-surface"
           >
-            {mobileGestureOffset.y > 18 || isMobileRefreshing ? (
-              <div data-testid="mobile-refresh-indicator" role="status" aria-live="polite" className={`absolute ${currentView === 'chat' ? 'top-14' : 'top-2'} left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-emerald-300/20 bg-slate-900/95 px-3 py-1.5 text-[11px] text-slate-200 shadow-lg pointer-events-none`}>
-                {isMobileRefreshing ? (
-                  <span className="flex items-center gap-2"><RefreshCw size={12} className="animate-spin" />Refreshing</span>
-                ) : mobileGestureOffset.y >= mobileGestureThreshold(window.innerWidth) * 0.42 ? (
-                  <><RefreshCw size={12} /> Release to refresh</>
-                ) : (
-                  <><RefreshCw size={12} className="opacity-70" /> Pull to refresh</>
-                )}
-              </div>
-            ) : null}
             {currentView === 'chat' ? (
               <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
                 <ChatSessionBar />

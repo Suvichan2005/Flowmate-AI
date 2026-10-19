@@ -1,4 +1,16 @@
 {
+  "auth": {
+    "providers": {
+      "anonymous": true,
+      "emailPassword": true,
+      "googleSignIn": {
+        "authorizedRedirectUris": [
+          "https://flowmate-ai.web.app/__/auth/handler",
+          "https://flowmate-ai--managed-ai-preview-8jatmmwd.web.app/__/auth/handler"
+        ]
+      }
+    }
+  },
   "emulators": {
     "auth": { "port": 9099 },
     "firestore": { "port": 18080 },

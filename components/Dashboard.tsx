@@ -450,16 +450,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
             <header className="mb-8 flex flex-col md:flex-row md:justify-between md:items-end gap-4 pl-4 md:pl-14">
                 <div>
                     <h1 className="font-serif text-3xl font-bold text-ideapad-text tracking-tight">Dashboard</h1>
-                    <p className="text-ideapad-muted text-sm mt-1 flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                        Local workspace
-                    </p>
                 </div>
             </header>
 
             {/* AI Daily Briefing */}
             <div className="mb-8 relative group">
-                <div data-testid="dashboard-daily-briefing" style={{ borderColor: 'var(--border-hairline)' }} className="relative bg-ideapad-surface border rounded-xl p-6 overflow-hidden">
+                <div data-testid="dashboard-daily-briefing" className="relative bg-ideapad-base p-0 overflow-visible">
                     <div className="absolute top-0 right-0 p-8 opacity-5 text-emerald-400">
                         <Sparkles size={120} />
                     </div>
@@ -482,6 +478,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                                 onClick={handleGenerateBriefing}
                                 disabled={briefingLoading}
                                 aria-label={`${hasAiProviderAvailable() ? 'Refresh AI briefing' : 'Refresh local briefing'}. ${briefingAllowanceLabel}`}
+                                title={briefingAllowanceLabel}
                                 data-testid="briefing-refresh-button"
                                 className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ideapad-border/70 bg-ideapad-elevated text-ideapad-muted transition-colors hover:border-ideapad-mint/50 hover:bg-ideapad-surface hover:text-ideapad-mint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ideapad-mint disabled:cursor-wait disabled:opacity-60"
                             >
