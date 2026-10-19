@@ -183,6 +183,8 @@ const App: React.FC = () => {
   const lastNonChatViewRef = useRef<ViewType>(currentView === 'chat' ? 'dashboard' : currentView);
   const mobileCurrentViewRef = useRef<ViewType>(currentView);
   const mobileTouchStartRef = useRef<{
+    touchId: number;
+    gestureTarget: Element | null;
     x: number;
     y: number;
     startX: number;
@@ -197,6 +199,10 @@ const App: React.FC = () => {
     mobileCurrentViewRef.current = currentView;
     if (currentView !== 'chat') lastNonChatViewRef.current = currentView;
   }, [currentView]);
+
+  const getMobileReturnView = () => lastNonChatViewRef.current === 'chat'
+    ? 'dashboard' as ViewType
+    : lastNonChatViewRef.current;
 
   useEffect(() => {
     if (!isMobileSidebarOpen) return;
@@ -262,7 +268,7 @@ const App: React.FC = () => {
   const { currentUser, setCurrentUser, loadFromCloud, syncToCloud } = useStore();
 
   const handleMobileTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (!isMobile || isMobileSidebarOpen || loading || isStreaming || isLiveMode || Date.now() < mobileNavigationLockUntilRef.current) {
+    if (!isMobile || isMobileSidebarOpen || loading || isStreaming || isLiveMode) {
       mobileTouchStartRef.current = null;
       return;
     }
@@ -292,12 +298,14 @@ const App: React.FC = () => {
     }
     const activeView = mobileCurrentViewRef.current;
     mobileTouchStartRef.current = {
+      touchId: touch.identifier,
+      gestureTarget: target,
       x: touch.clientX,
       y: touch.clientY,
       startX: touch.clientX,
       startedAtTop,
       canNavigateToChat: activeView !== 'chat',
-      canReturnToView: activeView === 'chat' && lastNonChatViewRef.current !== 'chat',
+      canReturnToView: activeView === 'chat',
       canOpenSidebar: activeView !== 'chat',
       sidebarDragActive: false,
     };
@@ -306,7 +314,12 @@ const App: React.FC = () => {
   const handleMobileTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
     const start = mobileTouchStartRef.current;
     if (!start) return;
-    if (document.getSelection()?.isCollapsed === false) {
+    const selection = document.getSelection();
+    const selectionIntersectsTouchTarget = Boolean(
+      selection && !selection.isCollapsed && selection.rangeCount > 0 && start.gestureTarget
+      && selection.getRangeAt(0).intersectsNode(start.gestureTarget),
+    );
+    if (selectionIntersectsTouchTarget) {
       mobileTouchStartRef.current = null;
       setMobileGestureOffset({ x: 0, y: 0 });
       return;
@@ -384,15 +397,13 @@ const App: React.FC = () => {
       openMobileSidebar();
     }
     if (intent === 'open-chat') {
-      mobileNavigationLockUntilRef.current = Date.now() + 320;
       const activeView = mobileCurrentViewRef.current;
       if (activeView !== 'chat') lastNonChatViewRef.current = activeView;
       mobileCurrentViewRef.current = 'chat';
       setView('chat');
     }
     if (intent === 'return-view') {
-      mobileNavigationLockUntilRef.current = Date.now() + 320;
-      const destination = lastNonChatViewRef.current;
+      const destination = getMobileReturnView();
       lastNonChatViewRef.current = destination;
       mobileCurrentViewRef.current = destination;
       setView(destination);
@@ -412,11 +423,13 @@ const App: React.FC = () => {
 
   const handleMobileTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
     const start = mobileTouchStartRef.current;
-    const touch = event.changedTouches[0];
+    const touch = start && Array.from(event.changedTouches).find(item => item.identifier === start.touchId);
     if (start && touch) finishMobileGesture(touch.clientX - start.x, touch.clientY - start.y);
   };
 
-  const handleMobileTouchCancel = () => {
+  const handleMobileTouchCancel = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = mobileTouchStartRef.current;
+    if (start && !Array.from(event.changedTouches).some(item => item.identifier === start.touchId)) return;
     mobileTouchStartRef.current = null;
     setMobileGestureOffset({ x: 0, y: 0 });
   };
@@ -442,17 +455,19 @@ const App: React.FC = () => {
   // swipes there too, so starting beside the hamburger does not silently miss.
   const handleMobileHeaderTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
     const touch = event.touches[0];
-    if (!isMobile || isMobileSidebarOpen || loading || isStreaming || isLiveMode || Date.now() < mobileNavigationLockUntilRef.current || event.touches.length !== 1 || !touch) {
+    if (!isMobile || isMobileSidebarOpen || loading || isStreaming || isLiveMode || event.touches.length !== 1 || !touch) {
       mobileTouchStartRef.current = null;
       return;
     }
     mobileTouchStartRef.current = {
+      touchId: touch.identifier,
+      gestureTarget: event.target instanceof Element ? event.target : null,
       x: touch.clientX,
       y: touch.clientY,
       startX: touch.clientX,
       startedAtTop: false,
       canNavigateToChat: mobileCurrentViewRef.current !== 'chat',
-      canReturnToView: mobileCurrentViewRef.current === 'chat' && lastNonChatViewRef.current !== 'chat',
+      canReturnToView: mobileCurrentViewRef.current === 'chat',
       canOpenSidebar: mobileCurrentViewRef.current !== 'chat',
       sidebarDragActive: false,
     };
@@ -460,7 +475,7 @@ const App: React.FC = () => {
 
   const handleMobileHeaderTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
     const start = mobileTouchStartRef.current;
-    const touch = event.changedTouches[0];
+    const touch = start && Array.from(event.changedTouches).find(item => item.identifier === start.touchId);
     if (start && touch) {
       const deltaX = touch.clientX - start.startX;
       const deltaY = touch.clientY - start.y;
@@ -1916,11 +1931,19 @@ const App: React.FC = () => {
       {isMobile && (
         <div data-layout="mobile" className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] overflow-hidden relative">
           {/* Chat back-navigation reveals the previous page beneath the moving Chat screen. */}
-          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView === 'chat' && mobileTouchStartRef.current?.canReturnToView && (
-            <div aria-hidden="true" data-testid="return-navigation-preview" className="absolute inset-y-3 left-3 z-0 flex w-[calc(16rem-0.75rem)] flex-col items-center justify-center rounded-2xl border border-emerald-300/20 bg-emerald-950/90 px-6 text-center text-emerald-50 shadow-inner shadow-black/20">
-              <LayoutDashboard size={26} className="mb-3 text-ideapad-mint" />
-              <p className="text-sm font-semibold">Back to {lastNonChatViewRef.current === 'dashboard' ? 'Home' : lastNonChatViewRef.current === 'knowledge' ? 'Library' : lastNonChatViewRef.current[0].toUpperCase() + lastNonChatViewRef.current.slice(1)}</p>
-              <p className="mt-1 text-xs text-emerald-100/70">Release to return</p>
+          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView === 'chat' && (
+            <div aria-hidden="true" data-testid="return-navigation-preview" className="absolute inset-0 z-0 flex w-64 flex-col items-center justify-center bg-ideapad-base px-6 text-center text-ideapad-text">
+              <div className="flex self-start flex-col items-center justify-center" style={{ width: `${Math.max(84, Math.min(256, mobileGestureOffset.x))}px` }}>
+                <LayoutDashboard size={26} className="mb-3 text-ideapad-mint" />
+                {mobileGestureOffset.x < 136 ? (
+                  <p className="text-sm font-semibold">{getMobileReturnView() === 'dashboard' ? 'Home' : getMobileReturnView() === 'knowledge' ? 'Library' : getMobileReturnView()[0].toUpperCase() + getMobileReturnView().slice(1)}</p>
+                ) : (
+                  <>
+                    <p className="text-sm font-semibold">Back to {getMobileReturnView() === 'dashboard' ? 'Home' : getMobileReturnView() === 'knowledge' ? 'Library' : getMobileReturnView()[0].toUpperCase() + getMobileReturnView().slice(1)}</p>
+                    <p className="mt-1 text-xs text-emerald-100/70">Release to return</p>
+                  </>
+                )}
+              </div>
             </div>
           )}
           {mobileGestureOffset.x < -18 && currentView !== 'chat' && (

@@ -31,6 +31,8 @@ async function dragTouch(context: BrowserContext, page: Page, points: Array<{ x:
       type: 'touchMove',
       touchPoints: [{ id: 1, x: point.x, y: point.y, radiusX: 1, radiusY: 1, force: 1 }],
     });
+    // Let the browser deliver the move and paint the drag before the next sample.
+    await page.waitForTimeout(16);
     offsets.push(await page.locator(movingSelector).evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41));
     await onMove?.();
   }
@@ -48,6 +50,7 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
   await page.goto('/#dashboard');
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
   await skipOptionalOnboarding(page);
+  await page.screenshot({ path: 'qa-evidence/mobile-dashboard-briefing-refresh.png' });
 
   const nav = page.getByRole('navigation', { name: 'Mobile Navigation' });
   const openChatOffsets = await dragTouch(context, page, [
@@ -155,7 +158,7 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
   await expect(sidebar).toBeHidden();
 });
 
-test('mobile route lock keeps a fast reverse swipe coherent, then allows return after settling', async ({ page, context }) => {
+test('rapid alternating page swipes stay on a valid route without blocking the next deliberate drag', async ({ page, context }) => {
   await blockExternalRequests(context);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#dashboard');
@@ -168,18 +171,25 @@ test('mobile route lock keeps a fast reverse swipe coherent, then allows return 
     { x: 280, y: 430 }, { x: 235, y: 430 }, { x: 190, y: 430 }, { x: 145, y: 430 },
   ], '[data-testid="mobile-gesture-surface"]');
   await expect(nav.getByRole('button', { name: 'Open Chat', exact: true })).toHaveAttribute('aria-current', 'page');
+
   await dragTouch(context, page, [
     { x: 145, y: 430 }, { x: 190, y: 430 }, { x: 235, y: 430 }, { x: 280, y: 430 },
+  ], '[data-testid="mobile-gesture-surface"]', async () => {
+    await page.screenshot({ path: 'qa-evidence/mobile-chat-return-preview.png' });
+  });
+  await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
+
+  await dragTouch(context, page, [
+    { x: 280, y: 430 }, { x: 235, y: 430 }, { x: 190, y: 430 }, { x: 145, y: 430 },
   ], '[data-testid="mobile-gesture-surface"]');
   await expect(nav.getByRole('button', { name: 'Open Chat', exact: true })).toHaveAttribute('aria-current', 'page');
-  await expect(page.getByRole('dialog', { name: 'Mobile navigation' })).toBeHidden();
-  await expect.poll(() => surface.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41)).toBe(0);
-
-  await page.waitForTimeout(340);
   await dragTouch(context, page, [
     { x: 145, y: 430 }, { x: 190, y: 430 }, { x: 235, y: 430 }, { x: 280, y: 430 },
   ], '[data-testid="mobile-gesture-surface"]');
   await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
+
+  await expect(page.getByRole('dialog', { name: 'Mobile navigation' })).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
   await expect.poll(() => surface.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41)).toBe(0);
 });
 

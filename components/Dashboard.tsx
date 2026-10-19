@@ -282,11 +282,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
         : hasManagedAiIdentity()
             ? briefingUsageStatus === 'checking' ? 'Checking today’s AI briefing allowance' : 'AI briefing allowance is unavailable'
             : 'Generate a local briefing';
-    const briefingAllowanceShort = managedAiUsage?.briefings
+    const briefingAllowanceBadge = managedAiUsage?.briefings
         ? managedAiUsage.briefings.dailyLimit === null
-            ? 'Unlimited'
-            : `${Math.max(0, managedAiUsage.briefings.dailyLimit - managedAiUsage.briefings.successfulToday)} left`
-        : hasManagedAiIdentity() ? briefingUsageStatus === 'checking' ? 'Checking' : 'Unavailable' : 'Local';
+            ? '∞'
+            : String(Math.max(0, managedAiUsage.briefings.dailyLimit - managedAiUsage.briefings.successfulToday))
+        : null;
 
     // Format minutes to hours/minutes string
     const formatDuration = (minutes: number) => {
@@ -464,8 +464,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                         <Sparkles size={120} />
                     </div>
 
-                    <div className="flex items-center justify-between gap-3 mb-1 relative z-10">
-                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                    <div className="flex items-center justify-between gap-3 mb-3 relative z-10">
+                        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                             <h2 className="text-lg font-semibold text-ideapad-text flex items-center gap-2">
                                 <Sparkles size={18} className="text-ideapad-mint" />
                                 {(() => {
@@ -477,18 +477,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                                 })()}
                             </h2>
                         </div>
-                        <div className="flex shrink-0 items-center gap-2">
+                        <div className="shrink-0">
                             <button
                                 onClick={handleGenerateBriefing}
                                 disabled={briefingLoading}
                                 aria-label={`${hasAiProviderAvailable() ? 'Refresh AI briefing' : 'Refresh local briefing'}. ${briefingAllowanceLabel}`}
-                                title={briefingAllowanceLabel}
                                 data-testid="briefing-refresh-button"
-                                className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-ideapad-border/70 bg-ideapad-elevated text-ideapad-muted transition-colors hover:border-ideapad-mint/50 hover:bg-ideapad-surface hover:text-ideapad-mint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ideapad-mint disabled:cursor-wait disabled:opacity-60"
+                                className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ideapad-border/70 bg-ideapad-elevated text-ideapad-muted transition-colors hover:border-ideapad-mint/50 hover:bg-ideapad-surface hover:text-ideapad-mint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ideapad-mint disabled:cursor-wait disabled:opacity-60"
                             >
                                 <RefreshCw className={`h-4 w-4 ${briefingLoading ? 'animate-spin' : ''}`} />
+                                {briefingAllowanceBadge !== null && (
+                                    <span aria-hidden="true" data-testid="briefing-allowance-badge" className="absolute -right-1.5 -top-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full border border-ideapad-base bg-ideapad-mint px-1 text-[10px] font-semibold leading-none text-ideapad-base">
+                                        {briefingAllowanceBadge}
+                                    </span>
+                                )}
                             </button>
-                            <span aria-hidden="true" className="shrink-0 text-[11px] text-ideapad-muted sm:hidden">{briefingAllowanceShort}</span>
                         </div>
                     </div>
 
