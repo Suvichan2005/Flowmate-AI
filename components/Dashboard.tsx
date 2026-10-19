@@ -16,6 +16,7 @@ import { CommitmentCard } from './CommitmentCard';
 import { InterruptedDayRecovery } from './InterruptedDayRecovery';
 import { extractMemoryItem } from '../services/context/resolver';
 import { hasAiProviderAvailable } from '../services/ai/client';
+import { getManagedAiUsage, hasManagedAiIdentity, type ManagedAiUsage } from '../services/ai/managedClient';
 
 interface StatCardProps {
     icon: React.ReactNode;
@@ -148,11 +149,34 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
             .sort((a, b) => new Date(b.memory.valid_from || 0).getTime() - new Date(a.memory.valid_from || 0).getTime());
     }, [kernelEntities]);
     const [briefingLoading, setBriefingLoading] = useState(false);
+    const [managedAiUsage, setManagedAiUsage] = useState<ManagedAiUsage | null>(null);
+    const [briefingUsageStatus, setBriefingUsageStatus] = useState<'checking' | 'ready' | 'unavailable'>('checking');
     const [showOrphansModal, setShowOrphansModal] = useState(false);
     const [showDueModal, setShowDueModal] = useState(false);
     const [showProjectsModal, setShowProjectsModal] = useState(false);
     const [addingNextActionProjectId, setAddingNextActionProjectId] = useState<string | null>(null);
     const [nextActionTitle, setNextActionTitle] = useState<string>('');
+
+    useEffect(() => {
+        if (!isHydrated) return;
+        if (!hasManagedAiIdentity()) {
+            setBriefingUsageStatus('unavailable');
+            return;
+        }
+        let active = true;
+        void getManagedAiUsage().then(usage => {
+            if (active) {
+                setManagedAiUsage(usage);
+                setBriefingUsageStatus('ready');
+            }
+        }).catch(() => {
+            if (active) {
+                setManagedAiUsage(null);
+                setBriefingUsageStatus('unavailable');
+            }
+        });
+        return () => { active = false; };
+    }, [isHydrated]);
 
     // Show skeleton while data is loading
     if (!isHydrated) {
@@ -226,6 +250,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
         setBriefingLoading(true);
         try {
             const errorCode = await refreshDailyBriefing();
+            if (hasManagedAiIdentity()) {
+                setBriefingUsageStatus('checking');
+                try {
+                    setManagedAiUsage(await getManagedAiUsage());
+                    setBriefingUsageStatus('ready');
+                } catch {
+                    setBriefingUsageStatus('unavailable');
+                    /* Usage is optional UI information; generation result remains authoritative. */
+                }
+            }
             if (errorCode === 'BRIEFING_ALLOWANCE_EXHAUSTED') {
                 addToast?.('Your daily included briefing allowance is used. Chat turns have a separate allowance; configure BYOK in Settings to generate another briefing today.', 'info');
             } else if (errorCode === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' || errorCode === 'TURN_ALLOWANCE_EXHAUSTED') {
@@ -241,13 +275,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
     const today = new Date().toISOString().split('T')[0];
     const isBriefingStale = !dailyBriefing || dailyBriefing.generated_for_date !== today
         || entities.some(e => Date.parse(e.updated_at) > Date.parse(dailyBriefing.timestamp));
-    const briefingIsAi = dailyBriefing?.source === 'managed' || dailyBriefing?.source === 'byok';
-    const briefingSourceLabel = dailyBriefing
-        ? briefingIsAi ? 'AI briefing' : 'Local summary'
-        : hasAiProviderAvailable() ? null : 'Local summary';
-    const briefingActionLabel = hasAiProviderAvailable()
-        ? (briefingIsAi ? 'Refresh AI Briefing' : 'Generate AI Briefing')
-        : (dailyBriefing && !briefingIsAi ? 'Update Local Summary' : 'Generate Local Summary');
+    const briefingAllowanceLabel = managedAiUsage?.briefings
+        ? managedAiUsage.briefings.dailyLimit === null
+            ? 'Unlimited AI briefings today'
+            : `${Math.max(0, managedAiUsage.briefings.dailyLimit - managedAiUsage.briefings.successfulToday)} of ${managedAiUsage.briefings.dailyLimit} AI briefings left today`
+        : hasManagedAiIdentity()
+            ? briefingUsageStatus === 'checking' ? 'Checking today’s AI briefing allowance' : 'AI briefing allowance is unavailable'
+            : 'Generate a local briefing';
+    const briefingAllowanceShort = managedAiUsage?.briefings
+        ? managedAiUsage.briefings.dailyLimit === null
+            ? 'Unlimited'
+            : `${Math.max(0, managedAiUsage.briefings.dailyLimit - managedAiUsage.briefings.successfulToday)} left`
+        : hasManagedAiIdentity() ? briefingUsageStatus === 'checking' ? 'Checking' : 'Unavailable' : 'Local';
 
     // Format minutes to hours/minutes string
     const formatDuration = (minutes: number) => {
@@ -425,7 +464,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                         <Sparkles size={120} />
                     </div>
 
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 relative z-10">
+                    <div className="flex items-center justify-between gap-3 mb-1 relative z-10">
                         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                             <h2 className="text-lg font-semibold text-ideapad-text flex items-center gap-2">
                                 <Sparkles size={18} className="text-ideapad-mint" />
@@ -437,20 +476,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                                     return 'Working late?';
                                 })()}
                             </h2>
-                            {briefingSourceLabel && (
-                                <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-ideapad-elevated text-ideapad-muted border border-ideapad-border">
-                                    {briefingSourceLabel}
-                                </span>
-                            )}
                         </div>
-                        <button
-                            onClick={handleGenerateBriefing}
-                            disabled={briefingLoading}
-                            className="flex items-center justify-center gap-2 text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 shadow-lg shadow-emerald-900/40 w-full sm:w-auto self-start sm:self-auto"
-                        >
-                            {briefingLoading ? <RefreshCw className="animate-spin w-3 h-3" /> : <RefreshCw className="w-3 h-3" />}
-                            {briefingActionLabel}
-                        </button>
+                        <div className="flex shrink-0 items-center gap-2">
+                            <button
+                                onClick={handleGenerateBriefing}
+                                disabled={briefingLoading}
+                                aria-label={`${hasAiProviderAvailable() ? 'Refresh AI briefing' : 'Refresh local briefing'}. ${briefingAllowanceLabel}`}
+                                title={briefingAllowanceLabel}
+                                data-testid="briefing-refresh-button"
+                                className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-ideapad-border/70 bg-ideapad-elevated text-ideapad-muted transition-colors hover:border-ideapad-mint/50 hover:bg-ideapad-surface hover:text-ideapad-mint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ideapad-mint disabled:cursor-wait disabled:opacity-60"
+                            >
+                                <RefreshCw className={`h-4 w-4 ${briefingLoading ? 'animate-spin' : ''}`} />
+                            </button>
+                            <span aria-hidden="true" className="shrink-0 text-[11px] text-ideapad-muted sm:hidden">{briefingAllowanceShort}</span>
+                        </div>
                     </div>
 
                     <div className="relative z-10 min-h-[80px]">

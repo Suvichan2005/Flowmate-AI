@@ -109,6 +109,138 @@ h1, h2, h3, .font-serif-heading {
   border-color: var(--border-accent);
 }
 
+/* Horizon recovery also lives inside the resizable split-view pane. Use the
+   card's available width rather than the browser viewport to choose its layout. */
+.horizon-recovery-container {
+  container: horizon-recovery / inline-size;
+}
+
+@container horizon-recovery (max-width: 560px) {
+  .horizon-recovery-container {
+    padding: 1rem;
+    border-radius: 1rem;
+  }
+
+  .horizon-recovery-header {
+    align-items: stretch;
+    gap: 0.75rem;
+    margin-bottom: 0.875rem;
+  }
+
+  .horizon-recovery-heading {
+    gap: 0.625rem;
+  }
+
+  .horizon-recovery-heading > :last-child {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .horizon-recovery-title-row > :last-child {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: normal;
+  }
+
+  .horizon-recovery-heading > :first-child {
+    display: none;
+  }
+
+  .horizon-recovery-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .horizon-recovery-eyebrow {
+    letter-spacing: 0.08em;
+  }
+
+  .horizon-recovery-title {
+    font-size: 1rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  .horizon-recovery-header > :last-child {
+    align-self: flex-end;
+  }
+
+  .horizon-recovery-toolbar {
+    align-items: stretch;
+    padding: 0.75rem;
+  }
+
+  .horizon-recovery-toolbar-label {
+    padding-bottom: 0.125rem;
+  }
+
+  .horizon-recovery-toolbar-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .horizon-recovery-toolbar-actions button {
+    justify-content: flex-start;
+    min-width: 0;
+    width: 100%;
+    min-height: 2.75rem;
+    text-align: left;
+  }
+
+  .horizon-batch-label {
+    white-space: normal;
+    overflow-wrap: normal;
+    word-break: normal;
+    min-width: 0;
+  }
+
+  .horizon-recovery-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 0.375rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .horizon-recovery-filters button {
+    min-width: 0;
+    min-height: 2.75rem;
+    padding: 0.5rem;
+    line-height: 1.25;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  [data-testid^="overdue-task-card-"],
+  [data-testid^="past-event-card-"],
+  [data-testid^="collision-card-"] {
+    align-items: stretch;
+    gap: 0.75rem;
+    padding: 0.875rem;
+  }
+
+  [data-testid^="overdue-task-card-"] > :last-child,
+  [data-testid^="past-event-card-"] > :last-child,
+  [data-testid^="collision-card-"] > :last-child {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(6rem, 1fr));
+    gap: 0.375rem;
+    width: 100%;
+  }
+
+  [data-testid^="overdue-task-card-"] > :last-child button,
+  [data-testid^="past-event-card-"] > :last-child button,
+  [data-testid^="collision-card-"] > :last-child button {
+    justify-content: center;
+    min-width: 0;
+    min-height: 2.75rem;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
 /* Animation keyframes */
 @keyframes slideInFromRight {
   from {
@@ -481,5 +613,23 @@ h1, h2, h3, .font-serif-heading {
 @media (prefers-reduced-motion: reduce) {
   .settings-group-chevron {
     transition: none;
+  }
+}
+.chat-composer-container {
+  container-type: inline-size;
+}
+
+.chat-model-label,
+.chat-model-reasoning {
+  display: none;
+}
+
+@container (min-width: 420px) {
+  .chat-composer-container .chat-model-label {
+    display: inline;
+  }
+
+  .chat-composer-container .chat-model-reasoning {
+    display: inline-flex;
   }
 }

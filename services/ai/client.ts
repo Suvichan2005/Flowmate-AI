@@ -53,11 +53,15 @@ export const getAiClient = (): GoogleGenAI => {
   return new GoogleGenAI({ apiKey: key || '' });
 };
 
-/** Live ephemeral credentials are only accepted by Google's v1beta endpoint. */
+/** BYOK Live uses the standard Gemini Live endpoint. */
 export const getByokLiveClient = (): GoogleGenAI => {
   const key = getEphemeralApiKey();
   return new GoogleGenAI({ apiKey: key || '', httpOptions: { apiVersion: 'v1beta' } });
 };
+
+/** The SDK's constrained ephemeral-token WebSocket transport is currently v1alpha. */
+export const getManagedLiveClient = (token: string): GoogleGenAI =>
+  new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: 'v1alpha' } });
 
 /** Return only models that both Flowmate's current adapter and this BYOK key support. */
 export const getByokModelOptions = async (): Promise<ModelOption[]> => {

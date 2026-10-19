@@ -155,9 +155,47 @@ test('narrow composer keeps model, voice, attachment and send actions inside one
   await expect(model).toBeVisible();
   await expect(model.getByText('Unavailable', { exact: true })).toBeHidden();
   await expect(composer.getByRole('button', { name: 'Attach file' })).toBeVisible();
-  await expect(composer.getByRole('button', { name: /voice unavailable/i })).toBeVisible();
+  await expect(composer.getByRole('button', { name: /Gemini Live voice/i })).toBeVisible();
   await expect(composer.getByRole('button', { name: 'Send message' })).toBeVisible();
   expect(await page.locator('body').evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(320);
+});
+
+test('narrow desktop chat pane compacts its model control without clipping composer actions', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/#dashboard');
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+  const skipOnboarding = page.getByRole('button', { name: 'Skip setup for now', exact: true });
+  if (await skipOnboarding.count()) await skipOnboarding.click();
+
+  const chatPane = page.getByTestId('desktop-chat-pane');
+  const resizer = page.getByTestId('chat-pane-resizer');
+  const handle = await resizer.boundingBox();
+  expect(handle).not.toBeNull();
+  await page.mouse.move(handle!.x + handle!.width / 2, 450);
+  await page.mouse.down();
+  await page.mouse.move(handle!.x - 120, 450, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => (await chatPane.boundingBox())?.width ?? 0).toBe(300);
+
+  const composer = page.getByTestId('chat-composer');
+  const actions = composer.getByTestId('chat-composer-actions');
+  const model = composer.getByTestId('ai-model-selector-trigger');
+  const paneBounds = await chatPane.boundingBox();
+  const composerBounds = await composer.boundingBox();
+  const actionsBounds = await actions.boundingBox();
+  const modelBounds = await model.boundingBox();
+  expect(paneBounds && composerBounds && actionsBounds && modelBounds).not.toBeNull();
+  expect(modelBounds!.width).toBeLessThanOrEqual(64);
+  expect(actionsBounds!.x).toBeGreaterThanOrEqual(paneBounds!.x);
+  expect(actionsBounds!.x + actionsBounds!.width).toBeLessThanOrEqual(paneBounds!.x + paneBounds!.width + 1);
+  expect(composerBounds!.x + composerBounds!.width).toBeLessThanOrEqual(paneBounds!.x + paneBounds!.width + 1);
+  for (const label of ['Attach file', /Gemini Live voice/, 'Send message']) {
+    const control = actions.getByRole('button', { name: label });
+    const bounds = await control.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(paneBounds!.x);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(paneBounds!.x + paneBounds!.width + 1);
+  }
 });
 
 test('composer places model selection beside voice and offers a path to connect when unavailable', async ({ page }) => {
@@ -167,7 +205,7 @@ test('composer places model selection beside voice and offers a path to connect 
   const actions = composer.getByTestId('chat-composer-actions');
   const attach = await actions.getByRole('button', { name: 'Attach file' }).boundingBox();
   const model = await actions.getByTestId('ai-model-selector-trigger').boundingBox();
-  const voice = await actions.getByRole('button', { name: /voice unavailable/i }).boundingBox();
+  const voice = await actions.getByRole('button', { name: /Gemini Live voice/i }).boundingBox();
   const send = await actions.getByRole('button', { name: 'Send message' }).boundingBox();
   expect(attach).not.toBeNull();
   expect(model).not.toBeNull();

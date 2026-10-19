@@ -12,7 +12,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from "../store";
 import { EntityKind, ToonOperation, UserSettings } from "../types";
-import { getByokLiveClient, getByokLiveModelOptions, getEphemeralApiKey, hasAiApiKey, AI_MODELS } from './ai/client';
+import { getByokLiveClient, getByokLiveModelOptions, getEphemeralApiKey, getManagedLiveClient, hasAiApiKey, AI_MODELS } from './ai/client';
 import { createManagedLiveSession, endManagedLiveSession, hasManagedAiIdentity } from './ai/managedClient';
 import { contextResolver, selectEligibleMemories, isEntityExcludedFromEgress } from './context';
 import { convertOperationsToActionProposal } from './kernel';
@@ -505,7 +505,7 @@ ${customInst}`;
             parameters: (declaration.parameters || {}) as Record<string, unknown>,
           })),
         );
-        this.ai = new GoogleGenAI({ apiKey: grant.token, httpOptions: { apiVersion: 'v1beta' } });
+        this.ai = getManagedLiveClient(grant.token);
         this.managedSessionId = grant.sessionId;
       } else if (!getEphemeralApiKey()) {
         throw new Error('The personal Gemini key is no longer available in this browser session. Re-enter it in Settings.');

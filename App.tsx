@@ -375,6 +375,38 @@ const App: React.FC = () => {
     window.requestAnimationFrame(() => setMobileSidebarDragX(0));
   };
 
+  // The fixed mobile header sits outside the page gesture surface. Track edge
+  // swipes there too, so starting beside the hamburger does not silently miss.
+  const handleMobileHeaderTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!isMobile || isMobileSidebarOpen || loading || isStreaming || isLiveMode || event.touches.length !== 1 || !touch || touch.clientX > MOBILE_GESTURE_EDGE_PX) {
+      mobileTouchStartRef.current = null;
+      setMobileGestureOffset({ x: 0, y: 0 });
+      return;
+    }
+    mobileTouchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      startX: touch.clientX,
+      startedAtTop: false,
+      canNavigateToChat: currentView !== 'chat',
+      canReturnToView: currentView === 'chat' && lastNonChatViewRef.current !== 'chat',
+    };
+  };
+
+  const handleMobileHeaderTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = mobileTouchStartRef.current;
+    const touch = event.changedTouches[0];
+    if (start && touch) {
+      const deltaX = touch.clientX - start.startX;
+      const deltaY = touch.clientY - start.y;
+      if (deltaX > 24 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) event.preventDefault();
+      finishMobileGesture(deltaX, deltaY);
+    } else {
+      setMobileGestureOffset({ x: 0, y: 0 });
+    }
+  };
+
   const handleMobileSidebarTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
     const touch = event.touches[0];
     if (!touch) return;
@@ -595,12 +627,6 @@ const App: React.FC = () => {
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
     }
   }, [input]);
-
-  // Force close chat if Zen Mode is active
-  useEffect(() => {
-    if (isZenMode) setIsChatOpen(false);
-    else setIsChatOpen(true);
-  }, [isZenMode]);
 
   // Auth State Listener + Sync Integration
   useEffect(() => {
@@ -1445,7 +1471,14 @@ const App: React.FC = () => {
 
       {/* Mobile Header Bar */}
       {isMobile && (
-        <div className="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-3 shrink-0 z-30">
+        <div
+          className="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-3 shrink-0 z-30"
+          onTouchStart={handleMobileHeaderTouchStart}
+          onTouchMove={handleMobileTouchMove}
+          onTouchEnd={handleMobileHeaderTouchEnd}
+          onTouchCancel={handleMobileTouchCancel}
+          style={{ touchAction: 'pan-y' }}
+        >
           {/* Left: If chat view, show Back button, else hamburger */}
           {currentView === 'chat' ? (
             <button
@@ -1592,10 +1625,10 @@ const App: React.FC = () => {
       {!isMobile && (
         <div data-layout="desktop" className="flex-1 flex flex-row h-full overflow-hidden">
           {/* Desktop Chat Panel - Full width when Chat view, otherwise side panel */}
-          {(currentView === 'chat' || (isChatOpen && !isZenMode)) && (
+          {(currentView === 'chat' || isChatOpen) && (
             <div
               ref={chatPaneRef}
-              className={`flex flex-col bg-slate-900 border-r border-slate-800 shrink-0 h-full relative ${currentView === 'chat' ? 'flex-1' : ''
+              className={`flex min-w-0 flex-col bg-slate-900 border-r border-slate-800 shrink-0 h-full relative ${currentView === 'chat' ? 'flex-1' : ''
                 }`}
               data-testid="desktop-chat-pane"
               style={currentView === 'chat' ? {} : { width: `${chatWidth}px`, minWidth: '300px', maxWidth: '600px' }}
@@ -1753,7 +1786,7 @@ const App: React.FC = () => {
 
           {/* Desktop Main Content - Hidden when in full-screen Chat view */}
           {currentView !== 'chat' && (
-            <main id="main-content" className="flex-1 overflow-auto relative" role="main" aria-label="Main content">
+            <main id="main-content" className="min-w-0 flex-1 overflow-auto relative" role="main" aria-label="Main content">
               <Suspense fallback={<LazyLoadFallback />}>
                 {renderMainContent()}
               </Suspense>
@@ -1778,7 +1811,7 @@ const App: React.FC = () => {
       {isMobile && (
         <div data-layout="mobile" className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] overflow-hidden relative">
           {/* Destination peeks stay beneath the moving page so the gesture feels like a screen being pulled. */}
-          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView !== 'chat' && (
+          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && (currentView !== 'chat' || (mobileTouchStartRef.current?.startX ?? Infinity) <= MOBILE_GESTURE_EDGE_PX) && (
             <div aria-hidden="true" className="absolute inset-y-0 left-0 z-0 w-64 overflow-hidden bg-slate-900 px-4 py-5 text-slate-300">
               <div className="mb-6 flex items-center gap-3 font-semibold text-slate-100"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600/80"><Sparkles size={18} /></span>Flowmate</div>
               <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Navigation</p>

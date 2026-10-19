@@ -210,7 +210,7 @@ const UnifiedChatInput: React.FC<UnifiedChatInputProps> = ({
                 </div>
             )}
 
-            <div className="min-w-0 rounded-[1.5rem] border border-ideapad-border bg-ideapad-surface shadow-sm transition-[border-color,box-shadow] focus-within:border-ideapad-mint/60 focus-within:ring-2 focus-within:ring-ideapad-mint/10" data-testid="chat-composer">
+            <div className="chat-composer-container min-w-0 rounded-[1.5rem] border border-ideapad-border bg-ideapad-surface shadow-sm transition-[border-color,box-shadow] focus-within:border-ideapad-mint/60 focus-within:ring-2 focus-within:ring-ideapad-mint/10" data-testid="chat-composer">
                 <textarea
                     aria-label="Message Flowmate"
                     ref={textareaRef}
