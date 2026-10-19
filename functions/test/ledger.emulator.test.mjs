@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import test, { after, before } from 'node:test';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { RequestFailure, dayKey, monthKey, validateGenerationBody } from '../lib/policy.js';
 import {
   briefingLedgerRefs, failTurn, finishBriefing, finishTurn, reserveBriefing,
-  reserveBriefingGenerationCall, reserveGenerationCall, reserveTurn, turnLedgerRefs,
+  markCostExposureUncertain, reserveBriefingGenerationCall, reserveCostExposure, reserveGenerationCall, reserveTurn, settleCostExposure, turnLedgerRefs,
 } from '../lib/ledger.js';
 
 const host = process.env.FIRESTORE_EMULATOR_HOST;
@@ -222,4 +222,75 @@ test('ordinary model-call usage remains observable without an artificial monthly
   await reserveBriefingGenerationCall(db, briefing);
   assert.equal((await monthRef.get()).get('callsReserved'), 521, 'monthly call metadata is telemetry, not a shared quota');
   await finishBriefing(db, briefing, false);
+});
+
+test('monetary holds atomically bound project, user and cumulative turn exposure and settle idempotently', async () => {
+  await db.doc('system/managedAiBudgetPolicy').set({
+    enabled: true, currency: 'USD', projectMonthlyLimitMicroUsd: 100_000,
+    userMonthlyLimitMicroUsd: 50_000, maxTurnExposureMicroUsd: 30_000,
+    emergencyStop: false, policyVersion: 'test-v1',
+  });
+  const userId = uid();
+  const first = turnLedgerRefs(db, userId, 'turn_cost_bound_0001', 'call_cost_bound_00001', stableDate);
+  await reserveTurn(db, first);
+  await reserveGenerationCall(db, first);
+  const estimate = { estimatedMicroUsd: 18_750, pricingVersion: 'test-price-v1', inputTokens: 10_000, maximumOutputTokens: 2_000 };
+  await reserveCostExposure(db, first, estimate, stableDate);
+  const projectPath = `managedAiCostProjectMonthly/${monthKey(stableDate)}`;
+  const userPath = `managedAiCostUserMonthly/${monthKey(stableDate)}_${createHash('sha256').update(userId).digest('hex')}`;
+  assert.equal((await db.doc(projectPath).get()).get('reservedMicroUsd'), 18_750);
+  await settleCostExposure(first, 12_000, 'test-price-v1');
+  await settleCostExposure(first, 12_000, 'test-price-v1');
+  assert.equal((await db.doc(projectPath).get()).get('reservedMicroUsd'), 0);
+  assert.equal((await db.doc(projectPath).get()).get('settledMicroUsd'), 12_000);
+  assert.equal((await db.doc(userPath).get()).get('settledMicroUsd'), 12_000);
+  await finishTurn(db, first, false);
+
+  const second = turnLedgerRefs(db, userId, 'turn_cost_bound_0001', 'call_cost_bound_00002', stableDate);
+  await reserveTurn(db, second);
+  await reserveGenerationCall(db, second);
+  await assert.rejects(reserveCostExposure(db, second, estimate, stableDate), error => error.code === 'TURN_COST_ENVELOPE_EXHAUSTED');
+  await failTurn(db, second, true);
+  await db.doc('system/managedAiBudgetPolicy').delete();
+});
+
+test('uncertain provider outcomes retain reserved exposure and global budget rejects concurrent identities', async () => {
+  const budgetDate = new Date('2026-11-15T12:00:00+05:30');
+  await db.doc('system/managedAiBudgetPolicy').set({
+    enabled: true, currency: 'USD', projectMonthlyLimitMicroUsd: 10_000,
+    userMonthlyLimitMicroUsd: 10_000, maxTurnExposureMicroUsd: 10_000,
+    emergencyStop: false, policyVersion: 'test-v1',
+  });
+  const estimate = { estimatedMicroUsd: 6_000, pricingVersion: 'test-price-v1', inputTokens: 100, maximumOutputTokens: 100 };
+  const refsList = Array.from({ length: 3 }, (_, index) => turnLedgerRefs(db, uid(), `turn_global_cost_${String(index).padStart(8, '0')}`, `call_global_cost_${String(index).padStart(8, '0')}`, budgetDate));
+  await Promise.all(refsList.map(async refs => { await reserveTurn(db, refs); await reserveGenerationCall(db, refs); }));
+  const results = await Promise.allSettled(refsList.map(refs => reserveCostExposure(db, refs, estimate, budgetDate)));
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  const accepted = refsList[results.findIndex(result => result.status === 'fulfilled')];
+  await markCostExposureUncertain(accepted);
+  const project = await db.doc(`managedAiCostProjectMonthly/${monthKey(budgetDate)}`).get();
+  assert.equal(project.get('reservedMicroUsd'), 6_000);
+  assert.equal(project.get('settledMicroUsd') || 0, 0);
+  await db.doc('system/managedAiBudgetPolicy').delete();
+});
+
+test('reported provider cost above its reserve settles exact metadata and opens the emergency stop', async () => {
+  const budgetDate = new Date('2026-12-15T12:00:00+05:30');
+  await db.doc('system/managedAiBudgetPolicy').set({
+    enabled: true, currency: 'USD', projectMonthlyLimitMicroUsd: 100_000,
+    userMonthlyLimitMicroUsd: 100_000, maxTurnExposureMicroUsd: 100_000,
+    emergencyStop: false, policyVersion: 'test-v1',
+  });
+  const refs = turnLedgerRefs(db, uid(), 'turn_cost_overage_001', 'call_cost_overage_001', budgetDate);
+  await reserveTurn(db, refs);
+  await reserveGenerationCall(db, refs);
+  await reserveCostExposure(db, refs, {
+    estimatedMicroUsd: 10_000, pricingVersion: 'test-price-v1', inputTokens: 100, maximumOutputTokens: 100,
+  }, budgetDate);
+  await settleCostExposure(refs, 12_500, 'test-price-v1');
+  assert.equal((await db.doc('system/managedAiBudgetPolicy').get()).get('emergencyStop'), true);
+  const project = await db.doc(`managedAiCostProjectMonthly/${monthKey(budgetDate)}`).get();
+  assert.equal(project.get('reservedMicroUsd'), 0);
+  assert.equal(project.get('settledMicroUsd'), 12_500);
+  await db.doc('system/managedAiBudgetPolicy').delete();
 });

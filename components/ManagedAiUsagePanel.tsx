@@ -9,6 +9,9 @@ const tokenCount = (value: number) => value >= 1_000_000
 const resetLabel = (value: string) => new Date(value).toLocaleString('en-IN', {
   timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short',
 });
+const money = (microUsd: number) => new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 4,
+}).format(microUsd / 1_000_000);
 
 const UsageMeter: React.FC<{
   label: string;
@@ -82,7 +85,7 @@ const ManagedAiUsagePanel: React.FC = () => {
           <span className="text-sm font-semibold tabular-nums text-ideapad-text">{tokenCount(usage.tokens.totalThisMonth)} tokens</span>
         </div>
         <p className="mt-1 text-xs leading-5 text-ideapad-muted">
-          Reported input, output and reasoning tokens across your managed AI use. This is a usage summary, not an extra token cap; full supported model context and output limits remain available.
+          Gemini processes the context sent with each generation. This total is informational, not another monthly token cap. Flowmate records non-content usage metadata for reliability, quotas, cost control and abuse prevention; prompts and responses are not stored in this usage record. Workspace sync consent is separate.
         </p>
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-ideapad-muted">
           <span>{tokenCount(usage.tokens.inputThisMonth)} input</span>
@@ -90,6 +93,24 @@ const ManagedAiUsagePanel: React.FC = () => {
           {usage.tokens.thinkingThisMonth > 0 && <span>{tokenCount(usage.tokens.thinkingThisMonth)} reasoning</span>}
         </div>
       </div>
+      {usage.cost.monthlyLimitMicroUsd !== null && <div className="mt-3 rounded-xl border border-ideapad-border/80 bg-ideapad-base p-3.5">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <span className="text-sm font-medium text-ideapad-text">Managed AI spending guard</span>
+          <span className="text-sm font-semibold tabular-nums text-ideapad-text">
+            {money(usage.cost.estimatedSettledMicroUsd + usage.cost.reservedMicroUsd)} of {money(usage.cost.monthlyLimitMicroUsd)}
+          </span>
+        </div>
+        <div className="mt-3">
+          <div role="progressbar" aria-label={`Estimated managed AI use ${money(usage.cost.estimatedSettledMicroUsd + usage.cost.reservedMicroUsd)} of ${money(usage.cost.monthlyLimitMicroUsd)}`} aria-valuemin={0} aria-valuemax={usage.cost.monthlyLimitMicroUsd} aria-valuenow={Math.min(usage.cost.monthlyLimitMicroUsd, usage.cost.estimatedSettledMicroUsd + usage.cost.reservedMicroUsd)} className="h-1.5 overflow-hidden rounded-full bg-ideapad-surface">
+            <div className="h-full rounded-full bg-ideapad-mint transition-[width] duration-300" style={{ width: `${Math.min(100, (usage.cost.estimatedSettledMicroUsd + usage.cost.reservedMicroUsd) / usage.cost.monthlyLimitMicroUsd * 100)}%` }} />
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px] text-ideapad-muted">
+            <span>{money(usage.cost.estimatedSettledMicroUsd)} estimated use · {money(usage.cost.reservedMicroUsd)} reserved</span>
+            <span>Resets {resetLabel(usage.chat.resetAt)} IST</span>
+          </div>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-ideapad-muted">A monthly safety limit for managed AI, separate from your Chat and Briefing counts. Estimates include pending or uncertain requests and may differ from Google’s invoice. Your own Gemini key is not included.</p>
+      </div>}
     </> : <p role="status" className="text-sm text-amber-300">Usage is temporarily unavailable. Your current workspace is unchanged.</p>}
   </section>;
 };

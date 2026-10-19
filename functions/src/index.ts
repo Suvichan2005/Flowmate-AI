@@ -10,9 +10,10 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
 import type { Request, Response } from 'express';
 import { ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, ARGON_MODEL, DEFAULT_MODEL, GUEST_CHAT_TURN_LIMIT, GUEST_DAILY_BRIEFING_LIMIT, MANAGED_FUNCTION_TIMEOUT_SECONDS, SUPPORTED_MANAGED_MODELS, RequestFailure, authorizeManagedModel, buildCountTokensRequest, dayKey, isCompletedUserTurn, managedGenerationConfig, monthKey, sanitizeManagedCandidates, validateGenerationBody } from './policy.js';
-import { briefingLedgerRefs, failTurn, finishBriefing, finishTurn, isManagedAiEnabledForIdentity, recordGenerationUsage, reserveBriefing, reserveBriefingGenerationCall, reserveGenerationCall, reserveTurn, sanitizeUsageMetadata, turnLedgerRefs } from './ledger.js';
+import { briefingLedgerRefs, failTurn, finishBriefing, finishTurn, isManagedAiEnabledForIdentity, markCostExposureUncertain, recordGenerationUsage, reserveBriefing, reserveBriefingGenerationCall, reserveCostExposure, reserveGenerationCall, reserveTurn, sanitizeUsageMetadata, settleCostExposure, turnLedgerRefs } from './ledger.js';
 import { handleManagedAiAdmin } from './admin.js';
 import { generateArgonStateless } from './argon.js';
+import { actualTextGenerationCost, estimateTextGenerationCost, outputEnvelope } from './cost.js';
 
 if (getApps().length === 0) initializeApp();
 const db = getFirestore();
@@ -115,7 +116,11 @@ export const managedGemini = onRequest({
       const uidHash = createHash('sha256').update(uid).digest('hex');
       const personalMonth = db.doc(`${privileged ? 'managedAiPrivilegedUserMonthly' : 'managedAiUserMonthly'}/${month}_${uidHash}`);
       const personalDay = db.doc(`${privileged ? 'managedAiPrivilegedUserDaily' : 'managedAiUserDaily'}/${day}_${uidHash}`);
-      const [monthlyUsage, dailyUsage] = await Promise.all([personalMonth.get(), personalDay.get()]);
+      const personalCost = db.doc(`managedAiCostUserMonthly/${month}_${uidHash}`);
+      const budgetPolicy = db.doc('system/managedAiBudgetPolicy');
+      const [monthlyUsage, dailyUsage, personalCostUsage, costPolicy] = await Promise.all([
+        personalMonth.get(), personalDay.get(), personalCost.get(), budgetPolicy.get(),
+      ]);
       const [year, monthNumber] = month.split('-').map(Number);
       // monthKey is Asia/Kolkata; represent the next month boundary as an exact UTC instant.
       const resetAt = new Date(Date.UTC(year, monthNumber, 1) - 330 * 60_000).toISOString();
@@ -126,6 +131,13 @@ export const managedGemini = onRequest({
         tier: privileged ? 'privileged' : allowance,
         chat: { successfulTurns: Number(monthlyUsage.get('successfulTurns') || 0), monthlyLimit: privileged ? null : allowance === 'guest' ? GUEST_CHAT_TURN_LIMIT : ACCOUNT_CHAT_TURN_LIMIT, month, resetAt },
         briefings: { successfulToday: Number(dailyUsage.get('successfulBriefings') || 0), dailyLimit: privileged ? null : allowance === 'guest' ? GUEST_DAILY_BRIEFING_LIMIT : ACCOUNT_DAILY_BRIEFING_LIMIT, day, resetAt: dailyResetAt },
+        cost: {
+          currency: 'USD', month,
+          estimatedSettledMicroUsd: Number(personalCostUsage.get('settledMicroUsd') || 0),
+          reservedMicroUsd: Number(personalCostUsage.get('reservedMicroUsd') || 0),
+          monthlyLimitMicroUsd: costPolicy.get('enabled') === true && Number.isSafeInteger(costPolicy.get('userMonthlyLimitMicroUsd'))
+            ? Number(costPolicy.get('userMonthlyLimitMicroUsd')) : null,
+        },
         tokens: {
           inputThisMonth: Number(monthlyUsage.get('inputTokens') || 0),
           outputThisMonth: Number(monthlyUsage.get('outputTokens') || 0),
@@ -348,6 +360,7 @@ export const managedGemini = onRequest({
   let turnReserved = false;
   let briefingReserved = false;
   let callReserved = false;
+  let costReserved = false;
 
   try {
     if (input.purpose === 'chat') {
@@ -376,8 +389,9 @@ export const managedGemini = onRequest({
     if (requestsTools && !policyModel.functionCalling) {
       throw new RequestFailure('MODEL_TOOL_CALLING_UNAVAILABLE', 422);
     }
+    const maxOutputTokens = Math.min(outputEnvelope(input.purpose, allowance, refs.isPrivileged), modelInfo.outputTokenLimit);
     const requestedOutputTokens = input.config.maxOutputTokens;
-    if (requestedOutputTokens !== undefined && Number(requestedOutputTokens) > modelInfo.outputTokenLimit) {
+    if (requestedOutputTokens !== undefined && Number(requestedOutputTokens) > maxOutputTokens) {
       throw new RequestFailure('OUTPUT_TOKEN_LIMIT', 413);
     }
     let count: { totalTokens?: unknown };
@@ -415,25 +429,29 @@ export const managedGemini = onRequest({
     const inputTokens = Number(count.totalTokens);
     if (!Number.isSafeInteger(inputTokens) || inputTokens < 0) throw new RequestFailure('MODEL_CATALOG_UNAVAILABLE', 503);
     const requestedOutput = input.config.maxOutputTokens === undefined
-      ? modelInfo.outputTokenLimit
+      ? maxOutputTokens
       : Number(input.config.maxOutputTokens);
     if (policyModel.sharedContextWindow
       ? inputTokens + requestedOutput > modelInfo.inputTokenLimit
       : inputTokens > modelInfo.inputTokenLimit) throw new RequestFailure('MODEL_CONTEXT_LIMIT', 413);
 
+    const generationConfig = { ...input.config, maxOutputTokens: requestedOutput };
+    const estimate = estimateTextGenerationCost(modelId as Parameters<typeof estimateTextGenerationCost>[0], inputTokens, requestedOutput, new Date(currentTime));
     if (input.purpose === 'chat') await reserveGenerationCall(db, refs as ReturnType<typeof turnLedgerRefs>);
     else await reserveBriefingGenerationCall(db, refs as ReturnType<typeof briefingLedgerRefs>);
     callReserved = true;
+    await reserveCostExposure(db, refs, estimate, new Date(currentTime));
+    costReserved = true;
 
     const response = policyModel.interactionsApi
       ? await generateArgonStateless({
         apiKey: GEMINI_API_KEY.value(), contents: input.contents,
-        config: input.config, reasoningLevel,
+        config: generationConfig, reasoningLevel,
       })
       : await ai.models.generateContent({
         model: modelId,
         contents: input.contents as Content[],
-        config: managedGenerationConfig(input.config, reasoningLevel),
+        config: managedGenerationConfig(generationConfig, reasoningLevel),
       });
     const payload = {
       text: response.text || '',
@@ -446,20 +464,38 @@ export const managedGemini = onRequest({
     if (input.purpose === 'briefing' && !payload.text.trim()) throw new RequestFailure('GENERATION_FAILED', 502);
     const complete = input.purpose === 'briefing' || isCompletedUserTurn(payload);
     logger.info('Managed AI generation completed', {
+      requestId: input.callId,
+      identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+      tier: refs.isPrivileged ? 'privileged' : allowance,
+      purpose: input.purpose,
+      outcome: 'success',
+      durationMs: Date.now() - currentTime,
       model: modelId,
       reasoningLevel,
+      pricingVersion: estimate.pricingVersion,
+      estimatedCostMicroUsd: estimate.estimatedMicroUsd,
       usage: sanitizeUsageMetadata(payload.usageMetadata as Record<string, unknown> | null),
-      responseTextLength: payload.text.length,
       candidateCount: payload.candidates.length,
       functionCallCount: payload.functionCalls.length,
       completedUserTurn: complete,
     });
     try { await recordGenerationUsage(refs, modelId, reasoningLevel, payload.usageMetadata as Record<string, unknown> | null); }
     catch { logger.warn('Managed AI usage metadata could not be persisted', { model: modelId, reasoningLevel }); }
+    const actual = actualTextGenerationCost(modelId as Parameters<typeof actualTextGenerationCost>[0], payload.usageMetadata as Record<string, unknown> | null, new Date(currentTime));
+    if (actual) {
+      try { await settleCostExposure(refs, actual.actualMicroUsd, actual.pricingVersion); costReserved = false; }
+      catch { logger.error('Managed AI cost settlement failed; reservation retained', { requestId: input.callId, code: 'COST_SETTLEMENT_UNAVAILABLE' }); }
+    } else if (costReserved) {
+      await markCostExposureUncertain(refs);
+    }
     if (input.purpose === 'chat') await finishTurn(db, refs as ReturnType<typeof turnLedgerRefs>, complete);
     else await finishBriefing(db, refs as ReturnType<typeof briefingLedgerRefs>, complete);
     res.status(200).json(payload);
   } catch (error) {
+    if (costReserved) {
+      try { await markCostExposureUncertain(refs); }
+      catch { logger.error('Managed AI uncertain-cost reservation could not be marked', { requestId: input.callId, code: 'COST_SETTLEMENT_UNAVAILABLE' }); }
+    }
     if (briefingReserved) {
       try { await finishBriefing(db, refs as ReturnType<typeof briefingLedgerRefs>, false); }
       catch { /* reservation expiry and server-only ledger fail closed */ }
@@ -467,7 +503,27 @@ export const managedGemini = onRequest({
       try { await failTurn(db, refs as ReturnType<typeof turnLedgerRefs>, callReserved); }
       catch { /* fail closed: monthly generation reservations are never refunded */ }
     }
-    if (!(error instanceof RequestFailure)) logger.error('Managed AI generation failed', { code: 'GENERATION_FAILED' });
+    if (error instanceof RequestFailure) logger.warn('Managed AI request denied', {
+      requestId: input.callId,
+      identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+      tier: refs.isPrivileged ? 'privileged' : allowance,
+      purpose: input.purpose,
+      model: input.purpose === 'briefing' ? DEFAULT_MODEL : input.model,
+      denialCategory: error.code,
+      durationMs: Date.now() - currentTime,
+      costReservationStatus: costReserved ? 'uncertain' : 'none',
+    });
+    if (!(error instanceof RequestFailure)) logger.error('Managed AI generation failed', {
+      requestId: input.callId,
+      identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+      tier: refs.isPrivileged ? 'privileged' : allowance,
+      purpose: input.purpose,
+      model: input.purpose === 'briefing' ? DEFAULT_MODEL : input.model,
+      outcome: 'uncertain',
+      durationMs: Date.now() - currentTime,
+      costReservationStatus: costReserved ? 'retained' : 'none',
+      code: 'GENERATION_FAILED',
+    });
     sendError(res, error instanceof RequestFailure ? error : new RequestFailure('GENERATION_FAILED', 502));
   }
 });

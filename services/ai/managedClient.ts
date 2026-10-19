@@ -7,6 +7,7 @@ export type ManagedAiFailureCode =
   | 'USAGE_READ_UNAVAILABLE'
   | 'EMAIL_VERIFICATION_REQUIRED'
   | 'GENERATION_FAILED' | 'MANAGED_AI_NOT_CONFIGURED' | 'USER_CALL_IN_PROGRESS' | 'REQUEST_ALREADY_PROCESSED'
+  | 'TURN_GENERATION_LIMIT' | 'TURN_COST_ENVELOPE_EXHAUSTED' | 'USER_MANAGED_BUDGET_EXHAUSTED' | 'MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE' | 'MANAGED_AI_BUDGET_UNAVAILABLE' | 'PRICING_POLICY_UNAVAILABLE'
   | 'TURN_ALREADY_COMPLETE' | 'INVALID_REQUEST' | 'LIVE_TOKEN_UNAVAILABLE' | 'MODEL_INPUT_UNSUPPORTED' | 'PROVIDER_RATE_LIMITED';
 
 export class ManagedAiError extends Error {
@@ -50,6 +51,7 @@ export interface ManagedAiUsage {
   tier: 'guest' | 'account' | 'privileged';
   chat: { successfulTurns: number; monthlyLimit: number | null; month: string; resetAt: string };
   briefings: { successfulToday: number; dailyLimit: number | null; day: string; resetAt: string };
+  cost: { currency: 'USD'; estimatedSettledMicroUsd: number; reservedMicroUsd: number; monthlyLimitMicroUsd: number | null; month: string };
   tokens: { inputThisMonth: number; outputThisMonth: number; thinkingThisMonth: number; totalThisMonth: number; usageCallsThisMonth: number; month: string };
 }
 
@@ -203,7 +205,12 @@ export async function getManagedAiUsage(): Promise<ManagedAiUsage> {
   const response = await fetch(`${endpoint}/usage`, { headers, cache: 'no-store' });
   let payload: unknown;
   try { payload = await response.json(); } catch { throw new ManagedAiError('USAGE_READ_UNAVAILABLE', response.status || 503); }
-  if (!response.ok || !payload || typeof payload !== 'object' || !('chat' in payload) || !('briefings' in payload) || !('tokens' in payload)) {
+  const cost = payload && typeof payload === 'object' && 'cost' in payload ? (payload as { cost?: Partial<ManagedAiUsage['cost']> }).cost : undefined;
+  const costValid = cost?.currency === 'USD' && typeof cost.month === 'string' &&
+    Number.isSafeInteger(cost.estimatedSettledMicroUsd) && Number(cost.estimatedSettledMicroUsd) >= 0 &&
+    Number.isSafeInteger(cost.reservedMicroUsd) && Number(cost.reservedMicroUsd) >= 0 &&
+    (cost.monthlyLimitMicroUsd === null || (Number.isSafeInteger(cost.monthlyLimitMicroUsd) && Number(cost.monthlyLimitMicroUsd) > 0));
+  if (!response.ok || !payload || typeof payload !== 'object' || !('chat' in payload) || !('briefings' in payload) || !('tokens' in payload) || !costValid) {
     const code = (payload as { error?: { code?: unknown } })?.error?.code;
     throw new ManagedAiError(typeof code === 'string' ? code : 'USAGE_READ_UNAVAILABLE', response.status || 503);
   }

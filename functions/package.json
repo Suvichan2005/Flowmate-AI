@@ -5,8 +5,8 @@
   "engines": { "node": "22" },
   "scripts": {
     "build": "tsc",
-    "test:unit": "npm run build && node --test test/ledger.unit.test.mjs test/policy.unit.test.mjs",
-    "test:emulator": "npm run build && node --test --test-concurrency=1 test/ledger.emulator.test.mjs test/admin.emulator.test.mjs",
+    "test:unit": "npm run build && node --test test/cost.unit.test.mjs test/ledger.unit.test.mjs test/policy.unit.test.mjs",
+    "test:emulator": "npm run build && node --test --test-concurrency=1 test/ledger.emulator.test.mjs test/admin-budget.emulator.test.mjs test/admin.emulator.test.mjs",
     "test:http-emulator": "node --test test/http.emulator.test.mjs"
   },
   "dependencies": {

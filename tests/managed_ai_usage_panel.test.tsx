@@ -20,6 +20,7 @@ describe('managed AI usage panel', () => {
       tier: 'guest',
       chat: { successfulTurns: 5, monthlyLimit: 30, month: '2026-10', resetAt: '2026-11-01T00:00:00.000Z' },
       briefings: { successfulToday: 1, dailyLimit: 3, day: '2026-10-19', resetAt: '2026-10-19T18:30:00.000Z' },
+      cost: { currency: 'USD', month: '2026-10', estimatedSettledMicroUsd: 15000, reservedMicroUsd: 5000, monthlyLimitMicroUsd: 10000000 },
       tokens: { inputThisMonth: 9200, outputThisMonth: 1800, thinkingThisMonth: 400, totalThisMonth: 11400, usageCallsThisMonth: 17, month: '2026-10' },
     });
   });
@@ -34,7 +35,10 @@ describe('managed AI usage panel', () => {
     expect(screen.getByText('2 left')).toBeTruthy();
     expect(screen.getByText('Overall model usage this month')).toBeTruthy();
     expect(screen.getByText('11K tokens')).toBeTruthy();
+    expect(screen.getByText('Managed AI spending guard')).toBeTruthy();
+    expect(screen.getByText('$0.02 of $10.00')).toBeTruthy();
+    expect(screen.getByText(/pending or uncertain requests/)).toBeTruthy();
     expect(screen.queryByText(/model calls/i)).toBeNull();
-    expect(screen.getByText(/not an extra token cap/)).toBeTruthy();
+    expect(screen.getByText(/not another monthly token cap/)).toBeTruthy();
   });
 });

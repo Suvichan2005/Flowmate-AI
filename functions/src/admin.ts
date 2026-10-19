@@ -32,12 +32,14 @@ async function requireAdmin(db: Firestore, identity: AdminIdentity): Promise<boo
 
 async function readAccessOverview(db: Firestore) {
   const month = monthKey(new Date());
-  const [allowlist, pending, ordinaryUsage, control, liveControl] = await Promise.all([
+  const [allowlist, pending, ordinaryUsage, control, liveControl, budgetPolicy, budgetUsage] = await Promise.all([
     db.collection('managedAiAllowlist').where('status', '==', 'active').get(),
     db.collection('managedAiPendingInvitations').where('status', '==', 'pending').get(),
     db.doc(`managedAiMonthly/${month}`).get(),
     db.doc('system/managedAi').get(),
     db.doc('system/managedLive').get(),
+    db.doc('system/managedAiBudgetPolicy').get(),
+    db.doc(`managedAiCostProjectMonthly/${month}`).get(),
   ]);
   const activeEntries = await Promise.all(allowlist.docs.map(async entry => {
     const uid = String(entry.get('uid') || entry.id);
@@ -55,10 +57,26 @@ async function readAccessOverview(db: Firestore) {
     liveEnabled: liveControl.get('enabled') === true,
     month,
     ordinary: { modelCalls: Number(ordinaryUsage.get('callsReserved') || 0), applicationLimit: null, usageIsTelemetryOnly: true },
+    budget: {
+      enabled: budgetPolicy.get('enabled') === true,
+      currency: 'USD',
+      projectMonthlyLimitMicroUsd: Number(budgetPolicy.get('projectMonthlyLimitMicroUsd') || 0),
+      userMonthlyLimitMicroUsd: Number(budgetPolicy.get('userMonthlyLimitMicroUsd') || 0),
+      maxTurnExposureMicroUsd: Number(budgetPolicy.get('maxTurnExposureMicroUsd') || 0),
+      emergencyStop: budgetPolicy.get('emergencyStop') === true,
+      month,
+      projectReservedMicroUsd: Number(budgetUsage.get('reservedMicroUsd') || 0),
+      projectSettledMicroUsd: Number(budgetUsage.get('settledMicroUsd') || 0),
+    },
     privileged: { accounts: activeEntries.length, noApplicationUsageCeiling: true },
     allowlist: activeEntries,
     pendingInvitations: pending.docs.map(entry => ({ email: entry.get('emailLower') || '', status: 'pending' })),
   };
+}
+
+function budgetCents(value: unknown): number | null {
+  if (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 100_000_000) return null;
+  return Number(value);
 }
 
 async function addAllowlistEntry(db: Firestore, identity: AdminIdentity, email: string) {
@@ -183,6 +201,17 @@ export async function handleManagedAiAdmin(
       return true;
     }
     if (body.action === 'setEnabled' && Object.keys(body).every(key => ['action', 'enabled'].includes(key)) && typeof body.enabled === 'boolean') {
+      if (body.enabled) {
+        const budget = await db.doc('system/managedAiBudgetPolicy').get();
+        if (budget.get('enabled') !== true || budget.get('emergencyStop') === true ||
+          !Number.isSafeInteger(budget.get('projectMonthlyLimitMicroUsd')) || Number(budget.get('projectMonthlyLimitMicroUsd')) <= 0 ||
+          !Number.isSafeInteger(budget.get('userMonthlyLimitMicroUsd')) || Number(budget.get('userMonthlyLimitMicroUsd')) <= 0 ||
+          !Number.isSafeInteger(budget.get('maxTurnExposureMicroUsd')) || Number(budget.get('maxTurnExposureMicroUsd')) <= 0 ||
+          Number(budget.get('userMonthlyLimitMicroUsd')) > Number(budget.get('projectMonthlyLimitMicroUsd')) ||
+          Number(budget.get('maxTurnExposureMicroUsd')) > Number(budget.get('userMonthlyLimitMicroUsd'))) {
+          fail(res, 409, 'MANAGED_AI_BUDGET_UNAVAILABLE'); return true;
+        }
+      }
       const controlRef = db.doc('system/managedAi');
       const audit = db.collection('managedAiAdminAudit').doc(randomUUID());
       await db.runTransaction(async transaction => {
@@ -203,6 +232,7 @@ export async function handleManagedAiAdmin(
       return true;
     }
     if (body.action === 'setLiveEnabled' && Object.keys(body).every(key => ['action', 'enabled'].includes(key)) && typeof body.enabled === 'boolean') {
+      if (body.enabled) { fail(res, 409, 'MANAGED_LIVE_BUDGET_POLICY_REQUIRED'); return true; }
       const controlRef = db.doc('system/managedLive');
       const audit = db.collection('managedAiAdminAudit').doc(randomUUID());
       await db.runTransaction(async transaction => {
@@ -211,6 +241,64 @@ export async function handleManagedAiAdmin(
         transaction.create(audit, { actorUid: identity.uid, action: body.enabled ? 'managed_live_enable' : 'managed_live_disable', createdAt: timestamp });
       });
       res.status(200).json({ enabled: body.enabled });
+      return true;
+    }
+    if (body.action === 'setBudgetPolicy' && Object.keys(body).every(key => ['action', 'projectMonthlyLimitCents', 'userMonthlyLimitCents', 'maxTurnExposureCents'].includes(key))) {
+      const projectCents = budgetCents(body.projectMonthlyLimitCents);
+      const userCents = budgetCents(body.userMonthlyLimitCents);
+      const turnCents = budgetCents(body.maxTurnExposureCents);
+      if (!projectCents || !userCents || !turnCents || turnCents > userCents || userCents > projectCents) {
+        fail(res, 400, 'INVALID_BUDGET_POLICY'); return true;
+      }
+      const policyRef = db.doc('system/managedAiBudgetPolicy');
+      const audit = db.collection('managedAiAdminAudit').doc(randomUUID());
+      await db.runTransaction(async transaction => {
+        const existingPolicy = await transaction.get(policyRef);
+        const timestamp = Timestamp.now();
+        transaction.set(policyRef, {
+          enabled: true,
+          currency: 'USD',
+          projectMonthlyLimitMicroUsd: projectCents * 10_000,
+          userMonthlyLimitMicroUsd: userCents * 10_000,
+          maxTurnExposureMicroUsd: turnCents * 10_000,
+          // Editing ceilings must never silently clear a provider-cost emergency stop.
+          emergencyStop: existingPolicy.get('emergencyStop') === true,
+          policyVersion: 'managed-cost-v1',
+          updatedAt: timestamp,
+          updatedBy: identity.uid,
+        }, { merge: true });
+        transaction.create(audit, {
+          actorUid: identity.uid,
+          action: 'managed_ai_budget_policy_set',
+          projectMonthlyLimitCents: projectCents,
+          userMonthlyLimitCents: userCents,
+          maxTurnExposureCents: turnCents,
+          createdAt: timestamp,
+        });
+      });
+      res.status(200).json({ enabled: true, currency: 'USD' });
+      return true;
+    }
+    if (body.action === 'clearEmergencyStop' && Object.keys(body).every(key => key === 'action')) {
+      const policyRef = db.doc('system/managedAiBudgetPolicy');
+      const audit = db.collection('managedAiAdminAudit').doc(randomUUID());
+      const cleared = await db.runTransaction(async transaction => {
+        const policy = await transaction.get(policyRef);
+        if (policy.get('enabled') !== true || policy.get('currency') !== 'USD' ||
+          !Number.isSafeInteger(policy.get('projectMonthlyLimitMicroUsd')) || Number(policy.get('projectMonthlyLimitMicroUsd')) <= 0 ||
+          !Number.isSafeInteger(policy.get('userMonthlyLimitMicroUsd')) || Number(policy.get('userMonthlyLimitMicroUsd')) <= 0 ||
+          !Number.isSafeInteger(policy.get('maxTurnExposureMicroUsd')) || Number(policy.get('maxTurnExposureMicroUsd')) <= 0 ||
+          Number(policy.get('userMonthlyLimitMicroUsd')) > Number(policy.get('projectMonthlyLimitMicroUsd')) ||
+          Number(policy.get('maxTurnExposureMicroUsd')) > Number(policy.get('userMonthlyLimitMicroUsd'))) {
+          return false;
+        }
+        const timestamp = Timestamp.now();
+        transaction.set(policyRef, { emergencyStop: false, emergencyStopReason: null, updatedAt: timestamp, updatedBy: identity.uid }, { merge: true });
+        transaction.create(audit, { actorUid: identity.uid, action: 'managed_ai_emergency_stop_cleared', createdAt: timestamp });
+        return true;
+      });
+      if (!cleared) { fail(res, 409, 'MANAGED_AI_BUDGET_UNAVAILABLE'); return true; }
+      res.status(200).json({ emergencyStop: false });
       return true;
     }
     fail(res, 400, 'INVALID_ADMIN_REQUEST');

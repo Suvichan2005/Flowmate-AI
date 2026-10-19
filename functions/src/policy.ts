@@ -77,6 +77,8 @@ export const ACCOUNT_DAILY_BRIEFING_LIMIT = 5;
 // Model-call records are telemetry only. Monetary safeguards are provider-side;
 // usage reporting must not become an application quota.
 export const RATE_LIMIT_PER_MINUTE = 20;
+// A user turn may include tool continuations, but never an unbounded model loop.
+export const MAX_GENERATIONS_PER_TURN = 6;
 export const RESERVATION_TTL_MS = 10 * 60 * 1000;
 // Keep the owner-approved Gen 2 request bound and let the lease expire shortly
 // after a timed-out request can no longer settle its ledger reservation.

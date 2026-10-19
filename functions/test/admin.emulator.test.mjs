@@ -79,3 +79,38 @@ test('owner kill switch changes are audited atomically', async () => {
   assert.equal((await db.doc('system/managedAi').get()).get('enabled'), false);
   assert.equal((await db.collection('managedAiAdminAudit').where('action', '==', 'managed_ai_disable').get()).size, 1);
 });
+
+test('managed AI cannot be enabled without owner-set budget protection', async () => {
+  const identity = { uid: owner.uid, email: owner.email, emailVerified: true, anonymous: false };
+  await db.doc('system/managedAi').set({ enabled: false, mode: 'general' }, { merge: true });
+  await db.doc('system/managedAiBudgetPolicy').delete();
+  const denied = await invoke('POST', { action: 'setEnabled', enabled: true }, identity);
+  assert.equal(denied.statusCode, 409);
+  assert.equal(denied.payload.error.code, 'MANAGED_AI_BUDGET_UNAVAILABLE');
+  assert.equal((await db.doc('system/managedAi').get()).get('enabled'), false);
+
+  const configured = await invoke('POST', {
+    action: 'setBudgetPolicy', projectMonthlyLimitCents: 1000,
+    userMonthlyLimitCents: 500, maxTurnExposureCents: 100,
+  }, identity);
+  assert.equal(configured.statusCode, 200);
+  const policy = await db.doc('system/managedAiBudgetPolicy').get();
+  assert.equal(policy.get('projectMonthlyLimitMicroUsd'), 10_000_000);
+  assert.equal(policy.get('userMonthlyLimitMicroUsd'), 5_000_000);
+  await db.doc('system/managedAiBudgetPolicy').set({ emergencyStop: true, emergencyStopReason: 'test' }, { merge: true });
+  const editedWhileStopped = await invoke('POST', {
+    action: 'setBudgetPolicy', projectMonthlyLimitCents: 1200,
+    userMonthlyLimitCents: 600, maxTurnExposureCents: 120,
+  }, identity);
+  assert.equal(editedWhileStopped.statusCode, 200);
+  assert.equal((await db.doc('system/managedAiBudgetPolicy').get()).get('emergencyStop'), true);
+  const blockedByStop = await invoke('POST', { action: 'setEnabled', enabled: true }, identity);
+  assert.equal(blockedByStop.statusCode, 409);
+  const cleared = await invoke('POST', { action: 'clearEmergencyStop' }, identity);
+  assert.equal(cleared.statusCode, 200);
+  const enabled = await invoke('POST', { action: 'setEnabled', enabled: true }, identity);
+  assert.equal(enabled.statusCode, 200);
+  assert.equal((await db.doc('system/managedAi').get()).get('enabled'), true);
+  await db.doc('system/managedAi').set({ enabled: false, mode: 'general' }, { merge: true });
+  await db.doc('system/managedAiBudgetPolicy').delete();
+});

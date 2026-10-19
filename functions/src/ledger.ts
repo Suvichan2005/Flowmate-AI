@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { getFirestore, Timestamp, type Firestore, type DocumentData, type DocumentReference } from 'firebase-admin/firestore';
-import { RequestFailure, GUEST_CHAT_TURN_LIMIT, ACCOUNT_CHAT_TURN_LIMIT, GUEST_DAILY_BRIEFING_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, RATE_LIMIT_PER_MINUTE, RESERVATION_TTL_MS, ACTIVE_MODEL_CALL_LEASE_MS, dayKey, monthKey } from './policy.js';
+import { RequestFailure, GUEST_CHAT_TURN_LIMIT, ACCOUNT_CHAT_TURN_LIMIT, GUEST_DAILY_BRIEFING_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, RATE_LIMIT_PER_MINUTE, MAX_GENERATIONS_PER_TURN, RESERVATION_TTL_MS, ACTIVE_MODEL_CALL_LEASE_MS, dayKey, monthKey } from './policy.js';
+import type { CostEstimate } from './cost.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export interface TurnLedgerRefs {
@@ -149,6 +150,9 @@ export async function reserveTurn(db: Firestore, refs: TurnLedgerRefs, now = Dat
     const turnData = turn.data() || {};
     const turnExpired = turn.exists && turnData.status === 'pending' && Number(turnData.expiresAtMs || 0) <= now;
     const isNewTurn = !turn.exists || turnData.status === 'failed' || turnData.status === 'expired' || turnExpired;
+    if (!isNewTurn && Number(turnData.callsReserved || 0) >= MAX_GENERATIONS_PER_TURN) {
+      throw new RequestFailure('TURN_GENERATION_LIMIT', 429);
+    }
     const windowStart = Number(userData.rateWindowStartMs || 0);
     const rateCount = windowStart > now - 60_000 ? Number(userData.rateWindowCount || 0) : 0;
     // A conversation turn may use multiple model/tool rounds. Rate-limit human
@@ -230,7 +234,10 @@ export async function reserveBriefing(db: Firestore, refs: BriefingLedgerRefs, n
       activeCallUntilMs: now + ACTIVE_MODEL_CALL_LEASE_MS,
     }, { merge: true });
     transaction.set(privileged ? refs.privilegedUserDay : refs.userDay, { reservedBriefings: reserved + 1, updatedAt: Timestamp.now() }, { merge: true });
-    transaction.create(refs.call, { status: 'pending', purpose: 'briefing', reservedAt: Timestamp.now(), privileged });
+    transaction.create(refs.call, {
+      status: 'pending', purpose: 'briefing', reservedAt: Timestamp.now(), privileged,
+      expiresAt: Timestamp.fromMillis(now + 90 * 24 * 60 * 60 * 1000),
+    });
     refs.isPrivileged = privileged;
   });
 }
@@ -312,7 +319,164 @@ export async function reserveGenerationCall(db: Firestore, refs: TurnLedgerRefs)
         updatedAt: Timestamp.now(),
       }, { merge: true });
     }
-    transaction.create(refs.call, { status: 'reserved', reservedAt: Timestamp.now() });
+    transaction.create(refs.call, {
+      status: 'reserved', reservedAt: Timestamp.now(),
+      expiresAt: Timestamp.fromMillis(Date.now() + 90 * 24 * 60 * 60 * 1000),
+    });
+  });
+}
+
+function trustedCounter(value: unknown): number {
+  const number = value === undefined ? 0 : Number(value);
+  if (!Number.isSafeInteger(number) || number < 0) throw new RequestFailure('MANAGED_AI_BUDGET_UNAVAILABLE', 503);
+  return number;
+}
+
+/** Reserve estimated provider exposure before sending the generation request. */
+export async function reserveCostExposure(
+  db: Firestore,
+  refs: TurnLedgerRefs | BriefingLedgerRefs,
+  estimate: CostEstimate,
+  now = new Date(),
+): Promise<void> {
+  const month = monthKey(now);
+  const uidHash = hash(refs.uid);
+  const policyRef = db.doc('system/managedAiBudgetPolicy');
+  const projectBudgetRef = db.doc(`managedAiCostProjectMonthly/${month}`);
+  const userBudgetRef = db.doc(`managedAiCostUserMonthly/${month}_${uidHash}`);
+  const callRef = refs.call;
+  const turnRef = 'turn' in refs ? refs.turn : null;
+
+  await db.runTransaction(async transaction => {
+    const [policy, projectBudget, userBudget, call, turn] = await Promise.all([
+      transaction.get(policyRef), transaction.get(projectBudgetRef), transaction.get(userBudgetRef),
+      transaction.get(callRef), turnRef ? transaction.get(turnRef) : Promise.resolve(null),
+    ]);
+    const policyData = policy.data() || {};
+    const projectLimit = trustedCounter(policyData.projectMonthlyLimitMicroUsd);
+    const userLimit = trustedCounter(policyData.userMonthlyLimitMicroUsd);
+    const turnLimit = trustedCounter(policyData.maxTurnExposureMicroUsd);
+    if (policy.get('enabled') !== true || policy.get('currency') !== 'USD' || !projectLimit || !userLimit || !turnLimit ||
+        userLimit > projectLimit || turnLimit > userLimit || policy.get('emergencyStop') === true) {
+      throw new RequestFailure('MANAGED_AI_BUDGET_UNAVAILABLE', 503);
+    }
+    if (!Number.isSafeInteger(estimate.estimatedMicroUsd) || estimate.estimatedMicroUsd <= 0 ||
+        !estimate.pricingVersion || !Number.isSafeInteger(estimate.inputTokens) || estimate.inputTokens < 0 ||
+        !Number.isSafeInteger(estimate.maximumOutputTokens) || estimate.maximumOutputTokens < 1) {
+      throw new RequestFailure('PRICING_POLICY_UNAVAILABLE', 503);
+    }
+    if (!call.exists || ['reserved', 'complete', 'failed'].includes(String(call.get('costStatus') || ''))) {
+      throw new RequestFailure('REQUEST_ALREADY_PROCESSED', 409);
+    }
+
+    const projectData = projectBudget.data() || {};
+    const userData = userBudget.data() || {};
+    const projectReserved = trustedCounter(projectData.reservedMicroUsd);
+    const projectSettled = trustedCounter(projectData.settledMicroUsd);
+    const userReserved = trustedCounter(userData.reservedMicroUsd);
+    const userSettled = trustedCounter(userData.settledMicroUsd);
+    const projectExposure = projectSettled + projectReserved + estimate.estimatedMicroUsd;
+    const userExposure = userSettled + userReserved + estimate.estimatedMicroUsd;
+    if (!Number.isSafeInteger(projectExposure) || projectExposure > projectLimit) {
+      throw new RequestFailure('MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE', 503);
+    }
+    if (!Number.isSafeInteger(userExposure) || userExposure > userLimit) {
+      throw new RequestFailure('USER_MANAGED_BUDGET_EXHAUSTED', 429);
+    }
+
+    let turnReserved = 0;
+    let turnSettled = 0;
+    if (turn) {
+      if (!turn.exists || turn.get('status') !== 'pending') throw new RequestFailure('TURN_ALREADY_COMPLETE', 409);
+      turnReserved = trustedCounter(turn.get('costReservedMicroUsd'));
+      turnSettled = trustedCounter(turn.get('costSettledMicroUsd'));
+      const turnExposure = turnReserved + turnSettled + estimate.estimatedMicroUsd;
+      if (!Number.isSafeInteger(turnExposure) || turnExposure > turnLimit) {
+        throw new RequestFailure('TURN_COST_ENVELOPE_EXHAUSTED', 413);
+      }
+      transaction.set(turnRef!, { costReservedMicroUsd: turnReserved + estimate.estimatedMicroUsd, updatedAt: Timestamp.now() }, { merge: true });
+    }
+    transaction.set(projectBudgetRef, {
+      reservedMicroUsd: projectReserved + estimate.estimatedMicroUsd,
+      ...(!projectBudget.exists ? { expiresAt: Timestamp.fromMillis(Date.now() + 400 * 24 * 60 * 60 * 1000) } : {}),
+      updatedAt: Timestamp.now(),
+    }, { merge: true });
+    transaction.set(userBudgetRef, {
+      reservedMicroUsd: userReserved + estimate.estimatedMicroUsd,
+      ...(!userBudget.exists ? { expiresAt: Timestamp.fromMillis(Date.now() + 400 * 24 * 60 * 60 * 1000) } : {}),
+      updatedAt: Timestamp.now(),
+    }, { merge: true });
+    transaction.set(callRef, {
+      costStatus: 'reserved', costMonth: month, costReservedMicroUsd: estimate.estimatedMicroUsd,
+      costPricingVersion: estimate.pricingVersion, costInputTokens: estimate.inputTokens,
+      costMaximumOutputTokens: estimate.maximumOutputTokens, costReservedAt: Timestamp.now(),
+    }, { merge: true });
+  });
+}
+
+/** Mark post-submission failures as uncertain and retain their exposure reservation. */
+export async function markCostExposureUncertain(refs: TurnLedgerRefs | BriefingLedgerRefs): Promise<void> {
+  await refs.call.firestore.runTransaction(async transaction => {
+    const call = await transaction.get(refs.call);
+    if (call.get('costStatus') === 'reserved') {
+      transaction.set(refs.call, { costStatus: 'uncertain', costUncertainAt: Timestamp.now() }, { merge: true });
+    }
+  });
+}
+
+/** Settle only when authoritative provider usage is present; otherwise hold the reserve. */
+export async function settleCostExposure(
+  refs: TurnLedgerRefs | BriefingLedgerRefs,
+  actualMicroUsd: number,
+  pricingVersion: string,
+): Promise<void> {
+  if (!Number.isSafeInteger(actualMicroUsd) || actualMicroUsd < 0 || !pricingVersion) {
+    throw new RequestFailure('PRICING_POLICY_UNAVAILABLE', 503);
+  }
+  const db = refs.call.firestore;
+  const turnRef = 'turn' in refs ? refs.turn : null;
+  await db.runTransaction(async transaction => {
+    const callSnapshot = await transaction.get(refs.call);
+    const status = callSnapshot.get('costStatus');
+    if (status === 'settled') return;
+    if (status !== 'reserved' && status !== 'uncertain') throw new RequestFailure('MANAGED_AI_BUDGET_UNAVAILABLE', 503);
+    const month = String(callSnapshot.get('costMonth') || '');
+    if (!/^\d{4}-\d{2}$/.test(month)) throw new RequestFailure('MANAGED_AI_BUDGET_UNAVAILABLE', 503);
+    const uidHash = hash(refs.uid);
+    const projectBudgetRef = db.doc(`managedAiCostProjectMonthly/${month}`);
+    const userBudgetRef = db.doc(`managedAiCostUserMonthly/${month}_${uidHash}`);
+    const [projectBudget, userBudget, turn] = await Promise.all([
+      transaction.get(projectBudgetRef), transaction.get(userBudgetRef), turnRef ? transaction.get(turnRef) : Promise.resolve(null),
+    ]);
+    const reserved = trustedCounter(callSnapshot.get('costReservedMicroUsd'));
+    const projectReserved = trustedCounter(projectBudget.get('reservedMicroUsd'));
+    const userReserved = trustedCounter(userBudget.get('reservedMicroUsd'));
+    if (projectReserved < reserved || userReserved < reserved) throw new RequestFailure('MANAGED_AI_BUDGET_UNAVAILABLE', 503);
+    const estimateExceeded = actualMicroUsd > reserved;
+    transaction.set(projectBudgetRef, {
+      reservedMicroUsd: projectReserved - reserved,
+      settledMicroUsd: trustedCounter(projectBudget.get('settledMicroUsd')) + actualMicroUsd,
+      updatedAt: Timestamp.now(),
+    }, { merge: true });
+    transaction.set(userBudgetRef, {
+      reservedMicroUsd: userReserved - reserved,
+      settledMicroUsd: trustedCounter(userBudget.get('settledMicroUsd')) + actualMicroUsd,
+      updatedAt: Timestamp.now(),
+    }, { merge: true });
+    if (turn) {
+      const turnReserved = trustedCounter(turn.get('costReservedMicroUsd'));
+      if (turnReserved < reserved) throw new RequestFailure('MANAGED_AI_BUDGET_UNAVAILABLE', 503);
+      transaction.set(turnRef!, {
+        costReservedMicroUsd: turnReserved - reserved,
+        costSettledMicroUsd: trustedCounter(turn.get('costSettledMicroUsd')) + actualMicroUsd,
+        updatedAt: Timestamp.now(),
+      }, { merge: true });
+    }
+    transaction.set(refs.call, {
+      costStatus: 'settled', costSettledMicroUsd: actualMicroUsd, costSettledPricingVersion: pricingVersion,
+      costSettledAt: Timestamp.now(), ...(estimateExceeded ? { costEstimateExceeded: true } : {}),
+    }, { merge: true });
+    if (estimateExceeded) transaction.set(db.doc('system/managedAiBudgetPolicy'), { emergencyStop: true, emergencyStopReason: 'provider_usage_exceeded_reservation', updatedAt: Timestamp.now() }, { merge: true });
   });
 }
 
