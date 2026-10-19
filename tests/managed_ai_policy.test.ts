@@ -17,7 +17,7 @@ const request = (extra: Record<string, unknown> = {}) => ({
 
 describe('managed Gemini policy', () => {
   it('keeps guest and account chat/briefing allowances separate from model-call reporting', () => {
-    expect([GUEST_CHAT_TURN_LIMIT, ACCOUNT_CHAT_TURN_LIMIT]).toEqual([10, 50]);
+    expect([GUEST_CHAT_TURN_LIMIT, ACCOUNT_CHAT_TURN_LIMIT]).toEqual([30, 150]);
     expect([GUEST_DAILY_BRIEFING_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT]).toEqual([3, 5]);
   });
 

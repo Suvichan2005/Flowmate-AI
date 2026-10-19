@@ -455,7 +455,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
 
             {/* AI Daily Briefing */}
             <div className="mb-8 relative group">
-                <div data-testid="dashboard-daily-briefing" className="relative bg-ideapad-base p-0 overflow-visible">
+                <div data-testid="dashboard-daily-briefing" className="relative overflow-hidden rounded-2xl border border-ideapad-border bg-ideapad-surface p-5 sm:p-7">
                     <div className="absolute top-0 right-0 p-8 opacity-5 text-emerald-400">
                         <Sparkles size={120} />
                     </div>

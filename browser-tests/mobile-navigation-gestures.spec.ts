@@ -205,7 +205,8 @@ test('rapid alternating page swipes cannot race a navigation transition', async 
 
   await expect(page.getByRole('dialog', { name: 'Mobile navigation' })).toBeHidden();
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
-  expect(await page.getByTestId('dashboard-daily-briefing').evaluate(element => getComputedStyle(element).borderWidth)).toBe('0px');
+  expect(await page.getByTestId('dashboard-daily-briefing').evaluate(element => getComputedStyle(element).borderTopWidth)).toBe('1px');
+  await expect(page.getByTestId('dashboard-daily-briefing')).toHaveClass(/rounded-2xl/);
   await expect(page.getByTestId('briefing-refresh-button')).toHaveAttribute('title', /briefing/i);
   await expect.poll(() => surface.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41)).toBe(0);
 

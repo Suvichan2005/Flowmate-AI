@@ -77,7 +77,9 @@ const AiModelSelector: React.FC<{ compact?: boolean }> = ({ compact = false }) =
       if (event.key === 'Escape') {
         event.preventDefault();
         setOpen(false);
-        compactTriggerRef.current?.focus();
+        // Wait until the portal has unmounted; otherwise its teardown can
+        // move focus back to the document body after this synchronous focus.
+        requestAnimationFrame(() => compactTriggerRef.current?.focus({ preventScroll: true }));
       }
     };
     document.addEventListener('pointerdown', handlePointerDown, true);

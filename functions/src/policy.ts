@@ -68,8 +68,10 @@ export const SUPPORTED_MANAGED_MODELS: ManagedModelPolicy[] = [
 
 export type ManagedModelId = typeof SUPPORTED_MANAGED_MODELS[number]['id'];
 // Calendar and account allowances are deliberately separate from model-call billing.
-export const GUEST_CHAT_TURN_LIMIT = 10;
-export const ACCOUNT_CHAT_TURN_LIMIT = 50;
+// Generous portfolio/demo allowances; separate per-minute and provider-side
+// controls remain the abuse guard while rolling resource budgets are evaluated.
+export const GUEST_CHAT_TURN_LIMIT = 30;
+export const ACCOUNT_CHAT_TURN_LIMIT = 150;
 export const GUEST_DAILY_BRIEFING_LIMIT = 3;
 export const ACCOUNT_DAILY_BRIEFING_LIMIT = 5;
 // Model-call records are telemetry only. Monetary safeguards are provider-side;

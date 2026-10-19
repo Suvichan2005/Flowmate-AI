@@ -81,12 +81,12 @@ test('privileged identities have no turn, monthly call, or ordinary rate ceiling
   await failTurn(db, revoked, false);
 });
 
-test('failed requests release the reservation; account allowance counts 50 successful turns', async () => {
+test('failed requests release the reservation; account allowance counts 150 successful turns', async () => {
   const userId = uid();
   const failed = turnLedgerRefs(db, userId, 'turn_failed_0000001', 'call_failed_00000001');
   await reserveTurn(db, failed);
   await failTurn(db, failed, false);
-  for (let index = 0; index < 50; index += 1) {
+  for (let index = 0; index < 150; index += 1) {
     const suffix = String(index).padStart(8, '0');
     const now = Date.now() + index * 66_000;
     const refs = turnLedgerRefs(db, userId, `turn_success_${suffix}`, `call_success_${suffix}`, stableDate);
@@ -94,14 +94,14 @@ test('failed requests release the reservation; account allowance counts 50 succe
     await reserveGenerationCall(db, refs);
     await finishTurn(db, refs, true);
   }
-  const exhausted = turnLedgerRefs(db, userId, 'turn_success_00000010', 'call_success_00000010');
+  const exhausted = turnLedgerRefs(db, userId, 'turn_allowance_exhausted_01', 'call_allowance_exhausted_01');
   await assert.rejects(reserveTurn(db, exhausted), error => error.code === 'TURN_ALLOWANCE_EXHAUSTED');
-  assert.equal((await db.doc(`managedAiUsers/${userId}`).get()).get('successfulTurns'), 50);
+  assert.equal((await db.doc(`managedAiUsers/${userId}`).get()).get('successfulTurns'), 150);
 });
 
-test('guests receive ten lifetime chat turns separate from account records', async () => {
+test('guests receive 30 lifetime chat turns separate from account records', async () => {
   const guestId = uid();
-  for (let index = 0; index < 10; index += 1) {
+  for (let index = 0; index < 30; index += 1) {
     const suffix = String(index).padStart(8, '0');
     const now = Date.now() + index * 66_000;
     const refs = turnLedgerRefs(db, guestId, `guest_success_${suffix}`, `guest_call_${suffix}`, stableDate, undefined, 'guest');
@@ -109,8 +109,8 @@ test('guests receive ten lifetime chat turns separate from account records', asy
     await reserveGenerationCall(db, refs);
     await finishTurn(db, refs, true);
   }
-  assert.equal((await db.doc(`managedAiGuests/${guestId}`).get()).get('successfulTurns'), 10);
-  const exhausted = turnLedgerRefs(db, guestId, 'guest_success_00000010', 'guest_call_00000010', new Date(), undefined, 'guest');
+  assert.equal((await db.doc(`managedAiGuests/${guestId}`).get()).get('successfulTurns'), 30);
+  const exhausted = turnLedgerRefs(db, guestId, 'guest_allowance_exhausted_01', 'guest_call_allowance_exhausted_01', new Date(), undefined, 'guest');
   await assert.rejects(reserveTurn(db, exhausted), error => error.code === 'GUEST_TURN_ALLOWANCE_EXHAUSTED');
   const accountRefs = turnLedgerRefs(db, guestId, 'account_success_00000000', 'account_call_00000000');
   await reserveTurn(db, accountRefs);
@@ -120,21 +120,23 @@ test('guests receive ten lifetime chat turns separate from account records', asy
 
 test('briefings have a separate daily quota and failed model calls do not consume a successful briefing', async () => {
   const guestId = uid();
-  const first = briefingLedgerRefs(db, guestId, 'briefing_failed_0001', new Date(), undefined, 'guest');
+  const date = new Date();
+  const first = briefingLedgerRefs(db, guestId, 'briefing_failed_0001', date, undefined, 'guest');
+  const globalCallsBefore = Number((await first.month.get()).get('callsReserved') || 0);
   await reserveBriefing(db, first);
   await reserveBriefingGenerationCall(db, first);
   await finishBriefing(db, first, false);
   assert.equal((await first.daily.get()).get('successful') || 0, 0);
-  assert.equal((await first.month.get()).get('callsReserved'), 1);
+  assert.equal((await first.month.get()).get('callsReserved'), globalCallsBefore + 1);
 
   for (let index = 0; index < 3; index += 1) {
-    const refs = briefingLedgerRefs(db, guestId, `briefing_success_${String(index).padStart(8, '0')}`, stableDate, undefined, 'guest');
+    const refs = briefingLedgerRefs(db, guestId, `briefing_success_${String(index).padStart(8, '0')}`, date, undefined, 'guest');
     await reserveBriefing(db, refs);
     await reserveBriefingGenerationCall(db, refs);
     await finishBriefing(db, refs, true);
   }
   assert.equal((await first.daily.get()).get('successful'), 3);
-  const next = briefingLedgerRefs(db, guestId, 'briefing_success_00000003', stableDate, undefined, 'guest');
+  const next = briefingLedgerRefs(db, guestId, 'briefing_success_00000003', date, undefined, 'guest');
   await assert.rejects(reserveBriefing(db, next), error => error.code === 'BRIEFING_ALLOWANCE_EXHAUSTED');
 
   const chat = turnLedgerRefs(db, guestId, 'chat_independent_0001', 'chat_independent_00001', stableDate, undefined, 'guest');
@@ -156,10 +158,11 @@ test('only one overlapping request succeeds for a UID', async () => {
 test('failed provider attempts remain in the per-user and global monthly call ledgers', async () => {
   const userId = uid();
   const refs = turnLedgerRefs(db, userId, 'turn_billable_00001', 'call_billable_000001');
+  const globalCallsBefore = Number((await refs.month.get()).get('callsReserved') || 0);
   await reserveTurn(db, refs);
   await reserveGenerationCall(db, refs);
   await failTurn(db, refs, true);
-  assert.equal((await refs.month.get()).get('callsReserved'), 1);
+  assert.equal((await refs.month.get()).get('callsReserved'), globalCallsBefore + 1);
   assert.equal((await refs.userMonth.get()).get('callsReserved'), 1);
   assert.equal((await refs.call.get()).get('status'), 'failed');
 });

@@ -354,7 +354,10 @@ const App: React.FC = () => {
       const dragLimit = Math.max(150, window.innerWidth * 0.78);
       setMobileGestureOffset({ x: Math.max(-dragLimit, Math.min(dragLimit, deltaX * 0.94)), y: 0 });
     } else if (isPullingDown && !loading && !isStreaming && !isLiveMode) {
-      setMobileGestureOffset({ x: 0, y: Math.min(80, deltaY * 0.55) });
+      // Keep the release state reachable: the previous 44px visual cap was
+      // below the 47px arm point on a 390px viewport, so it could never say
+      // "Release to update" even though the gesture itself could commit.
+      setMobileGestureOffset({ x: 0, y: Math.min(88, deltaY * 0.72) });
     } else {
       setMobileGestureOffset({ x: 0, y: 0 });
     }
@@ -1978,19 +1981,19 @@ const App: React.FC = () => {
               data-testid="mobile-refresh-indicator"
               role="status"
               aria-live="polite"
-              className="pointer-events-none absolute left-1/2 z-50 inline-flex -translate-x-1/2 items-center gap-2 rounded-full border border-emerald-300/30 bg-slate-800 px-3 py-1.5 text-[11px] font-medium text-emerald-100 shadow-lg"
+              aria-label={isMobileRefreshing ? 'Refreshing workspace' : mobileGestureOffset.y >= Math.min(88, mobileGestureThreshold(window.innerWidth) * 0.72) ? 'Release to refresh' : 'Pull to refresh'}
+              data-refresh-state={isMobileRefreshing ? 'refreshing' : mobileGestureOffset.y >= Math.min(88, mobileGestureThreshold(window.innerWidth) * 0.72) ? 'armed' : 'pulling'}
+              className="pointer-events-none absolute left-1/2 z-50 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border border-emerald-300/30 bg-ideapad-surface text-ideapad-mint shadow-lg transition-[transform,opacity] duration-150"
               style={{
                 top: `${Math.max(0, (mobileGestureOffset.y - 32) / 2)}px`,
                 opacity: isMobileRefreshing ? 1 : Math.min(1, mobileGestureOffset.y / 34),
               }}
             >
-              {isMobileRefreshing ? (
-                <span className="flex items-center gap-2"><RefreshCw size={12} className="animate-spin" />Refreshing workspace</span>
-              ) : mobileGestureOffset.y >= mobileGestureThreshold(window.innerWidth) * 0.55 ? (
-                <><RefreshCw size={12} /> Release to update</>
-              ) : (
-                <><RefreshCw size={12} className="opacity-70" /> Pull to update</>
-              )}
+              <RefreshCw
+                size={16}
+                aria-hidden="true"
+                className={`transition-transform duration-150 ${isMobileRefreshing ? 'animate-spin' : mobileGestureOffset.y >= Math.min(88, mobileGestureThreshold(window.innerWidth) * 0.72) ? 'rotate-180' : 'opacity-75'}`}
+              />
             </div>
           ) : null}
           {/* Main content or full screen chat */}
