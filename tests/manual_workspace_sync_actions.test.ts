@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const firestoreMocks = vi.hoisted(() => Object.fromEntries([
-  'saveUserData', 'loadUserData', 'subscribeToUserData', 'unsubscribeFromUserData',
-  'mergeData', 'mergeMessages', 'mergeChatSessions', 'mergeCloudSettings', 'saveMessage',
-  'saveFoodLogs', 'saveAttendanceData', 'saveChatSessions', 'deleteChannelMessages',
-  'syncEntities', 'syncRelationships', 'saveUserConfig',
-].map(name => [name, vi.fn()])));
+const firestoreMocks = vi.hoisted(() => ({
+  ...Object.fromEntries([
+    'saveUserData', 'loadUserData', 'subscribeToUserData', 'unsubscribeFromUserData',
+    'mergeData', 'mergeMessages', 'mergeChatSessions', 'mergeCloudSettings', 'saveMessage',
+    'saveFoodLogs', 'saveAttendanceData', 'saveChatSessions', 'deleteChannelMessages',
+    'syncEntities', 'syncRelationships', 'saveUserConfig',
+  ].map(name => [name, vi.fn()])),
+  stripRemovedLocationSettings: (settings: unknown) => settings,
+}));
 
 vi.mock('../services/firebase', async importOriginal => ({
   ...(await importOriginal<any>()),

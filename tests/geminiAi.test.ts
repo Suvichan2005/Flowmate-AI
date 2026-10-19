@@ -41,7 +41,7 @@ describe('Gemini AI Model Configurations', () => {
 });
 
 describe('Gemini Tool Declarations (FLOWMATE_TOOLS)', () => {
-    it('bundles all 13 registered function declarations including greenfield query & reflect tools', () => {
+    it('bundles all 12 supported function declarations including greenfield query & reflect tools', () => {
         expect(FLOWMATE_TOOLS).toHaveLength(1);
         const decls = FLOWMATE_TOOLS[0].functionDeclarations;
         expect(decls).toBeDefined();
