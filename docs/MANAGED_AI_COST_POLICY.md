@@ -52,7 +52,7 @@ The smallest robust next step is a server-side WebSocket relay or equivalent pro
 
 Generation logs and private server-only call records may contain request/session IDs, a one-way UID reference, tier, feature, model, price-catalogue version, token usage, estimated/reserved/settled exposure, duration, outcome, and a fixed denial category. They exclude prompts, responses, decrypted workspace content, voice recordings, credentials and full tool arguments. Ordinary users receive only their own allowances and token totals; project-wide exposure and model-call totals are owner-only.
 
-Firestore TTL policies for `managedAiCalls.expiresAt` (90 days), `managedAiCostProjectMonthly.expiresAt` (400 days), and `managedAiCostUserMonthly.expiresAt` (400 days, approximately 13 months) were submitted and read back on 2026-10-20. All three policies are currently in Firestore's `CREATING` state; do not claim that expiration deletion is active until each policy reaches `ACTIVE`/`READY` and read back again. Expiry timestamps are written by the source ledger. The separate owner audit log is not subject to these policies.
+Firestore TTL policies for `managedAiCalls.expiresAt` (90 days), `managedAiCostProjectMonthly.expiresAt` (400 days), and `managedAiCostUserMonthly.expiresAt` (400 days, approximately 13 months) were submitted and read back on 2026-10-20. The call-record TTL is `ACTIVE`; both cost-ledger TTL policies remain in Firestore's `CREATING` state. Expiry timestamps are written by the source ledger. The separate owner audit log is not subject to these policies.
 
 ## Live release gate
 
