@@ -175,6 +175,7 @@ const App: React.FC = () => {
   const mobileSidebarRef = useRef<HTMLDivElement>(null);
   const mobileSidebarCloseRef = useRef<HTMLButtonElement>(null);
   const mobileSidebarGestureRef = useRef<{ x: number; y: number; lastX: number; lastY: number } | null>(null);
+  const suppressSidebarClickRef = useRef(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [mobileGestureOffset, setMobileGestureOffset] = useState({ x: 0, y: 0 });
   const [isMobileRefreshing, setIsMobileRefreshing] = useState(false);
@@ -447,9 +448,13 @@ const App: React.FC = () => {
     const touch = event.touches[0];
     if (!touch) return;
     const target = event.target instanceof Element ? event.target : null;
-    if (target?.closest('button, a, input, textarea, select, [data-swipe-lock]')) {
+    // Navigation rows are the main usable swipe surface in the drawer, so a
+    // horizontal drag may begin on a button. Keep text-entry and explicit
+    // gesture-locked controls native.
+    if (target?.closest('input, textarea, select, [data-swipe-lock]')) {
       return;
     }
+    suppressSidebarClickRef.current = false;
     mobileSidebarGestureRef.current = { x: touch.clientX, y: touch.clientY, lastX: touch.clientX, lastY: touch.clientY };
   };
 
@@ -461,8 +466,10 @@ const App: React.FC = () => {
     start.lastY = touch.clientY;
     const deltaX = touch.clientX - start.x;
     const deltaY = touch.clientY - start.y;
-    if (deltaX < 0 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
-      setMobileSidebarDragX(Math.max(-220, deltaX));
+    if (deltaX < -8 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+      suppressSidebarClickRef.current = true;
+      if (event.cancelable) event.preventDefault();
+      setMobileSidebarDragX(Math.max(-256, deltaX));
     } else {
       setMobileSidebarDragX(0);
     }
@@ -488,13 +495,16 @@ const App: React.FC = () => {
     });
     if (intent === 'close-menu') {
       setMobileSidebarDragX(-256);
+      suppressSidebarClickRef.current = true;
       window.setTimeout(() => {
         setIsMobileSidebarOpen(false);
         setMobileSidebarDragX(0);
+        suppressSidebarClickRef.current = false;
       }, 180);
       return;
     }
     setMobileSidebarDragX(0);
+    window.setTimeout(() => { suppressSidebarClickRef.current = false; }, 300);
   };
 
   const handleMobileSidebarTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
@@ -1599,9 +1609,19 @@ const App: React.FC = () => {
               touchAction: 'pan-y',
             }}
             data-testid="mobile-sidebar-panel"
+            onClickCapture={event => {
+              if (!suppressSidebarClickRef.current) return;
+              event.preventDefault();
+              event.stopPropagation();
+              suppressSidebarClickRef.current = false;
+            }}
           >
             {/* Close Button Header */}
-            <div className="p-3 border-b border-slate-800 flex items-center justify-end shrink-0">
+            <div data-testid="mobile-sidebar-brand-header" className="h-12 px-3 border-b border-slate-800 flex items-center justify-between shrink-0">
+              <div className="flex min-w-0 items-center gap-2.5 text-ideapad-text">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700"><Sparkles size={16} /></span>
+                <span className="font-serif text-base font-bold">Flowmate</span>
+              </div>
               <button ref={mobileSidebarCloseRef} type="button" aria-label="Close navigation menu" onClick={() => setIsMobileSidebarOpen(false)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400">
                 <X size={20} />
               </button>
@@ -1610,6 +1630,7 @@ const App: React.FC = () => {
             <div className="flex-1 overflow-y-auto">
               <Sidebar
                 forceExpanded
+                hideBranding
                 onCreateClick={() => { setShowCreateModal(true); setIsMobileSidebarOpen(false); }}
                 onNavigate={() => setIsMobileSidebarOpen(false)}
               />
@@ -1862,7 +1883,7 @@ const App: React.FC = () => {
             </div>
           )}
           {mobileGestureOffset.x < -18 && currentView !== 'chat' && (
-            <div aria-hidden="true" data-testid="chat-navigation-preview" className="absolute inset-y-0 left-full z-0 flex w-full flex-col overflow-hidden border-l border-slate-700/70 bg-slate-900 px-6 py-5 text-slate-300 shadow-2xl">
+            <div aria-hidden="true" data-testid="chat-navigation-preview" className="absolute inset-y-0 left-full z-0 flex w-full flex-col overflow-hidden border-l border-slate-700/70 bg-slate-900 px-6 py-5 text-slate-300 shadow-2xl" style={{ transform: `translate3d(${mobileGestureOffset.x}px, 0, 0)` }}>
               <div className="-mx-6 -mt-5 mb-5 flex h-14 shrink-0 items-center justify-center gap-2 border-b border-slate-800 bg-slate-900 font-semibold text-slate-100"><MessageSquare size={18} className="text-emerald-300" /> Chat</div>
               <div className="flex flex-1 flex-col items-center justify-center text-center">
                 <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-400/20 bg-emerald-400/10 text-emerald-300"><MessageSquare size={24} /></div>

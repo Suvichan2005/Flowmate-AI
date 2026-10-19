@@ -54,7 +54,13 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
     { x: 250, y: 430 }, { x: 210, y: 430 }, { x: 170, y: 430 }, { x: 130, y: 430 },
   ], '[data-testid="mobile-gesture-surface"]', async () => {
     await expect(page.getByText('Go to Chat', { exact: true })).toBeVisible();
-    await expect(page.getByTestId('chat-navigation-preview')).toBeVisible();
+    const preview = page.getByTestId('chat-navigation-preview');
+    await expect(preview).toBeVisible();
+    const surfaceBox = await page.getByTestId('mobile-gesture-surface').boundingBox();
+    const previewBox = await preview.boundingBox();
+    expect(surfaceBox).not.toBeNull();
+    expect(previewBox).not.toBeNull();
+    expect(Math.abs(previewBox!.x - (surfaceBox!.x + surfaceBox!.width))).toBeLessThan(2);
   });
   expect(openChatOffsets.some(offset => offset < 0)).toBe(true);
   await expect(nav.getByRole('button', { name: 'Open Chat', exact: true })).toHaveAttribute('aria-current', 'page');
@@ -91,10 +97,20 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
   await expect(sidebar).toBeVisible();
   const panel = page.getByTestId('mobile-sidebar-panel');
   await expect.poll(() => panel.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41)).toBe(0);
+  const brandHeader = page.getByTestId('mobile-sidebar-brand-header');
+  expect((await brandHeader.boundingBox())?.height).toBeLessThanOrEqual(52);
+  await expect(brandHeader.getByText('Flowmate', { exact: true })).toBeVisible();
 
-  // Drag the exposed header area left; the panel follows the finger and then closes.
+  // A leftward swipe starting on a navigation button still closes the drawer
+  // and must not activate the button underneath the gesture.
+  const chatRow = sidebar.getByRole('button', { name: 'Navigate to Chat', exact: true });
+  const chatRowBox = await chatRow.boundingBox();
+  expect(chatRowBox).not.toBeNull();
   const closeMenuOffsets = await dragTouch(context, page, [
-    { x: 150, y: 25 }, { x: 115, y: 25 }, { x: 75, y: 25 }, { x: 30, y: 25 },
+    { x: chatRowBox!.x + chatRowBox!.width / 2, y: chatRowBox!.y + chatRowBox!.height / 2 },
+    { x: chatRowBox!.x + chatRowBox!.width / 2 - 35, y: chatRowBox!.y + chatRowBox!.height / 2 },
+    { x: chatRowBox!.x + chatRowBox!.width / 2 - 75, y: chatRowBox!.y + chatRowBox!.height / 2 },
+    { x: chatRowBox!.x + chatRowBox!.width / 2 - 120, y: chatRowBox!.y + chatRowBox!.height / 2 },
   ], '[data-testid="mobile-sidebar-panel"]');
   expect(closeMenuOffsets.some(offset => offset < 0)).toBe(true);
   await expect(sidebar).toBeHidden();
