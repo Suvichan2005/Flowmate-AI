@@ -84,7 +84,7 @@ export const MANAGED_FUNCTION_TIMEOUT_SECONDS = 60;
 const ALLOWED_TOOLS = new Set([
   'query_entities', 'query_relationships', 'reflect_schemas', 'query_commitment',
   'read_calendar', 'search_entities', 'lookup_food_history', 'get_productivity_stats',
-  'lookup_goals', 'lookup_habits', 'lookup_travel_route', 'search_memory',
+  'lookup_goals', 'lookup_habits', 'search_memory',
   'get_relevant_context', 'propose_memory_update', 'apply_changes',
 ]);
 

@@ -4,7 +4,7 @@ import { asyncStorage } from './services/storage';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleCalendarAdapter } from './services/googleSync';
 import { generateBriefing } from './services/ai';
-import { mergeData, mergeMessages, mergeCloudSettings } from './services/firestoreSync';
+import { mergeData, mergeMessages, mergeCloudSettings, stripRemovedLocationSettings } from './services/firestoreSync';
 import { scheduleSync, syncMessage, syncFoodLogsToCloud, syncAttendanceToCloud, syncChatSessionsToCloud, deleteChannelMessagesFromCloud, setDemoModeSyncBlock, syncWorkspaceNow, loadInitialData, isWorkspaceCloudSyncActiveFor } from './services/syncManager';
 import { AuthenticatedIdentity, getPlatform } from './services/platform';
 import { validatePersistedState, validateOperations } from './utils/validation';
@@ -367,18 +367,8 @@ export const useStore = create<FlowmateState>()(
                     quick_streaks: true,        // Enabled
                 },
                 productivity_calc_method: 'LOGGED_TIME',
-                home_location: undefined,
-                travel_preferences: {
-                    station_buffer_minutes: 45,
-                    airport_buffer_minutes: 120,
-                    default_transit_mode: 'driving'
-                },
                 privacy_preferences: {
                     capabilities: {
-                        device_location: {
-                            read: 'ask',
-                            mutation: 'deny',
-                        },
                     },
                     audit_logging_enabled: true,
                 }
@@ -1011,7 +1001,7 @@ export const useStore = create<FlowmateState>()(
             },
 
             updateSettings: (newSettings) => set((state) => ({
-                settings: { ...state.settings, ...newSettings }
+                settings: stripRemovedLocationSettings({ ...state.settings, ...newSettings } as UserSettings & Record<string, unknown>) as UserSettings,
             })),
 
             addDebugLog: (type, summary, details) => {
@@ -3367,7 +3357,7 @@ export const useStore = create<FlowmateState>()(
                     branchQueues,
                     developerModeEnabled: state.developerModeEnabled,
                     unsentDrafts: state.isDemoMode && state.personalSnapshot ? state.personalSnapshot.unsentDrafts || {} : state.unsentDrafts,
-                    settings: state.settings,
+                    settings: stripRemovedLocationSettings(state.settings as UserSettings & Record<string, unknown>) as UserSettings,
                     foodLogs: state.foodLogs,
                     subjects: state.subjects,
                     classSchedule: state.classSchedule,
@@ -3610,7 +3600,8 @@ export const useStore = create<FlowmateState>()(
                     history: [], historyPointer: -1,
                     developerModeEnabled: persisted.developerModeEnabled ?? currentState.developerModeEnabled ?? false,
                     unsentDrafts: persisted.unsentDrafts || currentState.unsentDrafts || {},
-                    messages: cleanMessages
+                    messages: cleanMessages,
+                    settings: stripRemovedLocationSettings((persisted.settings || currentState.settings) as UserSettings & Record<string, unknown>) as UserSettings
                 };
             },
             onRehydrateStorage: () => (state) => {

@@ -235,12 +235,12 @@ const App: React.FC = () => {
   }, [isMobileSidebarOpen]);
   // Dynamic context-aware suggestions (time of day, events, tasks, meals)
   useEffect(() => {
-    const ctx = { entities: getActiveEntities(entities), foodLogs, subjects };
+    const ctx = { entities: getActiveEntities(entities), foodLogs, subjects, timezone: settings.timezone };
     setContextualSuggestions(getInstantContextualSuggestions(ctx));
     generateContextualSuggestions(ctx).then(res => {
       if (res && res.length > 0) setContextualSuggestions(res);
     }).catch(err => console.warn('[App] Suggestions generation failed:', err));
-  }, [entities.length, foodLogs?.length, subjects?.length]);
+  }, [entities.length, foodLogs?.length, subjects?.length, settings.timezone]);
 
   const handleSelectSuggestion = (suggestion: ContextualSuggestion) => {
     setInput(suggestion.prompt);

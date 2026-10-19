@@ -105,44 +105,6 @@ export const lookupHabitsTool: FunctionDeclaration = {
   },
 };
 
-export const lookupTravelRouteTool: FunctionDeclaration = {
-  name: "lookup_travel_route",
-  description:
-    "Calculate grounded distance, road travel duration, and backward-scheduled journey itineraries between origin and destination. MUST be called whenever the user asks about travel time, distance, or plans a journey/train/flight.",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      origin: {
-        type: Type.STRING,
-        description:
-          "Starting location/address/campus/place. If omitted by user, leave blank to use configured home location.",
-      },
-      destination: {
-        type: Type.STRING,
-        description: "Destination location/station/airport/place.",
-      },
-      mode: {
-        type: Type.STRING,
-        description: "Travel mode: 'driving' (default), 'transit', or 'walking'.",
-      },
-      target_departure_time: {
-        type: Type.STRING,
-        description:
-          "Target departure time in ISO 8601 format (e.g. '2026-10-07T21:30:00+05:30') for train or flight.",
-      },
-      station_buffer_minutes: {
-        type: Type.NUMBER,
-        description: "Minutes to arrive before train departure (default: 45).",
-      },
-      airport_buffer_minutes: {
-        type: Type.NUMBER,
-        description: "Minutes to arrive before flight departure (default: 120).",
-      },
-    },
-    required: ["destination"],
-  },
-};
-
 // ---------------------------------------------------------------------------
 // Write Tool
 // ---------------------------------------------------------------------------
@@ -207,7 +169,7 @@ export const queryEntitiesTool: FunctionDeclaration = {
       },
       capability: {
         type: Type.STRING,
-        description: "Capability filter (e.g., 'temporal', 'schedulable', 'actionable', 'recurrent', 'locational')",
+        description: "Capability filter (e.g., 'temporal', 'schedulable', 'actionable', 'recurrent')",
       },
       status: { type: Type.STRING, description: "Lifecycle status (e.g., 'active', 'completed', 'archived')" },
       date_range: {
@@ -339,7 +301,7 @@ export const proposeMemoryUpdateTool: FunctionDeclaration = {
         enum: ["preference", "fact", "project_context", "relationship", "goal_aspiration", "routine"],
         description: "Category of the memory",
       },
-      is_situational: { type: Type.BOOLEAN, description: "True if this is temporary (e.g. traveling this week, sick today), false if durable" },
+      is_situational: { type: Type.BOOLEAN, description: "True if this is temporary (e.g. a short-term deadline or illness), false if durable" },
       valid_until: { type: Type.STRING, description: "Optional ISO date when situational state expires" },
       privacy_tier: {
         type: Type.STRING,
@@ -407,7 +369,6 @@ export const FLOWMATE_TOOLS: Tool[] = [
       getProductivityStatsTool,
       lookupGoalsTool,
       lookupHabitsTool,
-      lookupTravelRouteTool,
       applyChangesTool,
     ],
   },
@@ -431,7 +392,6 @@ export const ACTIVE_AI_TOOLS: Tool[] = [
       getProductivityStatsTool,
       lookupGoalsTool,
       lookupHabitsTool,
-      lookupTravelRouteTool,
       applyChangesTool,
     ],
   },

@@ -33,14 +33,11 @@ import {
 } from "./prompts";
 import {
   buildEntityContext,
-  buildContextPrompt,
   buildFoodContext,
   buildHistory,
   summarizeOlderMessages,
-  isLocationRelevantQuery,
-  formatLiveLocationForContext,
 } from "./context";
-import { liveContext, privacyManager, contextResolver } from "../context";
+import { contextResolver } from "../context";
 import { auth } from "../firebase";
 import { generateManagedContent, ManagedAiError, type ReasoningLevel } from "./managedClient";
 import { generateArgonByokContent } from './argon';

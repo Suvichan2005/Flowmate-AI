@@ -35,7 +35,7 @@ vi.mock('../services/ai/context', () => ({
   buildHistory: vi.fn(), summarizeOlderMessages: vi.fn(), isLocationRelevantQuery: vi.fn(),
   formatLiveLocationForContext: vi.fn(),
 }));
-vi.mock('../context', () => ({ liveContext: {}, privacyManager: {}, contextResolver: {} }));
+vi.mock('../context', () => ({ privacyManager: {}, contextResolver: {} }));
 vi.mock('../firebase', () => ({ auth: { currentUser: null } }));
 
 import { generateBriefing } from '../services/ai';

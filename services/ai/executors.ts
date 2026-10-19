@@ -8,7 +8,6 @@
 
 import { Entity, EntityKind, EntityStatus, FoodLogEntry, Relationship } from "../../types";
 import { useStore } from "../../store";
-import { lookupTravelRoute } from "../travel";
 import {
   KernelAuthorizer,
   QueryAuthorizationContext,
@@ -105,15 +104,6 @@ export interface LookupHabitsArgs {
   limit?: number;
 }
 
-export interface LookupTravelRouteArgs {
-  origin?: string;
-  destination: string;
-  mode?: string;
-  target_departure_time?: string;
-  station_buffer_minutes?: number;
-  airport_buffer_minutes?: number;
-}
-
 export interface QueryEntitiesArgs {
   query?: string;
   schema_id?: string;
@@ -194,7 +184,6 @@ export type ToolResultItem = {
 
 export interface ToolDispatchResultData {
   status?: string;
-  route?: { distance_km?: number; [key: string]: unknown };
   total_matched?: number;
   limit?: number;
   entities?: Array<Record<string, unknown>>;
@@ -1011,28 +1000,6 @@ export function executeLookupHabits(
 }
 
 // ---------------------------------------------------------------------------
-// lookup_travel_route
-// ---------------------------------------------------------------------------
-
-export async function executeLookupTravelRoute(
-  args: LookupTravelRouteArgs
-): Promise<Record<string, unknown>> {
-  const settings = useStore.getState().settings;
-  const res = await lookupTravelRoute(
-    {
-      origin: args.origin,
-      destination: args.destination,
-      mode: (args.mode === 'transit' || args.mode === 'walking') ? args.mode : 'driving',
-      target_departure_time: args.target_departure_time,
-      station_buffer_minutes: args.station_buffer_minutes,
-      airport_buffer_minutes: args.airport_buffer_minutes,
-    },
-    settings,
-  );
-  return res as unknown as Record<string, unknown>;
-}
-
-// ---------------------------------------------------------------------------
 // P1-07 Context & Memory Executors
 // ---------------------------------------------------------------------------
 
@@ -1075,7 +1042,6 @@ export async function executeGetRelevantContext(
   return {
     user_profile: resolved.userProfile,
     current_time: resolved.currentTimestamp,
-    live_location: resolved.liveLocationContext,
     situational_state: resolved.situationalContext.map(s => ({
       topic: s.topic,
       details: s.details,
@@ -1357,11 +1323,6 @@ export async function dispatchToolCall(
       return {
         name: call.name,
         response: { result: executeLookupHabits(args as unknown as LookupHabitsArgs, activeEntities) as unknown as ToolDispatchResultData },
-      };
-    case 'lookup_travel_route':
-      return {
-        name: call.name,
-        response: { result: (await executeLookupTravelRoute(args as unknown as LookupTravelRouteArgs)) as unknown as ToolDispatchResultData },
       };
     default:
       return { name: call.name, response: { error: "Unknown tool or action handled separately." } };

@@ -2,15 +2,11 @@ import AppearanceSettings from './AppearanceSettings';
 import React, { useRef, useState, useEffect } from 'react';
 import { useFocusTrap } from '../utils/accessibility';
 import { useStore } from '../store';
-import { AlertTriangle, Download, Upload, FileText, Trash2, EyeOff, MapPin, Navigation, RefreshCw, Shield, Activity, Brain, Clock, Plus, ChevronDown } from 'lucide-react';
+import { AlertTriangle, Download, Upload, FileText, Trash2, EyeOff, Shield, Activity, Brain, Clock, Plus, ChevronDown } from 'lucide-react';
 import { exportToMarkdown, downloadMarkdown } from '../utils/exportMarkdown';
 import {
-  liveContext,
   privacyManager,
-  DeviceLocationWithFreshness,
-  GeolocationPermissionState,
   SensitiveAccessLogEntry,
-  DEFAULT_PRIVACY_POLICY,
   extractMemoryItem,
   extractSituationalItem,
   MemoryCategory,
@@ -37,10 +33,6 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
   const currentUser = useStore(state => state.currentUser);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [liveReading, setLiveReading] = useState<DeviceLocationWithFreshness | null>(() => liveContext.getLastReading());
-  const [permission, setPermission] = useState<GeolocationPermissionState>('prompt');
-  const [isAcquiring, setIsAcquiring] = useState(false);
-  const [reverseGeoAddress, setReverseGeoAddress] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<SensitiveAccessLogEntry[]>(() => privacyManager.getAccessLogs());
 
   // Memory UI State (P1-07)
@@ -134,67 +126,8 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
     .map(extractSituationalItem);
 
   useEffect(() => {
-    liveContext.checkPermission().then(p => setPermission(p));
-    const r = liveContext.getLastReading();
-    if (r) {
-      setLiveReading(r);
-    }
     setAuditLogs(privacyManager.getAccessLogs());
   }, []);
-
-  const currentPrivacyPolicy = settings.privacy_preferences || DEFAULT_PRIVACY_POLICY;
-
-  const handleUpdateCapabilityMode = (capability: 'device_location', mode: 'allow' | 'ask' | 'deny') => {
-    const updated = {
-      ...currentPrivacyPolicy,
-      capabilities: {
-        ...currentPrivacyPolicy.capabilities,
-        [capability]: {
-          ...currentPrivacyPolicy.capabilities[capability],
-          read: mode,
-        },
-      },
-    };
-    handleChange('privacy_preferences', updated);
-  };
-
-  const handleAcquireLocation = async () => {
-    setIsAcquiring(true);
-    try {
-      const reading = await liveContext.acquireLocation({
-        forceFresh: true,
-        reason: 'User manual location check in Settings',
-      });
-      setLiveReading(reading);
-      const perm = await liveContext.checkPermission();
-      setPermission(perm);
-      if (reading) {
-        privacyManager.recordAccess(
-          'device_location',
-          'read',
-          'User manual location check in Settings',
-          settings.privacy_preferences,
-        );
-        const address = await liveContext.reverseGeocode(reading.lat, reading.lon);
-        setReverseGeoAddress(address);
-      }
-      setAuditLogs(privacyManager.getAccessLogs());
-    } finally {
-      setIsAcquiring(false);
-    }
-  };
-
-  const handleSetAsHome = () => {
-    if (!liveReading) return;
-    const locText = reverseGeoAddress || `${liveReading.lat.toFixed(4)}, ${liveReading.lon.toFixed(4)}`;
-    handleChange('home_location', locText);
-  };
-
-  const handleClearLocationCache = () => {
-    liveContext.clearCache();
-    setLiveReading(null);
-    setReverseGeoAddress(null);
-  };
 
   const handleClearAudit = () => {
     privacyManager.clearAccessLogs();
@@ -632,72 +565,9 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
                 </div>
               ) : (
                 <p className="text-xs text-slate-500 bg-slate-950/40 border border-slate-800/50 rounded-lg p-3">
-                  No active temporary situational states (e.g., travel this week, temporary deadlines).
+                  No active temporary situational states (for example, short-term deadlines).
                 </p>
               )}
-            </div>
-          </div>
-        </section>
-
-        {/* Location & Travel Preferences */}
-        <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
-            <MapPin size={18} /> Location & Travel
-          </h2>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-            {/* Default Starting Location / Home Base */}
-            <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Default Starting Location / Home Base</label>
-              <input
-                type="text"
-                value={settings.home_location || ''}
-                onChange={(e) => handleChange('home_location', e.target.value)}
-                placeholder="e.g. Campus 25, KIIT University or 123 Main St, New York"
-                className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm"
-              />
-              <p className="text-xs text-slate-500 mt-1">
-                Used as fallback origin when live device location is unavailable or denied.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-              <div>
-                <label className="block text-sm font-medium text-slate-400 mb-2">Station Arrival Buffer (minutes)</label>
-                <input
-                  type="number"
-                  min={10}
-                  max={180}
-                  value={settings.travel_preferences?.station_buffer_minutes ?? 45}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10) || 45;
-                    handleChange('travel_preferences', {
-                      ...settings.travel_preferences,
-                      station_buffer_minutes: val,
-                    });
-                  }}
-                  className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm"
-                />
-                <p className="text-xs text-slate-500 mt-1">Buffer time before train departure to reach platform & coach.</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-400 mb-2">Airport Arrival Buffer (minutes)</label>
-                <input
-                  type="number"
-                  min={30}
-                  max={300}
-                  value={settings.travel_preferences?.airport_buffer_minutes ?? 120}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10) || 120;
-                    handleChange('travel_preferences', {
-                      ...settings.travel_preferences,
-                      airport_buffer_minutes: val,
-                    });
-                  }}
-                  className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm"
-                />
-                <p className="text-xs text-slate-500 mt-1">Buffer time before flight departure for check-in & security.</p>
-              </div>
             </div>
           </div>
         </section>
@@ -718,117 +588,6 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           </h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
             <p className="text-sm text-ideapad-muted leading-relaxed">Choose what Flowmate can save, sync or share with AI. Workspace sync and AI context are separate choices.</p>
-
-            {/* Live Context Capabilities */}
-            <div className="space-y-4">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Live Device Capabilities</h3>
-
-              {/* Device Location Capability */}
-              <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-4 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-start gap-2.5">
-                    <Navigation className="text-indigo-400 w-4 h-4 mt-0.5 shrink-0" />
-                    <div>
-                      <div className="text-sm font-medium text-slate-200">Device Geolocation</div>
-                      <div className="text-xs text-slate-500">
-                        Authoritative request-time GPS coordinates for travel routing and commute planning.
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 self-end sm:self-auto">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] text-slate-500">Hardware:</span>
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                        permission === 'granted'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                          : permission === 'denied'
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                          : permission === 'unsupported'
-                          ? 'bg-slate-700 text-slate-300'
-                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      }`}>
-                        {permission.toUpperCase()}
-                      </span>
-                    </div>
-
-                    <select
-                      value={currentPrivacyPolicy.capabilities.device_location?.read || 'ask'}
-                      onChange={(e) => handleUpdateCapabilityMode('device_location', e.target.value as any)}
-                      className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
-                    >
-                      <option value="ask">Ask on Demand</option>
-                      <option value="allow">Allow Always</option>
-                      <option value="deny">Deny Access</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Ephemeral reading monitor */}
-                {liveReading ? (
-                  <div className="bg-slate-900/90 rounded-md p-3 border border-slate-800/80 text-xs space-y-1.5">
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span className="font-mono">
-                        {liveReading.lat.toFixed(5)}°N, {liveReading.lon.toFixed(5)}°E
-                      </span>
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                        liveReading.freshnessTier === 'fresh'
-                          ? 'bg-emerald-500/20 text-emerald-400'
-                          : liveReading.freshnessTier === 'recent'
-                          ? 'bg-blue-500/20 text-blue-400'
-                          : 'bg-amber-500/20 text-amber-400'
-                      }`}>
-                        {liveReading.freshnessTier} (±{Math.round(liveReading.accuracy_meters)}m)
-                      </span>
-                    </div>
-                    {reverseGeoAddress && (
-                      <div className="text-slate-400 truncate">
-                        <span className="text-slate-500">Reverse Geocoded:</span> {reverseGeoAddress}
-                      </div>
-                    )}
-                    <div className="text-[11px] text-slate-500">
-                      Acquired {Math.max(0, Math.round((Date.now() - liveReading.timestamp) / 1000))}s ago ({liveReading.source})
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-500">
-                    No active device location reading. Ephemeral live location is requested on-demand when calculating travel routes.
-                  </p>
-                )}
-
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleAcquireLocation}
-                    disabled={isAcquiring}
-                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-900/50 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isAcquiring ? 'animate-spin' : ''}`} />
-                    {isAcquiring ? 'Acquiring GPS...' : 'Acquire Fresh Location'}
-                  </button>
-
-                  {liveReading && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={handleSetAsHome}
-                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 border border-slate-700"
-                      >
-                        <MapPin className="w-3.5 h-3.5 text-indigo-400" />
-                        Set as Home Base
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleClearLocationCache}
-                        className="px-2.5 py-1.5 text-slate-400 hover:text-rose-400 rounded-lg text-xs transition-colors"
-                      >
-                        Clear Cache
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
 
             {/* Connected Services (Extensible Architecture Placeholder) */}
             <div className="space-y-3">

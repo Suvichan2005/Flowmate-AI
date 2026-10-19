@@ -45,7 +45,7 @@ describe('Gemini Tool Declarations (FLOWMATE_TOOLS)', () => {
         expect(FLOWMATE_TOOLS).toHaveLength(1);
         const decls = FLOWMATE_TOOLS[0].functionDeclarations;
         expect(decls).toBeDefined();
-        expect(decls?.length).toBe(13);
+        expect(decls?.length).toBe(12);
 
         const names = decls?.map(d => d.name);
         expect(names).toContain('query_entities');
@@ -59,7 +59,7 @@ describe('Gemini Tool Declarations (FLOWMATE_TOOLS)', () => {
         expect(names).toContain('get_productivity_stats');
         expect(names).toContain('lookup_goals');
         expect(names).toContain('lookup_habits');
-        expect(names).toContain('lookup_travel_route');
+        expect(names).not.toContain('lookup_travel_route');
         expect(names).toContain('apply_changes');
     });
 

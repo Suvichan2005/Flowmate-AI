@@ -40,7 +40,6 @@ describe('Firestore user settings serialization', () => {
       sync_ai_preferences: true,
       debug_mode: false,
       feature_toggles: { food_tracking: true, attendance_tracking: true, people_tracking: true },
-      home_location: undefined,
     } as unknown as Partial<UserSettings>;
 
     await expect(saveUserConfig('synthetic-user', { settings })).resolves.toBe(true);
@@ -50,6 +49,9 @@ describe('Firestore user settings serialization', () => {
     ];
     expect(reference.path).toBe('users/synthetic-user');
     expect(payload.settings).toEqual({
+      home_location: { firestoreSentinel: 'deleteField' },
+      travel_preferences: { firestoreSentinel: 'deleteField' },
+      privacy_preferences: { capabilities: { device_location: { firestoreSentinel: 'deleteField' } } },
       timezone: 'Asia/Kolkata',
       preferred_model: 'gemini-3.8-flash',
       sync_enabled: true,
@@ -69,5 +71,8 @@ describe('Firestore user settings serialization', () => {
     const [, payload] = mocks.setDoc.mock.calls[0] as [unknown, { settings: Record<string, unknown> }];
     expect(payload.settings.preferred_model).toEqual({ firestoreSentinel: 'deleteField' });
     expect(payload.settings.sync_ai_preferences).toBe(false);
+    expect(payload.settings.home_location).toEqual({ firestoreSentinel: 'deleteField' });
+    expect(payload.settings.travel_preferences).toEqual({ firestoreSentinel: 'deleteField' });
+    expect(payload.settings.privacy_preferences).toEqual({ capabilities: { device_location: { firestoreSentinel: 'deleteField' } } });
   });
 });

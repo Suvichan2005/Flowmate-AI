@@ -1,7 +1,7 @@
 /**
  * Dynamic Context-Aware Suggestions Service
  * Generates personalized, time-sensitive prompt templates using Gemini Flash Lite
- * with instant zero-latency fallbacks tailored to current IST schedule, tasks, meals, and context.
+ * with instant zero-latency fallbacks tailored to the user's timezone, tasks, meals, and context.
  */
 
 import { getAiClient, hasAiApiKey, AI_MODELS } from './client';
@@ -19,6 +19,7 @@ export interface SuggestionContext {
     entities: Entity[];
     foodLogs?: FoodLogEntry[];
     subjects?: Subject[];
+    timezone?: string;
 }
 
 let cachedSuggestions: ContextualSuggestion[] | null = null;
@@ -26,25 +27,43 @@ let lastGeneratedTimestamp = 0;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache
 
 /**
- * Get current hour and day in Asia/Kolkata (IST +05:30)
+ * Get current hour and day in the user's configured timezone.
  */
-function getIstTimeInfo(): { hour: number; dayName: string; timeStr: string } {
+function getLocalTimeInfo(timezone?: string): { hour: number; dayName: string; timeStr: string } {
     const now = new Date();
+    const resolvedTimezone = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
     try {
-        const timeStr = now.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+        const timeStr = now.toLocaleTimeString(undefined, { timeZone: resolvedTimezone, hour12: false });
         const [h] = timeStr.split(':').map(Number);
-        const dayName = now.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long' });
+        const dayName = now.toLocaleDateString(undefined, { timeZone: resolvedTimezone, weekday: 'long' });
         return { hour: isNaN(h) ? now.getHours() : h, dayName, timeStr };
     } catch {
         return { hour: now.getHours(), dayName: 'Today', timeStr: now.toLocaleTimeString() };
     }
 }
 
+export function buildSuggestionPrompt(timeStr: string, dayName: string, hour: number, taskTitles: string[]): string {
+    return `You are Flowmate AI's proactive assistant.
+Generate exactly 4 concise, context-aware prompt templates for the user's empty chat state.
+Current Time in the user's configured timezone: ${timeStr} (${dayName}, hour ${hour}).
+Pending user tasks: ${taskTitles.length ? taskTitles.join(', ') : 'None'}.
+
+Rules:
+1. Prompts must be realistic, actionable message templates the user might want to send Flowmate right now (e.g. reviewing tasks, logging a meal, tracking a project, or choosing a priority).
+2. Do not invent personal facts, specific entities, schedules, deadlines, or commitments. Use workspace details only when supplied in the context.
+3. Each template must have:
+   - "icon": a single emoji (e.g. 🎯, 🥗, 📅, ✨)
+   - "label": short 3-5 word label (e.g. "Review today's tasks", "Log lunch calories")
+   - "prompt": a concise message template ready to be edited and sent.
+4. Return ONLY valid JSON array with 4 items:
+[{"icon":"...","label":"...","prompt":"..."},...]`;
+}
+
 /**
  * Generate instant context-aware template suggestions with zero latency.
  */
 export function getInstantContextualSuggestions(context: SuggestionContext): ContextualSuggestion[] {
-    const { hour, dayName } = getIstTimeInfo();
+    const { hour, dayName } = getLocalTimeInfo(context.timezone);
     const suggestions: ContextualSuggestion[] = [];
 
     // 1. Check for upcoming events in entities
@@ -70,7 +89,7 @@ export function getInstantContextualSuggestions(context: SuggestionContext): Con
     const todaysFood = (context.foodLogs || []).filter(f => f.timestamp?.slice(0, 10) === todayStr);
     const loggedMeals = new Set(todaysFood.map(f => f.meal_type));
 
-    // Dynamic suggestions based on time of day (IST)
+    // Dynamic suggestions based on the user's configured timezone.
     if (hour >= 5 && hour < 12) {
         // Morning: 5 AM - 12 PM
         if (upcomingEvents.length > 0) {
@@ -108,9 +127,9 @@ export function getInstantContextualSuggestions(context: SuggestionContext): Con
             });
         } else {
             suggestions.push({
-                icon: '🚆',
-                label: 'Schedule upcoming travel',
-                prompt: 'Create an event for my train to Kolkata tomorrow at 9:30 PM reaching at 5:15 AM',
+                icon: '🎯',
+                label: 'Choose today’s priority',
+                prompt: 'Help me choose one realistic priority for today.',
                 category: 'schedule'
             });
         }
@@ -173,9 +192,9 @@ export function getInstantContextualSuggestions(context: SuggestionContext): Con
         });
 
         suggestions.push({
-            icon: '🚆',
-            label: 'Schedule travel or commute',
-            prompt: 'Create an event for my train tomorrow at 9:30 PM reaching at 5:15 AM',
+            icon: '🌱',
+            label: 'Plan tomorrow’s first step',
+            prompt: 'Help me choose a small first step for tomorrow.',
             category: 'schedule'
         });
 
@@ -195,9 +214,9 @@ export function getInstantContextualSuggestions(context: SuggestionContext): Con
         });
 
         suggestions.push({
-            icon: '🚆',
-            label: 'Schedule travel / train',
-            prompt: 'Create an event for my train to Kolkata tomorrow at 9:30 PM reaching at 5:15 AM',
+            icon: '🌅',
+            label: 'Set tomorrow’s intention',
+            prompt: 'Help me decide what I want to make progress on tomorrow.',
             category: 'schedule'
         });
 
@@ -240,26 +259,14 @@ export async function generateContextualSuggestions(context: SuggestionContext):
 
     try {
         const ai = getAiClient();
-        const { hour, dayName, timeStr } = getIstTimeInfo();
+        const { hour, dayName, timeStr } = getLocalTimeInfo(context.timezone);
 
         const taskTitles = (context.entities || [])
             .filter(e => e.kind === EntityKind.TASK && e.status !== EntityStatus.COMPLETED)
             .slice(0, 3)
             .map(e => e.title);
 
-        const prompt = `You are Flowmate AI's proactive assistant.
-Generate exactly 4 concise, context-aware prompt templates for the user's empty chat state.
-Current Time in India: ${timeStr} IST (${dayName}, hour ${hour}).
-Pending user tasks: ${taskTitles.length ? taskTitles.join(', ') : 'None'}.
-
-Rules:
-1. Prompts must be realistic, actionable message templates the user might want to send Flowmate right now (e.g. scheduling a train/event with specific times, logging a meal, tracking a project, or reviewing tasks).
-2. Each template must have:
-   - "icon": a single emoji (e.g. 🚄, 🎯, 🥗, 📅)
-   - "label": short 3-5 word label (e.g. "Schedule train to Kolkata", "Log lunch calories")
-   - "prompt": pre-filled sentence ready to be edited and sent (e.g. "Create an event for my train to Kolkata tomorrow at 9:30 PM reaching at 5:15 AM")
-3. Return ONLY valid JSON array with 4 items:
-[{"icon":"...","label":"...","prompt":"..."},...]`;
+        const prompt = buildSuggestionPrompt(timeStr, dayName, hour, taskTitles);
 
         // Use gemini-3.5-flash-lite for instant, ultra-fast generation
         const response = await ai.models.generateContent({

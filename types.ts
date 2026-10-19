@@ -418,13 +418,6 @@ export interface FeatureToggles {
   quick_streaks: boolean;       // Mini streaks widget
 }
 
-export interface TravelPreferences {
-  station_buffer_minutes?: number; // buffer time before train departure (default: 45)
-  airport_buffer_minutes?: number; // buffer time before flight departure (default: 120)
-  default_transit_mode?: 'driving' | 'transit' | 'walking';
-  google_maps_api_key?: string;
-}
-
 export type PrivacyPermissionMode = 'allow' | 'ask' | 'deny';
 
 export interface CapabilityPermissionConfig {
@@ -435,7 +428,6 @@ export interface CapabilityPermissionConfig {
 
 export interface PrivacyPolicySettings {
   capabilities: {
-    device_location: CapabilityPermissionConfig;
     google_calendar?: CapabilityPermissionConfig;
     gmail?: CapabilityPermissionConfig;
     contacts?: CapabilityPermissionConfig;
@@ -449,7 +441,6 @@ export interface UserSettings {
   username?: string;       // Display name for AI interactions
   fullname?: string;       // Full legal name
   nickname?: string;       // Preferred casual name (AI will use this)
-  home_location?: string;  // Default origin/home base (e.g. "Campus 25, KIIT University, Bhubaneswar")
 
   // App Settings
   timezone: string;
@@ -468,8 +459,6 @@ export interface UserSettings {
   productivity_calc_method?: 'LOGGED_TIME' | 'AWAKE_TIME'; // Flowmate 3.2
   // Flowmate 3.0: Food Preferences
   food_preferences?: FoodPreferences;
-  // Flowmate 3.3: Travel & Commute Preferences
-  travel_preferences?: TravelPreferences;
   // Flowmate 3.4: Privacy & Capability Preferences
   privacy_preferences?: PrivacyPolicySettings;
 }

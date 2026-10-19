@@ -53,7 +53,6 @@ describe('Milestone P1-07: Context + Memory Engine', () => {
         timezone: 'Asia/Kolkata',
         username: 'Aarav Sharma',
         nickname: 'Aarav',
-        home_location: 'Campus 25, KIIT University, Bhubaneswar',
         custom_instructions: 'Keep responses concise and direct.',
         preferred_model: 'gemini-3.8-flash',
         sync_enabled: false,
@@ -66,12 +65,7 @@ describe('Milestone P1-07: Context + Memory Engine', () => {
           quick_streaks: true,
         },
         privacy_preferences: {
-          capabilities: {
-            device_location: {
-              read: 'allow',
-              mutation: 'deny',
-            },
-          },
+          capabilities: {},
           audit_logging_enabled: true,
         },
       },
@@ -327,7 +321,6 @@ describe('Milestone P1-07: Context + Memory Engine', () => {
 
       const resolved = await contextResolver.resolveContext({
         userMessage: 'Where am I staying this week?',
-        skipLocationAcquisition: true,
       });
 
       expect(resolved.situationalContext).toHaveLength(1);
@@ -371,7 +364,6 @@ describe('Milestone P1-07: Context + Memory Engine', () => {
 
       const resolved = await contextResolver.resolveContext({
         budgetConfig: { maxMemoryItems: 3 },
-        skipLocationAcquisition: true,
       });
 
       expect(resolved.relevantMemories.length).toBeLessThanOrEqual(3);
@@ -436,7 +428,6 @@ describe('Milestone P1-07: Context + Memory Engine', () => {
 
       const resolved = await contextResolver.resolveContext({
         userMessage: 'What are my goals this week?',
-        skipLocationAcquisition: true,
       });
 
       expect(resolved.relevantEntities).toHaveLength(1);
@@ -449,31 +440,27 @@ describe('Milestone P1-07: Context + Memory Engine', () => {
   });
 
   // ==========================================================================
-  // 5. Privacy Boundary & Location Permissions
+  // 5. Privacy Boundary
   // ==========================================================================
-  describe('Privacy Boundary & Location Permissions', () => {
-    it('respects location privacy deny setting and informs model transparently', async () => {
+  describe('Privacy Boundary', () => {
+    it('does not include location from legacy settings in model context', async () => {
       useStore.setState({
         settings: {
           ...useStore.getState().settings,
-          privacy_preferences: {
-            capabilities: {
-              device_location: {
-                read: 'deny',
-                mutation: 'deny',
-              },
-            },
-            audit_logging_enabled: true,
-          },
-        },
+          home_location: 'Legacy private home address',
+          travel_preferences: { station_buffer_minutes: 45, airport_buffer_minutes: 120 },
+          privacy_preferences: { capabilities: { device_location: { read: 'allow', mutation: 'deny' } } },
+        } as never,
       });
 
-      const resolved = await contextResolver.resolveContext({
-        userMessage: 'Where am I right now?',
-      });
+      const resolved = await contextResolver.resolveContext({ userMessage: 'Help me plan this week.' });
 
-      expect(resolved.liveLocationContext).toContain('Device location access is currently disabled by privacy policy');
-      expect(resolved.serializedPromptSection).toContain('Device location access is currently disabled');
+      expect(resolved.serializedPromptSection).not.toContain('Legacy private home address');
+      expect(resolved.serializedPromptSection).not.toContain('station_buffer_minutes');
+      expect(resolved.serializedPromptSection).not.toContain('airport_buffer_minutes');
+      expect(resolved.serializedPromptSection).not.toContain('45');
+      expect(resolved.serializedPromptSection).not.toContain('120');
+      expect(resolved).not.toHaveProperty('liveLocationContext');
     });
   });
 
@@ -558,7 +545,7 @@ describe('Milestone P1-07: Context + Memory Engine', () => {
         },
       });
 
-      const resolved = await contextResolver.resolveContext({ skipLocationAcquisition: true });
+      const resolved = await contextResolver.resolveContext({});
 
       const textFormat = contextResolver.formatForTextTurn(resolved);
       expect(textFormat).toContain('[USER PROFILE]');
@@ -612,7 +599,7 @@ describe('Milestone P1-07: Context + Memory Engine', () => {
         },
       });
 
-      const resolved = await contextResolver.resolveContext({ skipLocationAcquisition: true });
+      const resolved = await contextResolver.resolveContext({});
       const textFormat = contextResolver.formatForTextTurn(resolved);
 
       expect(textFormat).toContain('[RELEVANT MEMORY]');
@@ -695,7 +682,6 @@ describe('Milestone P1-07: Context + Memory Engine', () => {
 
       const resolved = await contextResolver.resolveContext({
         budgetConfig: { maxTotalChars: 1500 },
-        skipLocationAcquisition: true,
       });
 
       expect(resolved.budgetStats.totalCharacters).toBeLessThanOrEqual(1600);

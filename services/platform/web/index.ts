@@ -4,7 +4,6 @@
  * STRICT INVARIANT: ZERO `any`
  */
 
-export * from './webLocationAdapter';
 export * from './webNotificationAdapter';
 export * from './webHapticsAdapter';
 export * from './webPlatformAdapter';

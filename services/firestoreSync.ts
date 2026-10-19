@@ -38,8 +38,8 @@ import {
 } from '../types';
 import { isDemoSyncBlocked } from './syncManager';
 import { isLegacySyntheticEntity } from './legacySyntheticEntity';
-import { MODEL_PREFERENCE_FIELDS } from './modelPreferenceSync';
-export { mergeCloudSettings } from './modelPreferenceSync';
+import { MODEL_PREFERENCE_FIELDS, stripRemovedLocationSettings } from './modelPreferenceSync';
+export { mergeCloudSettings, stripRemovedLocationSettings } from './modelPreferenceSync';
 
 // --- Collection Paths ---
 
@@ -675,7 +675,22 @@ export async function saveUserConfig(
         const { settings, ...otherConfig } = config;
         const safePayload: Record<string, unknown> = sanitizeForFirestore(otherConfig) as Record<string, unknown>;
         if (settings) {
-            const safeSettings = sanitizeForFirestore(settings) as Record<string, unknown>;
+            const safeSettings = sanitizeForFirestore(stripRemovedLocationSettings(settings as Partial<UserSettings> & Record<string, unknown>)) as Record<string, unknown>;
+            safeSettings.home_location = deleteField();
+            safeSettings.travel_preferences = deleteField();
+            const privacyPreferences = safeSettings.privacy_preferences && typeof safeSettings.privacy_preferences === 'object' && !Array.isArray(safeSettings.privacy_preferences)
+                ? safeSettings.privacy_preferences as Record<string, unknown>
+                : {};
+            const capabilities = privacyPreferences.capabilities && typeof privacyPreferences.capabilities === 'object' && !Array.isArray(privacyPreferences.capabilities)
+                ? privacyPreferences.capabilities as Record<string, unknown>
+                : {};
+            safeSettings.privacy_preferences = {
+                ...privacyPreferences,
+                capabilities: {
+                    ...capabilities,
+                    device_location: deleteField(),
+                },
+            };
             if (settings.sync_ai_preferences !== true) {
                 // Revoking consent also clears preferences that were synced earlier.
                 for (const key of MODEL_PREFERENCE_FIELDS) safeSettings[key] = deleteField();

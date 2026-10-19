@@ -95,7 +95,10 @@ test('Settings is organized into native expandable groups instead of jump button
   await expect(privacy.getByRole('heading', { name: 'Persistent Memory & Situational State' })).toHaveCount(0);
   await context.locator(':scope > summary').click();
   await expect(context.getByRole('heading', { name: 'Persistent Memory & Situational State' })).toBeVisible();
-  await expect(context.getByRole('heading', { name: 'Location & Travel' })).toBeVisible();
+  await expect(context.getByRole('heading', { name: 'Location & Travel' })).toHaveCount(0);
+  await expect(page.getByText('Default Starting Location / Home Base', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Station Arrival Buffer (minutes)', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Airport Arrival Buffer (minutes)', { exact: true })).toHaveCount(0);
   await ai.locator(':scope > summary').click();
   expect(await ai.evaluate(element => (element as HTMLDetailsElement).open)).toBe(true);
   expect(await privacy.evaluate(element => (element as HTMLDetailsElement).open)).toBe(false);
