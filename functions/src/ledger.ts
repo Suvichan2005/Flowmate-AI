@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { getFirestore, Timestamp, type Firestore, type DocumentData, type DocumentReference } from 'firebase-admin/firestore';
-import { RequestFailure, GUEST_CHAT_TURN_LIMIT, ACCOUNT_CHAT_TURN_LIMIT, GUEST_DAILY_BRIEFING_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, RATE_LIMIT_PER_MINUTE, RESERVATION_TTL_MS, ACTIVE_MODEL_CALL_LEASE_MS, dayKey, monthKey } from './policy.js';
+import { RequestFailure, GUEST_CHAT_TURN_LIMIT, ACCOUNT_CHAT_TURN_LIMIT, GUEST_MONTHLY_BRIEFING_LIMIT, ACCOUNT_MONTHLY_BRIEFING_LIMIT, RATE_LIMIT_PER_MINUTE, RESERVATION_TTL_MS, ACTIVE_MODEL_CALL_LEASE_MS, dayKey, monthKey } from './policy.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export interface TurnLedgerRefs {
@@ -27,13 +27,12 @@ export interface BriefingLedgerRefs {
   uid: string;
   email?: string;
   allowance: 'guest' | 'account';
-  dailyLimit: number;
+  monthlyLimit: number;
   user: DocumentReference;
   privilegedUser: DocumentReference;
   allowlist: DocumentReference;
   emailIndex: DocumentReference;
   pendingInvitation: DocumentReference;
-  daily: DocumentReference;
   call: DocumentReference;
   control: DocumentReference;
   month: DocumentReference;
@@ -77,13 +76,12 @@ export function briefingLedgerRefs(db: Firestore, uid: string, callId: string, d
     uid,
     email: normalizedEmail,
     allowance,
-    dailyLimit: allowance === 'guest' ? GUEST_DAILY_BRIEFING_LIMIT : ACCOUNT_DAILY_BRIEFING_LIMIT,
+    monthlyLimit: allowance === 'guest' ? GUEST_MONTHLY_BRIEFING_LIMIT : ACCOUNT_MONTHLY_BRIEFING_LIMIT,
     user: db.doc(`${allowance === 'guest' ? 'managedAiGuests' : 'managedAiUsers'}/${uid}`),
     privilegedUser: db.doc(`managedAiPrivilegedUsers/${uid}`),
     allowlist: db.doc(`managedAiAllowlist/${uid}`),
     emailIndex: db.doc(`managedAiAllowlistEmails/${emailHash}`),
     pendingInvitation: db.doc(`managedAiPendingInvitations/${emailHash}`),
-    daily: db.doc(`managedAiBriefings/${day}_${hash(uid)}`),
     call: db.doc(`managedAiCalls/${hash(`${uid}:briefing:${day}:${callId}`)}`),
     control: db.doc('system/managedAi'),
     month: db.doc(`managedAiMonthly/${month}`),
@@ -107,10 +105,10 @@ export function isManagedAiEnabledForIdentity(control: DocumentData | undefined,
 
 export async function reserveTurn(db: Firestore, refs: TurnLedgerRefs, now = Date.now()): Promise<void> {
   await db.runTransaction(async transaction => {
-    const [control, user, privilegedUser, turn, call, allowlist, pendingInvitation, emailIndex] = await Promise.all([
+    const [control, user, privilegedUser, turn, call, allowlist, pendingInvitation, emailIndex, userMonth, privilegedUserMonth] = await Promise.all([
       transaction.get(refs.control), transaction.get(refs.user), transaction.get(refs.privilegedUser),
       transaction.get(refs.turn), transaction.get(refs.call), transaction.get(refs.allowlist),
-      transaction.get(refs.pendingInvitation), transaction.get(refs.emailIndex),
+      transaction.get(refs.pendingInvitation), transaction.get(refs.emailIndex), transaction.get(refs.userMonth), transaction.get(refs.privilegedUserMonth),
     ]);
     const allowlistData = allowlist.data() || {};
     let privileged = refs.allowance === 'account' && Boolean(refs.email)
@@ -139,6 +137,8 @@ export async function reserveTurn(db: Firestore, refs: TurnLedgerRefs, now = Dat
     if (!isManagedAiEnabledForIdentity(control.data(), refs.uid, privileged)) throw new RequestFailure('MANAGED_AI_DISABLED', 503);
     if (call.exists) throw new RequestFailure('REQUEST_ALREADY_PROCESSED', 409);
     const userRef = privileged ? refs.privilegedUser : refs.user;
+    const usageRef = privileged ? refs.privilegedUserMonth : refs.userMonth;
+    const usageData = (privileged ? privilegedUserMonth.data() : userMonth.data()) || {};
     const userData = (privileged ? privilegedUser.data() : user.data()) || {};
     const turnData = turn.data() || {};
     const turnExpired = turn.exists && turnData.status === 'pending' && Number(turnData.expiresAtMs || 0) <= now;
@@ -151,7 +151,10 @@ export async function reserveTurn(db: Firestore, refs: TurnLedgerRefs, now = Dat
     const reservationsExpired = Number(userData.reservationsExpireAtMs || 0) <= now;
     let reservedTurns = reservationsExpired ? 0 : Number(userData.reservedTurns || 0);
     if (turnExpired && !reservationsExpired) reservedTurns = Math.max(0, reservedTurns - 1);
-    if (!privileged && isNewTurn && Number(userData.successfulTurns || 0) + reservedTurns >= refs.turnLimit) {
+    const thisMonth = refs.userMonth.id.slice(0, 7);
+    let monthlyReservedTurns = Number(usageData.reservedTurns || 0);
+    if (turnExpired && turnData.quotaMonth === thisMonth) monthlyReservedTurns = Math.max(0, monthlyReservedTurns - 1);
+    if (!privileged && isNewTurn && Number(usageData.successfulTurns || 0) + monthlyReservedTurns >= refs.turnLimit) {
       throw new RequestFailure(refs.allowance === 'guest' ? 'GUEST_TURN_ALLOWANCE_EXHAUSTED' : 'TURN_ALLOWANCE_EXHAUSTED', 402);
     }
     if (turn.exists && turnData.status === 'complete') throw new RequestFailure('TURN_ALREADY_COMPLETE', 409);
@@ -168,18 +171,20 @@ export async function reserveTurn(db: Firestore, refs: TurnLedgerRefs, now = Dat
     }, { merge: true });
     transaction.set(refs.turn, {
       status: 'pending', callsReserved: isNewTurn ? 1 : Number(turnData.callsReserved || 0) + 1,
+      ...(isNewTurn ? { quotaMonth: thisMonth } : {}),
       expiresAtMs: now + RESERVATION_TTL_MS, updatedAt: Timestamp.now(),
     }, { merge: true });
+    if (isNewTurn) transaction.set(usageRef, { reservedTurns: monthlyReservedTurns + 1, updatedAt: Timestamp.now() }, { merge: true });
     refs.isPrivileged = privileged;
   });
 }
 
-/** Atomically reserve one separate daily briefing allowance and one actual model call. */
+/** Atomically reserve one monthly briefing allowance and one actual model call. */
 export async function reserveBriefing(db: Firestore, refs: BriefingLedgerRefs, now = Date.now()): Promise<void> {
   await db.runTransaction(async transaction => {
-    const [control, user, privilegedUser, daily, call, allowlist, pendingInvitation, emailIndex] = await Promise.all([
+    const [control, user, privilegedUser, userMonth, privilegedUserMonth, call, allowlist, pendingInvitation, emailIndex] = await Promise.all([
       transaction.get(refs.control), transaction.get(refs.user), transaction.get(refs.privilegedUser),
-      transaction.get(refs.daily), transaction.get(refs.call), transaction.get(refs.allowlist),
+      transaction.get(refs.userMonth), transaction.get(refs.privilegedUserMonth), transaction.get(refs.call), transaction.get(refs.allowlist),
       transaction.get(refs.pendingInvitation), transaction.get(refs.emailIndex),
     ]);
     const allowlistData = allowlist.data() || {};
@@ -200,15 +205,18 @@ export async function reserveBriefing(db: Firestore, refs: BriefingLedgerRefs, n
     if (!isManagedAiEnabledForIdentity(control.data(), refs.uid, privileged)) throw new RequestFailure('MANAGED_AI_DISABLED', 503);
     if (call.exists) throw new RequestFailure('REQUEST_ALREADY_PROCESSED', 409);
     const userRef = privileged ? refs.privilegedUser : refs.user;
+    const usageRef = privileged ? refs.privilegedUserMonth : refs.userMonth;
+    const usageData = (privileged ? privilegedUserMonth.data() : userMonth.data()) || {};
     const userData = (privileged ? privilegedUser.data() : user.data()) || {};
-    const dailyData = daily.data() || {};
     const windowStart = Number(userData.rateWindowStartMs || 0);
     const rateCount = windowStart > now - 60_000 ? Number(userData.rateWindowCount || 0) : 0;
     if (!privileged && rateCount >= RATE_LIMIT_PER_MINUTE) throw new RequestFailure('RATE_LIMITED', 429);
     if (Number(userData.activeCallUntilMs || 0) > now) throw new RequestFailure('USER_CALL_IN_PROGRESS', 429);
-    const successes = Number(dailyData.successful || 0);
-    const reserved = Number(dailyData.reserved || 0);
-    if (!privileged && successes + reserved >= refs.dailyLimit) throw new RequestFailure('BRIEFING_ALLOWANCE_EXHAUSTED', 402);
+    const successes = Number(usageData.successfulBriefings || 0);
+    // There can only be one active generation per identity. If its lease expired,
+    // its old reservation must not permanently consume this month's allowance.
+    const reserved = Number(userData.activeCallUntilMs || 0) > now ? Number(usageData.reservedBriefings || 0) : 0;
+    if (!privileged && successes + reserved >= refs.monthlyLimit) throw new RequestFailure('BRIEFING_ALLOWANCE_EXHAUSTED', 402);
     transaction.set(userRef, {
       ...(!privileged ? {
         rateWindowStartMs: windowStart > now - 60_000 ? windowStart : now,
@@ -216,7 +224,7 @@ export async function reserveBriefing(db: Firestore, refs: BriefingLedgerRefs, n
       } : {}),
       activeCallUntilMs: now + ACTIVE_MODEL_CALL_LEASE_MS,
     }, { merge: true });
-    transaction.set(refs.daily, { reserved: reserved + (privileged ? 0 : 1), updatedAt: Timestamp.now() }, { merge: true });
+    transaction.set(usageRef, { reservedBriefings: reserved + 1, updatedAt: Timestamp.now() }, { merge: true });
     transaction.create(refs.call, { status: 'pending', purpose: 'briefing', reservedAt: Timestamp.now(), privileged });
     refs.isPrivileged = privileged;
   });
@@ -253,12 +261,13 @@ export async function reserveBriefingGenerationCall(db: Firestore, refs: Briefin
 export async function finishBriefing(db: Firestore, refs: BriefingLedgerRefs, successful: boolean): Promise<void> {
   await db.runTransaction(async transaction => {
     const userRef = refs.isPrivileged ? refs.privilegedUser : refs.user;
-    const daily = await transaction.get(refs.daily);
-    const dailyData = daily.data() || {};
-    const remaining = refs.isPrivileged ? 0 : Math.max(0, Number(dailyData.reserved || 0) - 1);
-    transaction.set(refs.daily, {
-      reserved: remaining,
-      successful: Number(dailyData.successful || 0) + (successful ? 1 : 0),
+    const usageRef = refs.isPrivileged ? refs.privilegedUserMonth : refs.userMonth;
+    const [call, usage] = await Promise.all([transaction.get(refs.call), transaction.get(usageRef)]);
+    if (call.get('status') === 'complete' || call.get('status') === 'failed') return;
+    const usageData = usage.data() || {};
+    transaction.set(usageRef, {
+      reservedBriefings: Math.max(0, Number(usageData.reservedBriefings || 0) - 1),
+      successfulBriefings: Number(usageData.successfulBriefings || 0) + (successful ? 1 : 0),
       updatedAt: Timestamp.now(),
     }, { merge: true });
     transaction.set(userRef, { activeCallUntilMs: 0 }, { merge: true });
@@ -299,9 +308,11 @@ export async function reserveGenerationCall(db: Firestore, refs: TurnLedgerRefs)
 export async function finishTurn(db: Firestore, refs: TurnLedgerRefs, complete: boolean): Promise<void> {
   await db.runTransaction(async transaction => {
     const userRef = refs.isPrivileged ? refs.privilegedUser : refs.user;
-    const [user, turn] = await Promise.all([transaction.get(userRef), transaction.get(refs.turn)]);
+    const usageRef = refs.isPrivileged ? refs.privilegedUserMonth : refs.userMonth;
+    const [user, turn, usage] = await Promise.all([transaction.get(userRef), transaction.get(refs.turn), transaction.get(usageRef)]);
     const userData = user.data() || {};
     const turnData = turn.data() || {};
+    if (turnData.status === 'complete') return;
     const remaining = complete ? Math.max(0, Number(userData.reservedTurns || 0) - 1) : Number(userData.reservedTurns || 0);
     transaction.set(userRef, {
       activeCallUntilMs: 0,
@@ -309,6 +320,14 @@ export async function finishTurn(db: Firestore, refs: TurnLedgerRefs, complete: 
       reservationsExpireAtMs: remaining === 0 ? 0 : Number(userData.reservationsExpireAtMs || 0),
       ...(complete ? { successfulTurns: Number(userData.successfulTurns || 0) + 1 } : {}),
     }, { merge: true });
+    if (complete) {
+      const usageData = usage.data() || {};
+      transaction.set(usageRef, {
+        reservedTurns: Math.max(0, Number(usageData.reservedTurns || 0) - (turnData.status === 'pending' && turnData.quotaMonth === refs.userMonth.id.slice(0, 7) ? 1 : 0)),
+        successfulTurns: Number(usageData.successfulTurns || 0) + 1,
+        updatedAt: Timestamp.now(),
+      }, { merge: true });
+    }
     transaction.set(refs.turn, {
       status: complete ? 'complete' : 'pending',
       callsReserved: Number(turnData.callsReserved || 0),
@@ -322,7 +341,8 @@ export async function finishTurn(db: Firestore, refs: TurnLedgerRefs, complete: 
 export async function failTurn(db: Firestore, refs: TurnLedgerRefs, callReserved: boolean): Promise<void> {
   await db.runTransaction(async transaction => {
     const userRef = refs.isPrivileged ? refs.privilegedUser : refs.user;
-    const [user, turn] = await Promise.all([transaction.get(userRef), transaction.get(refs.turn)]);
+    const usageRef = refs.isPrivileged ? refs.privilegedUserMonth : refs.userMonth;
+    const [user, turn, usage] = await Promise.all([transaction.get(userRef), transaction.get(refs.turn), transaction.get(usageRef)]);
     const userData = user.data() || {};
     const turnData = turn.data() || {};
     const remaining = Math.max(0, Number(userData.reservedTurns || 0) - (turnData.status === 'pending' ? 1 : 0));
@@ -331,6 +351,9 @@ export async function failTurn(db: Firestore, refs: TurnLedgerRefs, callReserved
       reservationsExpireAtMs: remaining === 0 ? 0 : Number(userData.reservationsExpireAtMs || 0),
       activeCallUntilMs: 0,
     }, { merge: true });
+    if (turnData.status === 'pending' && turnData.quotaMonth === refs.userMonth.id.slice(0, 7)) {
+      transaction.set(usageRef, { reservedTurns: Math.max(0, Number(usage.get('reservedTurns') || 0) - 1), updatedAt: Timestamp.now() }, { merge: true });
+    }
     transaction.set(refs.turn, { status: 'failed', failedAt: Timestamp.now() }, { merge: true });
     if (callReserved) transaction.set(refs.call, { status: 'failed', failedAt: Timestamp.now() }, { merge: true });
   });
@@ -352,5 +375,21 @@ export async function recordGenerationUsage(
   usageMetadata: Record<string, unknown> | null | undefined,
 ): Promise<void> {
   const usage = sanitizeUsageMetadata(usageMetadata);
-  await refs.call.set({ model, reasoningLevel, usage, usageRecordedAt: Timestamp.now() }, { merge: true });
+  const usageRef = refs.isPrivileged ? refs.privilegedUserMonth : refs.userMonth;
+  await refs.call.firestore.runTransaction(async transaction => {
+    const [call, monthly] = await Promise.all([transaction.get(refs.call), transaction.get(usageRef)]);
+    if (call.get('usageRecordedAt')) return;
+    transaction.set(refs.call, { model, reasoningLevel, usage, ...(Object.keys(usage).length ? { usageRecordedAt: Timestamp.now() } : {}) }, { merge: true });
+    if (Object.keys(usage).length) {
+      const data = monthly.data() || {};
+      transaction.set(usageRef, {
+        inputTokens: Number(data.inputTokens || 0) + Number(usage.promptTokenCount || 0),
+        outputTokens: Number(data.outputTokens || 0) + Number(usage.candidatesTokenCount || 0),
+        thinkingTokens: Number(data.thinkingTokens || 0) + Number(usage.thoughtsTokenCount || 0),
+        totalTokens: Number(data.totalTokens || 0) + Number(usage.totalTokenCount || 0),
+        usageCallsReported: Number(data.usageCallsReported || 0) + 1,
+        updatedAt: Timestamp.now(),
+      }, { merge: true });
+    }
+  });
 }

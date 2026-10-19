@@ -55,6 +55,24 @@ test('rejects requests without a verified Firebase identity', async () => {
   assert.equal((await response.json()).error.code, 'AUTH_REQUIRED');
 });
 
+test('usage response contains only the caller personal allowances and token totals, never the shared provider-call total', { skip: appCheckRequired }, async () => {
+  const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit' }).format(new Date()).slice(0, 7);
+  await db.doc(`managedAiMonthly/${month}`).set({ callsReserved: 9876 });
+  const response = await fetch(`${endpoint}/usage`, {
+    headers: { Origin: 'https://flowmate-ai.web.app', Authorization: `Bearer ${anonymousIdToken}` },
+  });
+  assert.equal(response.status, 200);
+  const usage = await response.json();
+  assert.deepEqual(Object.keys(usage).sort(), ['briefings', 'chat', 'tier', 'tokens']);
+  assert.equal(usage.tier, 'guest');
+  assert.equal(usage.chat.monthlyLimit, 30);
+  assert.equal(usage.briefings.monthlyLimit, 90);
+  assert.equal(usage.briefings.successfulThisMonth, 0);
+  assert.equal(usage.tokens.totalThisMonth, 0);
+  assert.equal(usage.chat.resetAt, usage.briefings.resetAt);
+  assert.equal('modelCalls' in usage, false);
+});
+
 test('rejects caller-supplied ownership and workspace identifiers before usage reservation', { skip: appCheckRequired }, async () => {
   const monthlyBefore = await db.collection('managedAiMonthly').get();
   const callsBefore = monthlyBefore.docs.reduce((sum, doc) => sum + Number(doc.get('callsReserved') || 0), 0);

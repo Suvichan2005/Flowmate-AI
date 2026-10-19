@@ -17,6 +17,7 @@ import { InterruptedDayRecovery } from './InterruptedDayRecovery';
 import { extractMemoryItem } from '../services/context/resolver';
 import { hasAiProviderAvailable } from '../services/ai/client';
 import { getManagedAiUsage, hasManagedAiIdentity, type ManagedAiUsage } from '../services/ai/managedClient';
+import { getManagedAiUser } from '../services/firebase';
 
 interface StatCardProps {
     icon: React.ReactNode;
@@ -129,7 +130,7 @@ const InsightModal: React.FC<InsightModalProps> = ({ title, items, onClose, onSe
     );
 };
 
-type ManagedAiLimit = 'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED';
+type ManagedAiLimit = 'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED' | 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED' | 'BRIEFING_ALLOWANCE_EXHAUSTED';
 interface DashboardProps {
     onOpenGraphFixer?: () => void;
     onManagedAiLimit?: (code: ManagedAiLimit) => void;
@@ -250,10 +251,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
         setBriefingLoading(true);
         try {
             const errorCode = await refreshDailyBriefing();
+            let latestUsage = managedAiUsage;
             if (hasManagedAiIdentity()) {
                 setBriefingUsageStatus('checking');
                 try {
-                    setManagedAiUsage(await getManagedAiUsage());
+                    latestUsage = await getManagedAiUsage();
+                    setManagedAiUsage(latestUsage);
                     setBriefingUsageStatus('ready');
                 } catch {
                     setBriefingUsageStatus('unavailable');
@@ -261,7 +264,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                 }
             }
             if (errorCode === 'BRIEFING_ALLOWANCE_EXHAUSTED') {
-                addToast?.('Your daily included briefing allowance is used. Chat turns have a separate allowance; configure BYOK in Settings to generate another briefing today.', 'info');
+                // The UI must still route guests to sign-in when usage telemetry is
+                // temporarily unavailable or an older Function response is deployed.
+                let isGuest = latestUsage?.tier === 'guest';
+                if (!isGuest) {
+                    try {
+                        isGuest = (await getManagedAiUser())?.isAnonymous === true;
+                    } catch {
+                        // Keep the account fallback only when identity could not be read.
+                    }
+                }
+                onManagedAiLimit?.(isGuest ? 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED' : 'BRIEFING_ALLOWANCE_EXHAUSTED');
             } else if (errorCode === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' || errorCode === 'TURN_ALLOWANCE_EXHAUSTED') {
                 onManagedAiLimit?.(errorCode);
             } else if (errorCode) {
@@ -276,16 +289,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
     const isBriefingStale = !dailyBriefing || dailyBriefing.generated_for_date !== today
         || entities.some(e => Date.parse(e.updated_at) > Date.parse(dailyBriefing.timestamp));
     const briefingAllowanceLabel = managedAiUsage?.briefings
-        ? managedAiUsage.briefings.dailyLimit === null
-            ? 'Unlimited AI briefings today'
-            : `${Math.max(0, managedAiUsage.briefings.dailyLimit - managedAiUsage.briefings.successfulToday)} of ${managedAiUsage.briefings.dailyLimit} AI briefings left today`
+        ? managedAiUsage.briefings.monthlyLimit === null
+            ? 'Unlimited AI briefings this month'
+            : `${Math.max(0, managedAiUsage.briefings.monthlyLimit - managedAiUsage.briefings.successfulThisMonth)} of ${managedAiUsage.briefings.monthlyLimit} AI briefings left this month`
         : hasManagedAiIdentity()
-            ? briefingUsageStatus === 'checking' ? 'Checking today’s AI briefing allowance' : 'AI briefing allowance is unavailable'
+            ? briefingUsageStatus === 'checking' ? 'Checking this month’s AI briefing allowance' : 'AI briefing allowance is unavailable'
             : 'Generate a local briefing';
     const briefingAllowanceBadge = managedAiUsage?.briefings
-        ? managedAiUsage.briefings.dailyLimit === null
+        ? managedAiUsage.briefings.monthlyLimit === null
             ? '∞'
-            : String(Math.max(0, managedAiUsage.briefings.dailyLimit - managedAiUsage.briefings.successfulToday))
+            : String(Math.max(0, managedAiUsage.briefings.monthlyLimit - managedAiUsage.briefings.successfulThisMonth))
         : null;
 
     // Format minutes to hours/minutes string

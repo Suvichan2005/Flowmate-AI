@@ -99,7 +99,7 @@ test('failed requests release the reservation; account allowance counts 150 succ
   assert.equal((await db.doc(`managedAiUsers/${userId}`).get()).get('successfulTurns'), 150);
 });
 
-test('guests receive 30 lifetime chat turns separate from account records', async () => {
+test('guests receive 30 chat turns per month separate from account records', async () => {
   const guestId = uid();
   for (let index = 0; index < 30; index += 1) {
     const suffix = String(index).padStart(8, '0');
@@ -118,7 +118,7 @@ test('guests receive 30 lifetime chat turns separate from account records', asyn
   await failTurn(db, accountRefs, false);
 });
 
-test('briefings have a separate daily quota and failed model calls do not consume a successful briefing', async () => {
+test('briefings have a separate monthly quota and failed model calls do not consume a successful briefing', async () => {
   const guestId = uid();
   const date = new Date();
   const first = briefingLedgerRefs(db, guestId, 'briefing_failed_0001', date, undefined, 'guest');
@@ -126,22 +126,44 @@ test('briefings have a separate daily quota and failed model calls do not consum
   await reserveBriefing(db, first);
   await reserveBriefingGenerationCall(db, first);
   await finishBriefing(db, first, false);
-  assert.equal((await first.daily.get()).get('successful') || 0, 0);
+  assert.equal((await first.userMonth.get()).get('successfulBriefings') || 0, 0);
   assert.equal((await first.month.get()).get('callsReserved'), globalCallsBefore + 1);
 
-  for (let index = 0; index < 3; index += 1) {
+  for (let index = 0; index < 90; index += 1) {
     const refs = briefingLedgerRefs(db, guestId, `briefing_success_${String(index).padStart(8, '0')}`, date, undefined, 'guest');
-    await reserveBriefing(db, refs);
+    await reserveBriefing(db, refs, Date.now() + (index + 1) * 60_001);
     await reserveBriefingGenerationCall(db, refs);
     await finishBriefing(db, refs, true);
   }
-  assert.equal((await first.daily.get()).get('successful'), 3);
-  const next = briefingLedgerRefs(db, guestId, 'briefing_success_00000003', date, undefined, 'guest');
+  assert.equal((await first.userMonth.get()).get('successfulBriefings'), 90);
+  const next = briefingLedgerRefs(db, guestId, 'briefing_success_00000090', date, undefined, 'guest');
   await assert.rejects(reserveBriefing(db, next), error => error.code === 'BRIEFING_ALLOWANCE_EXHAUSTED');
 
   const chat = turnLedgerRefs(db, guestId, 'chat_independent_0001', 'chat_independent_00001', stableDate, undefined, 'guest');
   await reserveTurn(db, chat);
   await failTurn(db, chat, false);
+});
+
+test('monthly allowances reset in the next Asia/Kolkata calendar month', async () => {
+  const guestId = uid();
+  const october = new Date('2026-10-15T12:00:00+05:30');
+  const november = new Date('2026-11-01T00:05:00+05:30');
+  const prior = turnLedgerRefs(db, guestId, 'turn_october_month_0001', 'call_october_month_0001', october, undefined, 'guest');
+  await reserveTurn(db, prior);
+  await reserveGenerationCall(db, prior);
+  await finishTurn(db, prior, true);
+  const nextMonth = turnLedgerRefs(db, guestId, 'turn_november_month_0001', 'call_november_month_0001', november, undefined, 'guest');
+  await reserveTurn(db, nextMonth);
+  assert.equal((await nextMonth.userMonth.get()).get('successfulTurns'), undefined);
+  await failTurn(db, nextMonth, false);
+
+  const briefing = briefingLedgerRefs(db, guestId, 'briefing_october_month_01', october, undefined, 'guest');
+  await reserveBriefing(db, briefing);
+  await reserveBriefingGenerationCall(db, briefing);
+  await finishBriefing(db, briefing, true);
+  const nextMonthBriefing = briefingLedgerRefs(db, guestId, 'briefing_november_month_01', november, undefined, 'guest');
+  await reserveBriefing(db, nextMonthBriefing);
+  await finishBriefing(db, nextMonthBriefing, false);
 });
 
 test('only one overlapping request succeeds for a UID', async () => {
@@ -182,10 +204,12 @@ test('short-term per-UID rate limit rejects the 21st reservation in a minute', a
 test('ordinary model-call usage remains observable without an artificial monthly application ceiling', async () => {
   const monthRef = db.doc(`managedAiMonthly/${monthKey(new Date())}`);
   await monthRef.set({ callsReserved: 500 });
-  const results = await Promise.allSettled(Array.from({ length: 20 }, (_, index) => {
+  const results = [];
+  for (let index = 0; index < 20; index += 1) {
     const refs = turnLedgerRefs(db, uid(), 'turn_global_' + String(index).padStart(12, '0'), 'call_global_' + String(index).padStart(12, '0'));
-    return reserveGenerationCall(db, refs);
-  }));
+    try { await reserveGenerationCall(db, refs); results.push({ status: 'fulfilled' }); }
+    catch (error) { results.push({ status: 'rejected', reason: error }); }
+  }
   assert.equal(results.filter(value => value.status === 'fulfilled').length, 20);
   assert.equal((await monthRef.get()).get('callsReserved'), 520);
 

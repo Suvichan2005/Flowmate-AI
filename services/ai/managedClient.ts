@@ -48,9 +48,9 @@ export interface ManagedLiveModelOption {
 
 export interface ManagedAiUsage {
   tier: 'guest' | 'account' | 'privileged';
-  chat: { successfulTurns: number; lifetimeLimit: number | null };
-  briefings: { successfulToday: number; dailyLimit: number | null; date: string };
-  modelCalls: { thisMonth: number; applicationLimit: number | null; month: string };
+  chat: { successfulTurns: number; monthlyLimit: number | null; month: string; resetAt: string };
+  briefings: { successfulThisMonth: number; monthlyLimit: number | null; month: string; resetAt: string };
+  tokens: { inputThisMonth: number; outputThisMonth: number; thinkingThisMonth: number; totalThisMonth: number; usageCallsThisMonth: number; month: string };
 }
 
 const MANAGED_AI_REGION = 'asia-south1';
@@ -203,7 +203,7 @@ export async function getManagedAiUsage(): Promise<ManagedAiUsage> {
   const response = await fetch(`${endpoint}/usage`, { headers, cache: 'no-store' });
   let payload: unknown;
   try { payload = await response.json(); } catch { throw new ManagedAiError('USAGE_READ_UNAVAILABLE', response.status || 503); }
-  if (!response.ok || !payload || typeof payload !== 'object' || !('chat' in payload) || !('briefings' in payload) || !('modelCalls' in payload)) {
+  if (!response.ok || !payload || typeof payload !== 'object' || !('chat' in payload) || !('briefings' in payload) || !('tokens' in payload)) {
     const code = (payload as { error?: { code?: unknown } })?.error?.code;
     throw new ManagedAiError(typeof code === 'string' ? code : 'USAGE_READ_UNAVAILABLE', response.status || 503);
   }

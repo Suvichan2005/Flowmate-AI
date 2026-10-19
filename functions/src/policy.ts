@@ -67,13 +67,13 @@ export const SUPPORTED_MANAGED_MODELS: ManagedModelPolicy[] = [
 ] as const;
 
 export type ManagedModelId = typeof SUPPORTED_MANAGED_MODELS[number]['id'];
-// Calendar and account allowances are deliberately separate from model-call billing.
-// Generous portfolio/demo allowances; separate per-minute and provider-side
-// controls remain the abuse guard while rolling resource budgets are evaluated.
+// Monthly success allowances stay easy to explain. Model context/output limits,
+// provider quotas, per-identity rate limits and single-flight reservations are
+// the guardrails; token totals are informational and do not impose another cap.
 export const GUEST_CHAT_TURN_LIMIT = 30;
 export const ACCOUNT_CHAT_TURN_LIMIT = 150;
-export const GUEST_DAILY_BRIEFING_LIMIT = 3;
-export const ACCOUNT_DAILY_BRIEFING_LIMIT = 5;
+export const GUEST_MONTHLY_BRIEFING_LIMIT = 90;
+export const ACCOUNT_MONTHLY_BRIEFING_LIMIT = 150;
 // Model-call records are telemetry only. Monetary safeguards are provider-side;
 // usage reporting must not become an application quota.
 export const RATE_LIMIT_PER_MINUTE = 20;

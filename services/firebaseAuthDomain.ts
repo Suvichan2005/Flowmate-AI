@@ -1,7 +1,7 @@
 /**
- * Firebase redirect auth must share the app's origin on browsers that partition
- * third-party storage. Keep the override to Flowmate's known Hosting origins;
- * never derive an auth helper origin from an arbitrary Host header.
+ * Firebase's redirect helper must share the app's origin on web.app hosting so
+ * browsers with partitioned third-party storage can complete sign-in. Keep the
+ * override to the two verified Flowmate Hosting hosts; never trust arbitrary hosts.
  */
 const FLOWMATE_HOSTING_AUTH_ORIGINS = new Set([
     'flowmate-ai.web.app',

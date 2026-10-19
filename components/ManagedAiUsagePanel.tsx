@@ -23,10 +23,12 @@ const ManagedAiUsagePanel: React.FC = () => {
   }, [currentUser?.uid]);
 
   if (!usage && !unavailable) return null;
-  const briefingReset = usage?.briefings.date
-    ? new Date(Date.parse(`${usage.briefings.date}T00:00:00+05:30`) + 24 * 60 * 60 * 1000)
-        .toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })
+  const resetAt = usage?.chat.resetAt
+    ? new Date(usage.chat.resetAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })
     : null;
+  const tokenCount = (value: number) => value >= 1_000_000
+    ? `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`
+    : value >= 10_000 ? `${(value / 1_000).toFixed(0)}K` : value.toLocaleString('en-IN');
   return <section aria-label="Managed AI usage" className="mb-5 rounded-2xl border border-ideapad-border bg-ideapad-surface p-4 sm:p-5">
     <div className="mb-3 flex items-center justify-between gap-3">
       <h3 className="font-semibold text-ideapad-text">Included AI use</h3>
@@ -34,12 +36,15 @@ const ManagedAiUsagePanel: React.FC = () => {
     </div>
     {usage ? <>
       <div className="grid gap-2 sm:grid-cols-2">
-        <div className="rounded-xl bg-ideapad-base p-3"><div className="text-xs text-ideapad-muted">Chat turns</div><div className="mt-1 font-semibold text-ideapad-text">{usage.chat.lifetimeLimit === null ? `${usage.chat.successfulTurns} used · uncapped` : `${Math.max(0, usage.chat.lifetimeLimit - usage.chat.successfulTurns)} of ${usage.chat.lifetimeLimit} left`}</div></div>
-        <div className="rounded-xl bg-ideapad-base p-3"><div className="text-xs text-ideapad-muted">Briefings today</div><div className="mt-1 font-semibold text-ideapad-text">{usage.briefings.dailyLimit === null ? 'Uncapped' : `${Math.max(0, usage.briefings.dailyLimit - usage.briefings.successfulToday)} of ${usage.briefings.dailyLimit} left`}</div>{briefingReset && usage.briefings.dailyLimit !== null && <div className="mt-1 text-[11px] text-ideapad-muted">Resets {briefingReset} IST</div>}</div>
+        <div className="rounded-xl bg-ideapad-base p-3"><div className="text-xs text-ideapad-muted">Chat turns this month</div><div className="mt-1 font-semibold text-ideapad-text">{usage.chat.monthlyLimit === null ? `${usage.chat.successfulTurns} used · unlimited` : `${Math.max(0, usage.chat.monthlyLimit - usage.chat.successfulTurns)} of ${usage.chat.monthlyLimit} left`}</div></div>
+        <div className="rounded-xl bg-ideapad-base p-3"><div className="text-xs text-ideapad-muted">Briefings this month</div><div className="mt-1 font-semibold text-ideapad-text">{usage.briefings.monthlyLimit === null ? `${usage.briefings.successfulThisMonth} used · unlimited` : `${Math.max(0, usage.briefings.monthlyLimit - usage.briefings.successfulThisMonth)} of ${usage.briefings.monthlyLimit} left`}</div></div>
       </div>
+      {resetAt && <p className="mt-2 text-[11px] text-ideapad-muted">Both allowances reset {resetAt} IST.</p>}
       <details className="mt-3 border-t border-ideapad-border pt-3 text-xs text-ideapad-muted">
-        <summary className="cursor-pointer font-medium text-ideapad-text">Usage details</summary>
-        <p className="mt-2 leading-5">Chat turns and daily briefings have separate allowances. {usage.modelCalls.thisMonth} provider model calls are tracked this month but do not define a Flowmate allowance. Google AI Studio billing and provider limits are separate; their dashboards may be delayed. Failed requests count when a model call is submitted. Prompts and responses are not stored in this usage record.</p>
+        <summary className="cursor-pointer font-medium text-ideapad-text">Token usage</summary>
+        {usage.tokens.usageCallsThisMonth > 0
+          ? <p className="mt-2 leading-5">{tokenCount(usage.tokens.totalThisMonth)} tokens processed this month · {tokenCount(usage.tokens.inputThisMonth)} input · {tokenCount(usage.tokens.outputThisMonth)} generated{usage.tokens.thinkingThisMonth ? ` · ${tokenCount(usage.tokens.thinkingThisMonth)} thinking` : ''}. Token totals are informational, not an extra allowance; the selected model’s actual context and output limits apply.</p>
+          : <p className="mt-2 leading-5">Token totals will appear here after a managed AI reply. The selected model’s actual context and output limits apply.</p>}
       </details>
     </> : <p role="status" className="text-sm text-amber-300">Usage is temporarily unavailable. Your current workspace is unchanged.</p>}
   </section>;
