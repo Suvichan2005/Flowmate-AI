@@ -162,6 +162,30 @@ export function authorizeManagedModel(modelId: string, reasoning: ReasoningLevel
   }
 }
 
+/**
+ * The Gemini Developer API's countTokens endpoint accepts a full
+ * generateContentRequest envelope. The @google/genai SDK's countTokens
+ * config.systemInstruction/tools adapters are Vertex-only and throw for the
+ * Gemini API, so keep the exact model inputs in the REST request envelope.
+ */
+export function buildCountTokensRequest(
+  modelId: string,
+  contents: unknown[],
+  config: Record<string, unknown>,
+): { generateContentRequest: Record<string, unknown> } {
+  const generateContentRequest: Record<string, unknown> = {
+    model: `models/${modelId}`,
+    contents,
+  };
+  if (typeof config.systemInstruction === 'string' && config.systemInstruction.length > 0) {
+    generateContentRequest.systemInstruction = { parts: [{ text: config.systemInstruction }] };
+  }
+  if (Array.isArray(config.tools) && config.tools.length > 0) {
+    generateContentRequest.tools = config.tools;
+  }
+  return { generateContentRequest };
+}
+
 /** Server-controlled reasoning is derived from verified identity and model policy. */
 export function managedGenerationConfig(config: Record<string, unknown>, reasoning: ReasoningLevel): Record<string, unknown> {
   const { thinkingConfig: _clientThinking, ...safeConfig } = config;

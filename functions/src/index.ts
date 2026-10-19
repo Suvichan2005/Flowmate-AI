@@ -9,7 +9,7 @@ import { defineBoolean, defineString, defineSecret } from 'firebase-functions/pa
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
 import type { Request, Response } from 'express';
-import { ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, ARGON_MODEL, DEFAULT_MODEL, GUEST_CHAT_TURN_LIMIT, GUEST_DAILY_BRIEFING_LIMIT, MANAGED_FUNCTION_TIMEOUT_SECONDS, SUPPORTED_MANAGED_MODELS, RequestFailure, authorizeManagedModel, dayKey, isCompletedUserTurn, managedGenerationConfig, monthKey, sanitizeManagedCandidates, validateGenerationBody } from './policy.js';
+import { ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, ARGON_MODEL, DEFAULT_MODEL, GUEST_CHAT_TURN_LIMIT, GUEST_DAILY_BRIEFING_LIMIT, MANAGED_FUNCTION_TIMEOUT_SECONDS, SUPPORTED_MANAGED_MODELS, RequestFailure, authorizeManagedModel, buildCountTokensRequest, dayKey, isCompletedUserTurn, managedGenerationConfig, monthKey, sanitizeManagedCandidates, validateGenerationBody } from './policy.js';
 import { briefingLedgerRefs, failTurn, finishBriefing, finishTurn, isManagedAiEnabledForIdentity, recordGenerationUsage, reserveBriefing, reserveBriefingGenerationCall, reserveGenerationCall, reserveTurn, sanitizeUsageMetadata, turnLedgerRefs } from './ledger.js';
 import { handleManagedAiAdmin } from './admin.js';
 import { generateArgonStateless } from './argon.js';
@@ -374,33 +374,36 @@ export const managedGemini = onRequest({
     if (requestedOutputTokens !== undefined && Number(requestedOutputTokens) > modelInfo.outputTokenLimit) {
       throw new RequestFailure('OUTPUT_TOKEN_LIMIT', 413);
     }
-    let count: Awaited<ReturnType<typeof ai.models.countTokens>>;
+    let count: { totalTokens?: unknown };
     try {
-      count = await ai.models.countTokens({
-        model: modelId,
-        contents: input.contents as Content[],
-        config: {
-          systemInstruction: String(input.config.systemInstruction || ''),
-          ...(Array.isArray(input.config.tools) ? { tools: input.config.tools as Tool[] } : {}),
-        },
+      const countResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId)}:countTokens`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY.value() },
+        body: JSON.stringify(buildCountTokensRequest(modelId, input.contents, input.config)),
+        signal: AbortSignal.timeout(15_000),
       });
+      const countPayload = await countResponse.json() as {
+        totalTokens?: unknown;
+        error?: { code?: unknown; status?: unknown };
+      };
+      if (!countResponse.ok) {
+        const providerCode = typeof countPayload.error?.status === 'string'
+          && /^[A-Z][A-Z0-9_]{0,63}$/.test(countPayload.error.status)
+          ? countPayload.error.status : undefined;
+        logger.warn('Managed input token count unavailable', {
+          code: 'MODEL_CATALOG_UNAVAILABLE', providerStatus: countResponse.status, providerCode,
+        });
+        throw new RequestFailure('MODEL_CATALOG_UNAVAILABLE', 503);
+      }
+      count = countPayload;
     } catch (error) {
+      if (error instanceof RequestFailure) throw error;
       // Do not send a request whose model-specific context size could not be
-      // verified. In particular, Argon uses one shared input/output window.
-      // Record only provider classification metadata so a blocked capability
-      // can be diagnosed without logging prompts, tool arguments, or secrets.
-      const detail = error && typeof error === 'object' ? error as {
-        status?: unknown; code?: unknown; name?: unknown;
-      } : {};
-      const providerStatus = typeof detail.status === 'number' && Number.isInteger(detail.status)
-        ? detail.status : undefined;
-      const providerCode = typeof detail.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(detail.code)
-        ? detail.code : undefined;
-      const providerErrorName = typeof detail.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(detail.name)
-        ? detail.name : undefined;
-      logger.warn('Managed input token count unavailable', {
-        code: 'MODEL_CATALOG_UNAVAILABLE', providerStatus, providerCode, providerErrorName,
-      });
+      // verified. Log only an error class, never prompts, tool arguments or keys.
+      const providerErrorName = error && typeof error === 'object' && 'name' in error
+        && typeof error.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error.name)
+        ? error.name : undefined;
+      logger.warn('Managed input token count unavailable', { code: 'MODEL_CATALOG_UNAVAILABLE', providerErrorName });
       throw new RequestFailure('MODEL_CATALOG_UNAVAILABLE', 503);
     }
     const inputTokens = Number(count.totalTokens);
