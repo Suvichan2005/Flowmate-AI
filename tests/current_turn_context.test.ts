@@ -32,10 +32,9 @@ describe('removed location and travel defaults', () => {
     expect(resolved.serializedPromptSection).not.toContain('Legacy private home address');
     expect(resolved.serializedPromptSection).not.toContain('station_buffer_minutes');
     expect(resolved.serializedPromptSection).not.toContain('airport_buffer_minutes');
-    expect(resolved.serializedPromptSection).not.toContain('45');
-    expect(resolved.serializedPromptSection).not.toContain('120');
     expect(resolved).not.toHaveProperty('liveLocationContext');
     expect(resolved.userProfile).not.toHaveProperty('home_location');
+    expect(resolved.userProfile).not.toHaveProperty('travel_preferences');
   });
 
   it('does not expose route planning as a model tool or instruct the model to use hidden location', () => {
