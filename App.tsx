@@ -39,6 +39,7 @@ import { getLatestReviewDraft, deleteReviewDraft, revalidateReviewDraft, type Re
 import { mobileGestureThreshold, mobileSidebarCloseThreshold, mobileSidebarOpenThreshold, resolveMobileGestureIntent } from './utils/mobileNavigationGestures';
 import OnboardingFlow from './components/OnboardingFlow';
 import { buildOnboardingChatDraft, hasCompletedOnboarding } from './services/onboardingProfile';
+import { getManagedAiLimitCopy, type ManagedAiLimitCode } from './services/ai/managedAiLimitCopy';
 
 // Helper to safely load dynamic chunks across deployments
 function lazyWithRetry<T extends React.ComponentType<any>>(
@@ -165,7 +166,7 @@ const App: React.FC = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [authResolved, setAuthResolved] = useState(false);
-  const [managedAiLimit, setManagedAiLimit] = useState<'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED' | 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED' | 'BRIEFING_ALLOWANCE_EXHAUSTED' | null>(null);
+  const [managedAiLimit, setManagedAiLimit] = useState<ManagedAiLimitCode | null>(null);
   const managedAiDialogRef = useRef<HTMLElement | null>(null);
   const [chatWidth, setChatWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
@@ -2225,22 +2226,14 @@ const App: React.FC = () => {
           <section ref={managedAiDialogRef} role="dialog" aria-modal="true" aria-labelledby="managed-ai-limit-title" className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">Gemini access</p>
             <h2 id="managed-ai-limit-title" className="mt-2 text-xl font-semibold text-slate-100">
-              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' ? 'Your guest AI turns are used'
-                : managedAiLimit === 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED' ? 'Your guest briefings are used'
-                  : managedAiLimit === 'BRIEFING_ALLOWANCE_EXHAUSTED' ? 'Your included briefings are used' : 'Your included AI turns are used'}
+              {getManagedAiLimitCopy(managedAiLimit).title}
             </h2>
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED'
-                ? 'You have used this month’s 30 guest chat turns. Your current workspace stays on this device. Sign in for 150 included turns each month, or use your own Gemini key.'
-                : managedAiLimit === 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED'
-                  ? 'You have used this month’s 90 guest briefings. Sign in for 150 included briefings each month. Your current workspace stays on this device.'
-                  : managedAiLimit === 'BRIEFING_ALLOWANCE_EXHAUSTED'
-                    ? 'You have used this month’s included briefings. They reset next month; you can also use your own Gemini key.'
-                    : 'You have used this month’s 150 included chat turns. They reset next month; you can also use your own Gemini key.'}
+              {getManagedAiLimitCopy(managedAiLimit).description}
             </p>
             <div className="mt-6 flex flex-wrap justify-end gap-3">
               <button type="button" onClick={() => setManagedAiLimit(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Later</button>
-              {(managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' || managedAiLimit === 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED') && <button type="button" onClick={() => { setManagedAiLimit(null); setShowAuthModal(true); }} className="rounded-lg border border-emerald-700 px-4 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-950">Sign in for more monthly use</button>}
+              {getManagedAiLimitCopy(managedAiLimit).signInLabel && <button type="button" onClick={() => { setManagedAiLimit(null); setShowAuthModal(true); }} className="rounded-lg border border-emerald-700 px-4 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-950">{getManagedAiLimitCopy(managedAiLimit).signInLabel}</button>}
               <button type="button" onClick={() => { setManagedAiLimit(null); setView('settings'); }} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">Use my Gemini key</button>
             </div>
           </section>
