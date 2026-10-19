@@ -2,7 +2,11 @@ export const MOBILE_GESTURE_DISTANCE_PX = 96;
 export const MOBILE_GESTURE_EDGE_PX = 28;
 
 export function mobileGestureThreshold(width: number): number {
-  return Math.max(76, Math.min(112, Math.round(width * 0.25)));
+  return Math.max(68, Math.min(96, Math.round(width * 0.22)));
+}
+
+export function mobileSidebarOpenThreshold(width: number): number {
+  return Math.max(56, Math.min(76, Math.round(width * 0.17)));
 }
 
 export function mobileSidebarCloseThreshold(width: number): number {
@@ -18,11 +22,12 @@ export function resolveMobileGestureIntent(input: {
   startedAtTop: boolean;
   canNavigateToChat: boolean;
   canReturnToView?: boolean;
+  canOpenSidebar?: boolean;
   isSidebarOpen?: boolean;
   startedInSidebar?: boolean;
   distanceThresholdPx?: number;
 }): MobileGestureIntent {
-  const { deltaX, deltaY, startX, startedAtTop, canNavigateToChat, canReturnToView = false, isSidebarOpen = false, startedInSidebar = false } = input;
+  const { deltaX, deltaY, startedAtTop, canNavigateToChat, canReturnToView = false, canOpenSidebar = true, isSidebarOpen = false, startedInSidebar = false } = input;
   const threshold = input.distanceThresholdPx ?? MOBILE_GESTURE_DISTANCE_PX;
   const horizontal = Math.abs(deltaX);
   const vertical = Math.abs(deltaY);
@@ -45,7 +50,7 @@ export function resolveMobileGestureIntent(input: {
     return null;
   }
 
-  if (deltaX > 0 && startX <= MOBILE_GESTURE_EDGE_PX) return 'open-menu';
+  if (deltaX > 0 && canOpenSidebar) return 'open-menu';
   if (deltaX > 0 && canReturnToView) return 'return-view';
   if (deltaX < 0 && canNavigateToChat) return 'open-chat';
   return null;

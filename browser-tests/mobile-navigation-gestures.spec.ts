@@ -72,14 +72,14 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
   expect(chatReturnOffsets.some(offset => offset > 0)).toBe(true);
   await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
 
-  // A deliberate left-edge drag starting on the mobile header opens the real sidebar.
+  // A short deliberate rightward drag from the middle of the page opens the sidebar.
   // Let the previous screen's return animation finish before starting a new drag;
   // otherwise the test can begin a second gesture while the surface is still moving.
   await expect.poll(() => page.getByTestId('mobile-gesture-surface').evaluate(
     element => new DOMMatrix(getComputedStyle(element).transform).m41,
   )).toBe(0);
   const openMenuOffsets = await dragTouch(context, page, [
-    { x: 8, y: 25 }, { x: 50, y: 25 }, { x: 95, y: 25 }, { x: 140, y: 25 },
+    { x: 150, y: 430 }, { x: 172, y: 430 }, { x: 196, y: 430 }, { x: 222, y: 430 },
   ], '[data-testid="mobile-gesture-surface"]');
   expect(openMenuOffsets.some(offset => offset > 0)).toBe(true);
   const sidebar = page.getByRole('dialog', { name: 'Mobile navigation' });
@@ -95,6 +95,29 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
   await expect(sidebar).toBeHidden();
   await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(surface).toBeVisible();
+
+  // Chat owns rightward return gestures across the screen, including the edge.
+  // This prevents a back drag from being reinterpreted as a sidebar opening.
+  await nav.getByRole('button', { name: 'Open Chat', exact: true }).click();
+  await expect(nav.getByRole('button', { name: 'Open Chat', exact: true })).toHaveAttribute('aria-current', 'page');
+  for (const startX of [8, 24, 42]) {
+    await dragTouch(context, page, [
+      { x: startX, y: 430 }, { x: startX + 35, y: 430 }, { x: startX + 72, y: 430 }, { x: startX + 112, y: 430 },
+    ], '[data-testid="mobile-gesture-surface"]');
+    await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(sidebar).toBeHidden();
+    if (startX !== 42) {
+      await nav.getByRole('button', { name: 'Open Chat', exact: true }).click();
+      await expect(nav.getByRole('button', { name: 'Open Chat', exact: true })).toHaveAttribute('aria-current', 'page');
+    }
+  }
+
+  // The explicit menu button keeps navigation available while Chat owns edge-back.
+  await nav.getByRole('button', { name: 'Open Chat', exact: true }).click();
+  await page.getByRole('button', { name: 'Open navigation menu', exact: true }).click();
+  await expect(sidebar).toBeVisible();
+  await page.getByRole('button', { name: 'Close navigation menu', exact: true }).click();
+  await expect(sidebar).toBeHidden();
 });
 
 test('mobile model control opens a validated catalogue and returns keyboard focus', async ({ page, context }) => {

@@ -36,7 +36,7 @@ import { reconcileEntityCollection, globalPendingMutationQueue } from './service
 import { projectKernelEntitiesToLegacy } from './store/kernelProjection';
 import { setupCrossTabSync } from './services/storage';
 import { getLatestReviewDraft, deleteReviewDraft, revalidateReviewDraft, type ReviewDraft } from './services/action-review';
-import { MOBILE_GESTURE_EDGE_PX, mobileGestureThreshold, mobileSidebarCloseThreshold, resolveMobileGestureIntent } from './utils/mobileNavigationGestures';
+import { mobileGestureThreshold, mobileSidebarCloseThreshold, mobileSidebarOpenThreshold, resolveMobileGestureIntent } from './utils/mobileNavigationGestures';
 import OnboardingFlow from './components/OnboardingFlow';
 import { buildOnboardingChatDraft, hasCompletedOnboarding } from './services/onboardingProfile';
 
@@ -186,6 +186,7 @@ const App: React.FC = () => {
     startedAtTop: boolean;
     canNavigateToChat: boolean;
     canReturnToView: boolean;
+    canOpenSidebar: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -288,6 +289,7 @@ const App: React.FC = () => {
       startedAtTop,
       canNavigateToChat: currentView !== 'chat',
       canReturnToView: currentView === 'chat' && lastNonChatViewRef.current !== 'chat',
+      canOpenSidebar: currentView !== 'chat',
     };
   };
 
@@ -311,7 +313,7 @@ const App: React.FC = () => {
     const isHorizontal = Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
     const isPullingDown = deltaY > 0 && Math.abs(deltaY) > Math.abs(deltaX) * 1.2 && start.startedAtTop;
 
-    if (isHorizontal && ((deltaX < 0 && start.canNavigateToChat) || (deltaX > 0 && (start.startX <= MOBILE_GESTURE_EDGE_PX || start.canReturnToView)))) {
+    if (isHorizontal && ((deltaX < 0 && start.canNavigateToChat) || (deltaX > 0 && (start.canOpenSidebar || start.canReturnToView)))) {
       const dragLimit = Math.max(150, window.innerWidth * 0.78);
       setMobileGestureOffset({ x: Math.max(-dragLimit, Math.min(dragLimit, deltaX * 0.94)), y: 0 });
     } else if (isPullingDown && !loading && !isStreaming && !isLiveMode) {
@@ -336,7 +338,10 @@ const App: React.FC = () => {
       startedAtTop: start.startedAtTop,
       canNavigateToChat: start.canNavigateToChat,
       canReturnToView: start.canReturnToView,
-      distanceThresholdPx: mobileGestureThreshold(window.innerWidth),
+      canOpenSidebar: start.canOpenSidebar,
+      distanceThresholdPx: start.canOpenSidebar
+        ? mobileSidebarOpenThreshold(window.innerWidth)
+        : mobileGestureThreshold(window.innerWidth),
     });
     setMobileGestureOffset({ x: 0, y: 0 });
     if (intent === 'open-menu') {
@@ -379,7 +384,7 @@ const App: React.FC = () => {
   // swipes there too, so starting beside the hamburger does not silently miss.
   const handleMobileHeaderTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
     const touch = event.touches[0];
-    if (!isMobile || isMobileSidebarOpen || loading || isStreaming || isLiveMode || event.touches.length !== 1 || !touch || touch.clientX > MOBILE_GESTURE_EDGE_PX) {
+    if (!isMobile || isMobileSidebarOpen || loading || isStreaming || isLiveMode || event.touches.length !== 1 || !touch) {
       mobileTouchStartRef.current = null;
       setMobileGestureOffset({ x: 0, y: 0 });
       return;
@@ -391,6 +396,7 @@ const App: React.FC = () => {
       startedAtTop: false,
       canNavigateToChat: currentView !== 'chat',
       canReturnToView: currentView === 'chat' && lastNonChatViewRef.current !== 'chat',
+      canOpenSidebar: currentView !== 'chat',
     };
   };
 
@@ -400,7 +406,10 @@ const App: React.FC = () => {
     if (start && touch) {
       const deltaX = touch.clientX - start.startX;
       const deltaY = touch.clientY - start.y;
-      if (deltaX > 24 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) event.preventDefault();
+      const commitThreshold = currentView === 'chat'
+        ? mobileGestureThreshold(window.innerWidth)
+        : mobileSidebarOpenThreshold(window.innerWidth);
+      if (deltaX >= commitThreshold && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) event.preventDefault();
       finishMobileGesture(deltaX, deltaY);
     } else {
       setMobileGestureOffset({ x: 0, y: 0 });
@@ -1482,12 +1491,12 @@ const App: React.FC = () => {
           {/* Left: If chat view, show Back button, else hamburger */}
           {currentView === 'chat' ? (
             <button
-              onClick={() => setView('dashboard')}
+              onClick={() => setView(lastNonChatViewRef.current)}
               className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 transition-colors flex items-center gap-1"
-              aria-label="Back to dashboard"
+              aria-label={`Back to ${lastNonChatViewRef.current === 'dashboard' ? 'Home' : lastNonChatViewRef.current === 'knowledge' ? 'Library' : lastNonChatViewRef.current}`}
             >
               <ChevronLeft size={20} />
-              <span className="text-xs font-medium">Home</span>
+              <span className="text-xs font-medium">{lastNonChatViewRef.current === 'dashboard' ? 'Home' : lastNonChatViewRef.current === 'knowledge' ? 'Library' : lastNonChatViewRef.current}</span>
             </button>
           ) : (
             <button
@@ -1525,7 +1534,14 @@ const App: React.FC = () => {
               <MessageSquare size={19} />
             </button>
           ) : (
-            <div className="w-12" />
+            <button
+              onClick={openMobileSidebar}
+              className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 transition-colors"
+              aria-label="Open navigation menu"
+              title="Open navigation menu"
+            >
+              <Menu size={22} />
+            </button>
           )}
         </div>
       )}
@@ -1811,14 +1827,14 @@ const App: React.FC = () => {
       {isMobile && (
         <div data-layout="mobile" className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] overflow-hidden relative">
           {/* Destination peeks stay beneath the moving page so the gesture feels like a screen being pulled. */}
-          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && (currentView !== 'chat' || (mobileTouchStartRef.current?.startX ?? Infinity) <= MOBILE_GESTURE_EDGE_PX) && (
+          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView !== 'chat' && mobileTouchStartRef.current?.canOpenSidebar && (
             <div aria-hidden="true" className="absolute inset-y-0 left-0 z-0 w-64 overflow-hidden bg-slate-900 px-4 py-5 text-slate-300">
               <div className="mb-6 flex items-center gap-3 font-semibold text-slate-100"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600/80"><Sparkles size={18} /></span>Flowmate</div>
               <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Navigation</p>
               <div className="space-y-2 text-sm">{['Home', 'Chat', 'Graph', 'Calendar', 'Library', 'Analytics', 'Settings'].map((label, index) => <div key={label} className={`rounded-lg px-3 py-2 ${index === 0 ? 'bg-slate-800 text-emerald-200' : ''}`}>{label}</div>)}</div>
             </div>
           )}
-          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView === 'chat' && mobileTouchStartRef.current?.startX > MOBILE_GESTURE_EDGE_PX && (
+          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView === 'chat' && mobileTouchStartRef.current?.canReturnToView && (
             <div aria-hidden="true" className="absolute inset-y-0 left-0 z-0 flex w-64 flex-col items-center justify-center bg-ideapad-surface px-6 text-center text-ideapad-muted">
               <LayoutDashboard size={26} className="mb-3 text-ideapad-mint" />
               <p className="text-sm font-semibold text-ideapad-text">Back to {lastNonChatViewRef.current === 'dashboard' ? 'Home' : lastNonChatViewRef.current === 'knowledge' ? 'Library' : lastNonChatViewRef.current[0].toUpperCase() + lastNonChatViewRef.current.slice(1)}</p>

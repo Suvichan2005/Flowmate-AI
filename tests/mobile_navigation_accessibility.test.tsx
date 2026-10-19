@@ -144,9 +144,9 @@ describe('Navigation accessibility and active route semantics', () => {
 
 describe('touch navigation gesture thresholds', () => {
   it('scales the deliberate drag distance for narrow and wide phones', () => {
-    expect(mobileGestureThreshold(320)).toBe(80);
-    expect(mobileGestureThreshold(390)).toBe(98);
-    expect(mobileGestureThreshold(480)).toBe(112);
+    expect(mobileGestureThreshold(320)).toBe(70);
+    expect(mobileGestureThreshold(390)).toBe(86);
+    expect(mobileGestureThreshold(480)).toBe(96);
   });
 
   it('requires a deliberate dominant drag and keeps graph/pinch interactions outside the resolver', () => {
