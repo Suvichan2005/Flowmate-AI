@@ -40,7 +40,7 @@ An owner must configure the project monthly amount, per-user monthly amount and 
 
 When complete provider usage is returned, the reserved exposure is settled to a conservative estimate using provider usage metadata. Missing or incomplete usage, function timeout, uncertain response, or settlement failure keeps the full reservation for the month. Failed model generations do not consume successful Chat or Briefing allowances, but possibly billed provider exposure is retained. A reservation failure occurs before generation and does not submit a provider request. The project budget is an application-level estimate cap, not an exact copy of Google's invoice meter; currency conversion, taxes, and provider-side adjustments may differ.
 
-On 2026-10-20, a sanitized read of production usage metadata found 7 calls with complete token counts: median input 4,258 tokens, p90 4,359, maximum 4,380; median output 18 tokens, maximum 151. This is a small, acceptance-heavy sample and is not sufficient to calibrate the advertised monthly monetary allowance. Do not treat it as representative demand or silently use it to set a low per-user cap. Collect a larger aggregate sample before proposing spend ceilings.
+The available production usage metadata is only a handful of calls and appears acceptance-heavy. It is not sufficient to calibrate the advertised monthly monetary allowance. Do not treat it as representative demand or silently use it to set a low per-user cap. Collect a larger privacy-preserving aggregate sample before proposing spend ceilings; keep exact operational samples out of this public source repository.
 
 ## Live voice
 
