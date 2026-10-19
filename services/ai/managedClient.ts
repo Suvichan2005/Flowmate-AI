@@ -49,7 +49,7 @@ export interface ManagedLiveModelOption {
 export interface ManagedAiUsage {
   tier: 'guest' | 'account' | 'privileged';
   chat: { successfulTurns: number; monthlyLimit: number | null; month: string; resetAt: string };
-  briefings: { successfulThisMonth: number; monthlyLimit: number | null; month: string; resetAt: string };
+  briefings: { successfulToday: number; dailyLimit: number | null; day: string; resetAt: string };
   tokens: { inputThisMonth: number; outputThisMonth: number; thinkingThisMonth: number; totalThisMonth: number; usageCallsThisMonth: number; month: string };
 }
 

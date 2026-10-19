@@ -67,13 +67,13 @@ export const SUPPORTED_MANAGED_MODELS: ManagedModelPolicy[] = [
 ] as const;
 
 export type ManagedModelId = typeof SUPPORTED_MANAGED_MODELS[number]['id'];
-// Monthly success allowances stay easy to explain. Model context/output limits,
-// provider quotas, per-identity rate limits and single-flight reservations are
-// the guardrails; token totals are informational and do not impose another cap.
+// Successful chat turns use a monthly allowance; briefings use a daily one.
+// Model context/output limits, provider quotas, per-identity rate limits and
+// single-flight reservations are the guardrails; token totals are informational.
 export const GUEST_CHAT_TURN_LIMIT = 30;
 export const ACCOUNT_CHAT_TURN_LIMIT = 150;
-export const GUEST_MONTHLY_BRIEFING_LIMIT = 90;
-export const ACCOUNT_MONTHLY_BRIEFING_LIMIT = 150;
+export const GUEST_DAILY_BRIEFING_LIMIT = 3;
+export const ACCOUNT_DAILY_BRIEFING_LIMIT = 5;
 // Model-call records are telemetry only. Monetary safeguards are provider-side;
 // usage reporting must not become an application quota.
 export const RATE_LIMIT_PER_MINUTE = 20;

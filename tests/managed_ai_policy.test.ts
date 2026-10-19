@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_MONTHLY_BRIEFING_LIMIT, DEFAULT_MODEL, GUEST_CHAT_TURN_LIMIT,
-  GUEST_MONTHLY_BRIEFING_LIMIT, MANAGED_FUNCTION_TIMEOUT_SECONDS, ACTIVE_MODEL_CALL_LEASE_MS,
+  ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, DEFAULT_MODEL, GUEST_CHAT_TURN_LIMIT,
+  GUEST_DAILY_BRIEFING_LIMIT, MANAGED_FUNCTION_TIMEOUT_SECONDS, ACTIVE_MODEL_CALL_LEASE_MS,
   RESERVATION_TTL_MS,
   RequestFailure, SUPPORTED_MANAGED_MODELS,
   authorizeManagedModel, dayKey, isAllowedManagedTool, isCompletedUserTurn, managedGenerationConfig,
@@ -18,7 +18,7 @@ const request = (extra: Record<string, unknown> = {}) => ({
 describe('managed Gemini policy', () => {
   it('keeps guest and account chat/briefing allowances separate from model-call reporting', () => {
     expect([GUEST_CHAT_TURN_LIMIT, ACCOUNT_CHAT_TURN_LIMIT]).toEqual([30, 150]);
-    expect([GUEST_MONTHLY_BRIEFING_LIMIT, ACCOUNT_MONTHLY_BRIEFING_LIMIT]).toEqual([90, 150]);
+    expect([GUEST_DAILY_BRIEFING_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT]).toEqual([3, 5]);
   });
 
   it('retains the approved function timeout and bounded stale-call lease', () => {

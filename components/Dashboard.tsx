@@ -289,16 +289,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
     const isBriefingStale = !dailyBriefing || dailyBriefing.generated_for_date !== today
         || entities.some(e => Date.parse(e.updated_at) > Date.parse(dailyBriefing.timestamp));
     const briefingAllowanceLabel = managedAiUsage?.briefings
-        ? managedAiUsage.briefings.monthlyLimit === null
-            ? 'Unlimited AI briefings this month'
-            : `${Math.max(0, managedAiUsage.briefings.monthlyLimit - managedAiUsage.briefings.successfulThisMonth)} of ${managedAiUsage.briefings.monthlyLimit} AI briefings left this month`
+        ? managedAiUsage.briefings.dailyLimit === null
+            ? 'No daily briefing limit'
+            : `${Math.max(0, managedAiUsage.briefings.dailyLimit - managedAiUsage.briefings.successfulToday)} AI briefings left today`
         : hasManagedAiIdentity()
-            ? briefingUsageStatus === 'checking' ? 'Checking this month’s AI briefing allowance' : 'AI briefing allowance is unavailable'
+            ? briefingUsageStatus === 'checking' ? 'Checking today’s AI briefing allowance' : 'AI briefing allowance is unavailable'
             : 'Generate a local briefing';
     const briefingAllowanceBadge = managedAiUsage?.briefings
-        ? managedAiUsage.briefings.monthlyLimit === null
+        ? managedAiUsage.briefings.dailyLimit === null
             ? '∞'
-            : String(Math.max(0, managedAiUsage.briefings.monthlyLimit - managedAiUsage.briefings.successfulThisMonth))
+            : String(Math.max(0, managedAiUsage.briefings.dailyLimit - managedAiUsage.briefings.successfulToday))
         : null;
 
     // Format minutes to hours/minutes string

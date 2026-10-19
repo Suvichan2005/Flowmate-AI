@@ -66,10 +66,10 @@ test('usage response contains only the caller personal allowances and token tota
   assert.deepEqual(Object.keys(usage).sort(), ['briefings', 'chat', 'tier', 'tokens']);
   assert.equal(usage.tier, 'guest');
   assert.equal(usage.chat.monthlyLimit, 30);
-  assert.equal(usage.briefings.monthlyLimit, 90);
-  assert.equal(usage.briefings.successfulThisMonth, 0);
+  assert.equal(usage.briefings.dailyLimit, 3);
+  assert.equal(usage.briefings.successfulToday, 0);
   assert.equal(usage.tokens.totalThisMonth, 0);
-  assert.equal(usage.chat.resetAt, usage.briefings.resetAt);
+  assert.notEqual(usage.chat.resetAt, usage.briefings.resetAt);
   assert.equal('modelCalls' in usage, false);
 });
 

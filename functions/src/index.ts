@@ -9,7 +9,7 @@ import { defineBoolean, defineString, defineSecret } from 'firebase-functions/pa
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
 import type { Request, Response } from 'express';
-import { ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_MONTHLY_BRIEFING_LIMIT, ARGON_MODEL, DEFAULT_MODEL, GUEST_CHAT_TURN_LIMIT, GUEST_MONTHLY_BRIEFING_LIMIT, MANAGED_FUNCTION_TIMEOUT_SECONDS, SUPPORTED_MANAGED_MODELS, RequestFailure, authorizeManagedModel, buildCountTokensRequest, dayKey, isCompletedUserTurn, managedGenerationConfig, monthKey, sanitizeManagedCandidates, validateGenerationBody } from './policy.js';
+import { ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, ARGON_MODEL, DEFAULT_MODEL, GUEST_CHAT_TURN_LIMIT, GUEST_DAILY_BRIEFING_LIMIT, MANAGED_FUNCTION_TIMEOUT_SECONDS, SUPPORTED_MANAGED_MODELS, RequestFailure, authorizeManagedModel, buildCountTokensRequest, dayKey, isCompletedUserTurn, managedGenerationConfig, monthKey, sanitizeManagedCandidates, validateGenerationBody } from './policy.js';
 import { briefingLedgerRefs, failTurn, finishBriefing, finishTurn, isManagedAiEnabledForIdentity, recordGenerationUsage, reserveBriefing, reserveBriefingGenerationCall, reserveGenerationCall, reserveTurn, sanitizeUsageMetadata, turnLedgerRefs } from './ledger.js';
 import { handleManagedAiAdmin } from './admin.js';
 import { generateArgonStateless } from './argon.js';
@@ -109,18 +109,23 @@ export const managedGemini = onRequest({
       const access = await db.doc(`managedAiAllowlist/${uid}`).get();
       const privileged = allowance === 'account' && Boolean(emailLower) && access.get('status') === 'active'
         && access.get('uid') === uid && access.get('emailLower') === emailLower;
-      const month = monthKey(new Date());
+      const now = new Date();
+      const month = monthKey(now);
+      const day = dayKey(now);
       const uidHash = createHash('sha256').update(uid).digest('hex');
       const personalMonth = db.doc(`${privileged ? 'managedAiPrivilegedUserMonthly' : 'managedAiUserMonthly'}/${month}_${uidHash}`);
-      const monthlyUsage = await personalMonth.get();
+      const personalDay = db.doc(`${privileged ? 'managedAiPrivilegedUserDaily' : 'managedAiUserDaily'}/${day}_${uidHash}`);
+      const [monthlyUsage, dailyUsage] = await Promise.all([personalMonth.get(), personalDay.get()]);
       const [year, monthNumber] = month.split('-').map(Number);
       // monthKey is Asia/Kolkata; represent the next month boundary as an exact UTC instant.
       const resetAt = new Date(Date.UTC(year, monthNumber, 1) - 330 * 60_000).toISOString();
+      const [dayYear, dayMonth, dayNumber] = day.split('-').map(Number);
+      const dailyResetAt = new Date(Date.UTC(dayYear, dayMonth - 1, dayNumber + 1) - 330 * 60_000).toISOString();
       res.set('Cache-Control', 'no-store');
       res.status(200).json({
         tier: privileged ? 'privileged' : allowance,
         chat: { successfulTurns: Number(monthlyUsage.get('successfulTurns') || 0), monthlyLimit: privileged ? null : allowance === 'guest' ? GUEST_CHAT_TURN_LIMIT : ACCOUNT_CHAT_TURN_LIMIT, month, resetAt },
-        briefings: { successfulThisMonth: Number(monthlyUsage.get('successfulBriefings') || 0), monthlyLimit: privileged ? null : allowance === 'guest' ? GUEST_MONTHLY_BRIEFING_LIMIT : ACCOUNT_MONTHLY_BRIEFING_LIMIT, month, resetAt },
+        briefings: { successfulToday: Number(dailyUsage.get('successfulBriefings') || 0), dailyLimit: privileged ? null : allowance === 'guest' ? GUEST_DAILY_BRIEFING_LIMIT : ACCOUNT_DAILY_BRIEFING_LIMIT, day, resetAt: dailyResetAt },
         tokens: {
           inputThisMonth: Number(monthlyUsage.get('inputTokens') || 0),
           outputThisMonth: Number(monthlyUsage.get('outputTokens') || 0),

@@ -118,7 +118,7 @@ test('guests receive 30 chat turns per month separate from account records', asy
   await failTurn(db, accountRefs, false);
 });
 
-test('briefings have a separate monthly quota and failed model calls do not consume a successful briefing', async () => {
+test('briefings have a separate daily quota and failed model calls do not consume a successful briefing', async () => {
   const guestId = uid();
   const date = new Date();
   const first = briefingLedgerRefs(db, guestId, 'briefing_failed_0001', date, undefined, 'guest');
@@ -129,13 +129,14 @@ test('briefings have a separate monthly quota and failed model calls do not cons
   assert.equal((await first.userMonth.get()).get('successfulBriefings') || 0, 0);
   assert.equal((await first.month.get()).get('callsReserved'), globalCallsBefore + 1);
 
-  for (let index = 0; index < 90; index += 1) {
+  for (let index = 0; index < 3; index += 1) {
     const refs = briefingLedgerRefs(db, guestId, `briefing_success_${String(index).padStart(8, '0')}`, date, undefined, 'guest');
     await reserveBriefing(db, refs, Date.now() + (index + 1) * 60_001);
     await reserveBriefingGenerationCall(db, refs);
     await finishBriefing(db, refs, true);
   }
-  assert.equal((await first.userMonth.get()).get('successfulBriefings'), 90);
+  assert.equal((await first.userMonth.get()).get('successfulBriefings'), 3);
+  assert.equal((await first.userDay.get()).get('successfulBriefings'), 3);
   const next = briefingLedgerRefs(db, guestId, 'briefing_success_00000090', date, undefined, 'guest');
   await assert.rejects(reserveBriefing(db, next), error => error.code === 'BRIEFING_ALLOWANCE_EXHAUSTED');
 
@@ -144,7 +145,7 @@ test('briefings have a separate monthly quota and failed model calls do not cons
   await failTurn(db, chat, false);
 });
 
-test('monthly allowances reset in the next Asia/Kolkata calendar month', async () => {
+test('chat resets monthly and briefings reset at the next Asia/Kolkata day boundary', async () => {
   const guestId = uid();
   const october = new Date('2026-10-15T12:00:00+05:30');
   const november = new Date('2026-11-01T00:05:00+05:30');
@@ -161,9 +162,11 @@ test('monthly allowances reset in the next Asia/Kolkata calendar month', async (
   await reserveBriefing(db, briefing);
   await reserveBriefingGenerationCall(db, briefing);
   await finishBriefing(db, briefing, true);
-  const nextMonthBriefing = briefingLedgerRefs(db, guestId, 'briefing_november_month_01', november, undefined, 'guest');
-  await reserveBriefing(db, nextMonthBriefing);
-  await finishBriefing(db, nextMonthBriefing, false);
+  const nextDay = new Date('2026-10-16T00:05:00+05:30');
+  const nextDayBriefing = briefingLedgerRefs(db, guestId, 'briefing_october_day_02', nextDay, undefined, 'guest');
+  await reserveBriefing(db, nextDayBriefing);
+  await finishBriefing(db, nextDayBriefing, false);
+  assert.equal((await nextDayBriefing.userDay.get()).get('successfulBriefings'), 0);
 });
 
 test('only one overlapping request succeeds for a UID', async () => {
