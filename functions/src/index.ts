@@ -250,8 +250,8 @@ export const managedGemini = onRequest({
         config: {
           uses: 1,
           newSessionExpireTime: new Date(now + 60_000).toISOString(),
-          // Provider audio-only sessions have a 15-minute maximum. This is a
-          // provider session bound, not an application allowance or turn quota.
+          // Gemini rejects further messages after this token expiry and may
+          // close earlier. This time bound is not a monetary usage cap.
           expireTime: new Date(now + 15 * 60_000).toISOString(),
           liveConnectConstraints: { model: `models/${model}`, config: liveConfig },
           // The Live API locks all session configuration fields by default for
@@ -262,6 +262,15 @@ export const managedGemini = onRequest({
       });
       if (!token.name) throw new RequestFailure('LIVE_TOKEN_UNAVAILABLE', 503);
       await sessionRef.set({ status: 'active', tokenGrantedAt: Timestamp.now() }, { merge: true });
+      logger.info('Managed Live token granted', {
+        requestId: sessionId,
+        identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+        tier: privileged ? 'privileged' : allowance,
+        model,
+        tokenUses: 1,
+        sessionMessageExpiryMinutes: 15,
+        outcome: 'success',
+      });
       res.set('Cache-Control', 'no-store');
       res.status(200).json({
         token: token.name,
@@ -279,7 +288,12 @@ export const managedGemini = onRequest({
           });
         } catch { /* fail closed; the 15-minute provider-session lease expires */ }
       }
-      if (!(error instanceof RequestFailure)) logger.warn('Managed Live token request failed', { code: 'LIVE_TOKEN_UNAVAILABLE' });
+      logger.warn('Managed Live token request denied', {
+        requestId: sessionId,
+        identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+        tier: allowance,
+        denialCategory: error instanceof RequestFailure ? error.code : 'LIVE_TOKEN_UNAVAILABLE',
+      });
       sendError(res, error instanceof RequestFailure ? error : new RequestFailure('LIVE_TOKEN_UNAVAILABLE', 503));
     }
     return;
@@ -292,11 +306,18 @@ export const managedGemini = onRequest({
       if (Object.keys(body).length !== 1 || typeof body.sessionId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.sessionId)) {
         throw new RequestFailure('INVALID_REQUEST', 400);
       }
-      await db.runTransaction(async transaction => {
+      const ended = await db.runTransaction(async transaction => {
         const current = await transaction.get(db.doc(`managedAiLiveSessions/${uid}`));
         if (current.get('sessionId') === body.sessionId && current.get('status') !== 'ended') {
           transaction.set(db.doc(`managedAiLiveSessions/${uid}`), { status: 'ended', endedAt: Timestamp.now(), expiresAtMs: Date.now() }, { merge: true });
+          return true;
         }
+        return false;
+      });
+      if (ended) logger.info('Managed Live session end received', {
+        requestId: body.sessionId,
+        identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+        outcome: 'user_end_received',
       });
       res.set('Cache-Control', 'no-store');
       res.status(200).json({ ended: true });
