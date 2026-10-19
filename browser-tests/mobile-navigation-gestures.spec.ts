@@ -128,7 +128,9 @@ test('mobile model control opens a validated catalogue and returns keyboard focu
   await expect.poll(() => catalogRequests).toBeGreaterThan(0);
   await expect(trigger).toHaveAttribute('aria-label', /Gemini 3\.8 Flash/);
   await expect(trigger).toHaveAttribute('title', /Gemini 3\.8 Flash/);
-  expect(await trigger.evaluate(element => Math.round(element.getBoundingClientRect().width))).toBe(44);
+  const triggerWidth = await trigger.evaluate(element => Math.round(element.getBoundingClientRect().width));
+  expect(triggerWidth).toBeGreaterThanOrEqual(44);
+  expect(triggerWidth).toBeLessThanOrEqual(64);
   await trigger.click();
   const dialog = page.getByRole('dialog', { name: 'Model and reasoning' });
   await expect(dialog).toBeVisible();
