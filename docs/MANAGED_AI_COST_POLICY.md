@@ -40,6 +40,8 @@ An owner must configure the project monthly amount, per-user monthly amount and 
 
 When complete provider usage is returned, the reserved exposure is settled to a conservative estimate using provider usage metadata. Missing or incomplete usage, function timeout, uncertain response, or settlement failure keeps the full reservation for the month. Failed model generations do not consume successful Chat or Briefing allowances, but possibly billed provider exposure is retained. A reservation failure occurs before generation and does not submit a provider request. The project budget is an application-level estimate cap, not an exact copy of Google's invoice meter; currency conversion, taxes, and provider-side adjustments may differ.
 
+On 2026-10-20, a sanitized read of production usage metadata found 7 calls with complete token counts: median input 4,258 tokens, p90 4,359, maximum 4,380; median output 18 tokens, maximum 151. This is a small, acceptance-heavy sample and is not sufficient to calibrate the advertised monthly monetary allowance. Do not treat it as representative demand or silently use it to set a low per-user cap. Collect a larger aggregate sample before proposing spend ceilings.
+
 ## Live voice
 
 Live remains independently disabled. The backend currently grants a one-use, short-lived ephemeral token, allows one active session per UID, limits token-grant burst rate, and requests a provider-enforced 15-minute session expiry. The browser then speaks directly to Gemini. The provider bills the growing context again on successive turns, so duration times a single-pass audio rate is not a strict maximum; client-reported usage cannot be trusted as a financial enforcement source. The owner control therefore refuses to enable Live until a server-observable session path can enforce and reserve an auditable liability. Do not describe the existing text budget as covering Live.
@@ -50,7 +52,7 @@ The smallest robust next step is a server-side WebSocket relay or equivalent pro
 
 Generation logs and private server-only call records may contain request/session IDs, a one-way UID reference, tier, feature, model, price-catalogue version, token usage, estimated/reserved/settled exposure, duration, outcome, and a fixed denial category. They exclude prompts, responses, decrypted workspace content, voice recordings, credentials and full tool arguments. Ordinary users receive only their own allowances and token totals; project-wide exposure and model-call totals are owner-only.
 
-Usage records currently have no confirmed Firestore TTL policy. Do not claim automatic retention deletion until the project TTL configuration is verified. Configure and verify a 90-day TTL for `managedAiCalls` and a 13-month TTL for monthly project/user cost ledgers before broad managed-AI activation, while preserving the separate owner audit log according to its own retention policy.
+Firestore TTL policies for `managedAiCalls.expiresAt` (90 days), `managedAiCostProjectMonthly.expiresAt` (400 days), and `managedAiCostUserMonthly.expiresAt` (400 days, approximately 13 months) were submitted and read back on 2026-10-20. All three policies are currently in Firestore's `CREATING` state; do not claim that expiration deletion is active until each policy reaches `ACTIVE`/`READY` and read back again. Expiry timestamps are written by the source ledger. The separate owner audit log is not subject to these policies.
 
 ## Live release gate
 
