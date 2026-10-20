@@ -5,7 +5,9 @@ import { getManagedAiEndpoint } from '../services/ai/managedClient';
 
 type Overview = {
   enabled: boolean;
+  managedMode: 'test' | 'general' | 'disabled';
   liveEnabled: boolean;
+  liveEnableReady: boolean;
   month: string;
   ordinary: { modelCalls: number; applicationLimit: number | null };
   budget: {
@@ -105,15 +107,16 @@ export default function ManagedAiAdminPanel() {
           Managed AI enabled
         </label>
         <label className="flex items-center gap-2 text-sm text-slate-200">
-          <input type="checkbox" checked={overview.liveEnabled} disabled={busy || !overview.liveEnabled} onChange={event => {
+          <input type="checkbox" checked={overview.liveEnabled} disabled={busy || (!overview.liveEnabled && !overview.liveEnableReady)} onChange={event => {
             const enabled = event.target.checked;
-            if (!enabled || window.confirm('Enable managed Live voice token issuance for eligible users? Audio use is provider-billed and is not covered by chat or briefing counters.')) {
+            const audience = overview.managedMode === 'test' ? 'only identities on the exact server-side test allowlist' : 'all identities eligible under the current managed-AI access policy';
+            if (!enabled || window.confirm(`Enable managed Live voice for ${audience}? Sessions use the server relay, reserve up to $0.50, stop by the $0.40 usage threshold, and close after 5 minutes. Provider usage reporting can be delayed; uncertain sessions retain their safety hold.`)) {
               void mutate({ action: 'setLiveEnabled', enabled });
             }
           }} />
-          Managed Live voice enabled (disable only)
+          Managed Live voice enabled
         </label>
-        <p className="text-xs text-slate-500 sm:col-span-2">Live remains separately gated: its direct browser-to-provider session has no server-enforced spend ceiling, so text budgets do not cover voice.</p>
+        <p className="text-xs text-slate-500 sm:col-span-2">Live uses a server-owned provider connection with a 5-minute maximum, capped audio input and output, and a $0.50 reserved exposure. It remains independently gated from Chat and Briefing. {overview.liveEnableReady ? 'The current server policy is ready to enable it.' : overview.liveEnabled ? 'It is currently enabled.' : 'Enable managed access and configure the approved budget policy before enabling Live.'}</p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 text-sm">
@@ -164,7 +167,7 @@ export default function ManagedAiAdminPanel() {
           <button disabled={busy} className="self-end rounded-lg border border-emerald-700 px-4 py-2 text-sm font-medium text-emerald-200 disabled:opacity-50">Save spending guard</button>
         </form>
         <p className="text-xs text-slate-500">Prices and holds are conservative USD estimates. Missing pricing, uncertain provider outcomes, or exhausted service budget retain exposure and stop further managed text requests.</p>
-        <p className="text-xs text-slate-500">At today’s Gemini 3.8 Flash standard rate, 10k input + 2k output reserves about $0.019; a full 1M input + 8k output request reserves about $0.98. Live voice is separately gated because the browser’s direct provider session cannot enforce a strict server-side spend cap.</p>
+        <p className="text-xs text-slate-500">At today’s Gemini 3.8 Flash standard rate, 10k input + 2k output reserves about $0.019; a full 1M input + 8k output request reserves about $0.98. Live is accounted separately through its server relay; delayed or missing provider usage keeps the reservation held for owner review.</p>
       </div>
 
       <form className="flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); void mutate({ action: 'add', email }); }}>

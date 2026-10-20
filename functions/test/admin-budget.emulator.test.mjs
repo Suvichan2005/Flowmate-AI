@@ -13,8 +13,10 @@ db.settings({ host, ssl: false });
 const owner = { uid: `budget-owner-${randomUUID()}`, email: 'budget-owner@example.test', emailVerified: true, anonymous: false };
 const wrongOwner = { ...owner, uid: `not-owner-${randomUUID()}` };
 const controlRef = db.doc('system/managedAi');
+const liveControlRef = db.doc('system/managedLive');
 const policyRef = db.doc('system/managedAiBudgetPolicy');
 let priorControl;
+let priorLiveControl;
 let priorPolicy;
 let reconciliationFixture;
 
@@ -25,8 +27,15 @@ async function invoke(body, identity = owner) {
   return res;
 }
 
+async function readOverview(identity = owner) {
+  const req = { path: '/admin/access', method: 'GET', body: undefined };
+  const res = { statusCode: 200, payload: undefined, status(code) { this.statusCode = code; return this; }, json(value) { this.payload = value; return this; } };
+  await handleManagedAiAdmin(db, req, res, identity, 50);
+  return res;
+}
+
 before(async () => {
-  [priorControl, priorPolicy] = await Promise.all([controlRef.get(), policyRef.get()]);
+  [priorControl, priorLiveControl, priorPolicy] = await Promise.all([controlRef.get(), liveControlRef.get(), policyRef.get()]);
   const priorUids = Array.isArray(priorControl.get('adminUids')) ? priorControl.get('adminUids') : [];
   await controlRef.set({ adminUids: [...new Set([...priorUids, owner.uid])], enabled: false, mode: 'general' }, { merge: true });
   await policyRef.delete();
@@ -37,6 +46,7 @@ after(async () => {
   await Promise.all(audit.docs.map(document => document.ref.delete()));
   if (reconciliationFixture) await Promise.all(reconciliationFixture.map(ref => ref.delete()));
   if (priorControl.exists) await controlRef.set(priorControl.data()); else await controlRef.delete();
+  if (priorLiveControl.exists) await liveControlRef.set(priorLiveControl.data()); else await liveControlRef.delete();
   if (priorPolicy.exists) await policyRef.set(priorPolicy.data()); else await policyRef.delete();
   await db.terminate();
 });
@@ -59,6 +69,7 @@ test('owner budget route validates policy, preserves emergency stop, and gates m
   assert.equal(policy.get('projectMonthlyLimitMicroUsd'), 10_000_000);
   assert.equal(policy.get('userMonthlyLimitMicroUsd'), 5_000_000);
   assert.equal(policy.get('maxTurnExposureMicroUsd'), 1_000_000);
+  assert.equal((await invoke({ action: 'setLiveEnabled', enabled: true })).statusCode, 409, 'Live stays unavailable while managed access is disabled');
 
   await policyRef.set({ emergencyStop: true, emergencyStopReason: 'test' }, { merge: true });
   const edited = await invoke({ action: 'setBudgetPolicy', projectMonthlyLimitCents: 1200, userMonthlyLimitCents: 600, maxTurnExposureCents: 120 });
@@ -72,11 +83,15 @@ test('owner budget route validates policy, preserves emergency stop, and gates m
   assert.equal((await invoke({ action: 'setLiveEnabled', enabled: true })).statusCode, 409);
   await policyRef.set({ maxTurnExposureMicroUsd: 1_200_000 }, { merge: true });
 
-  await controlRef.set({ enabled: true, mode: 'test', testUids: ['test-live-uid'] }, { merge: true });
+  await controlRef.set({ enabled: true, mode: 'test', allowedTestUids: ['test-live-uid'] }, { merge: true });
+  const overview = await readOverview();
+  assert.equal(overview.statusCode, 200);
+  assert.equal(overview.payload.managedMode, 'test');
+  assert.equal(overview.payload.liveEnableReady, true);
   assert.equal((await invoke({ action: 'setLiveEnabled', enabled: true })).statusCode, 200);
   const enabledLiveControl = await controlRef.get();
   assert.equal(enabledLiveControl.get('mode'), 'test');
-  assert.deepEqual(enabledLiveControl.get('testUids'), ['test-live-uid']);
+  assert.deepEqual(enabledLiveControl.get('allowedTestUids'), ['test-live-uid']);
   assert.equal((await db.doc('system/managedLive').get()).get('enabled'), true);
   assert.equal((await invoke({ action: 'setLiveEnabled', enabled: false })).statusCode, 200);
 

@@ -53,9 +53,23 @@ async function readAccessOverview(db: Firestore) {
       lastUsedAt: usage.get('lastUsedAt')?.toDate?.()?.toISOString?.() || null,
     };
   }));
+  const managedMode = control.get('enabled') === true && control.get('mode') === 'test' ? 'test'
+    : control.get('enabled') === true && control.get('mode') === 'general' ? 'general' : 'disabled';
+  const projectLimit = Number(budgetPolicy.get('projectMonthlyLimitMicroUsd') || 0);
+  const userLimit = Number(budgetPolicy.get('userMonthlyLimitMicroUsd') || 0);
+  const operationLimit = Number(budgetPolicy.get('maxTurnExposureMicroUsd') || 0);
+  let liveEnvelopeSafe = false;
+  try { assertLiveSessionEnvelopeIsSafe(); liveEnvelopeSafe = true; } catch { /* fail closed in readiness below */ }
+  const liveEnableReady = managedMode !== 'disabled'
+    && budgetPolicy.get('enabled') === true && budgetPolicy.get('currency') === 'USD'
+    && budgetPolicy.get('emergencyStop') !== true
+    && [projectLimit, userLimit, operationLimit].every(value => Number.isSafeInteger(value) && value >= LIVE_SESSION_RESERVATION_MICRO_USD)
+    && liveEnvelopeSafe;
   return {
     enabled: control.get('enabled') === true,
+    managedMode,
     liveEnabled: liveControl.get('enabled') === true,
+    liveEnableReady,
     month,
     ordinary: { modelCalls: Number(ordinaryUsage.get('callsReserved') || 0), applicationLimit: null, usageIsTelemetryOnly: true },
     budget: {
@@ -373,13 +387,18 @@ export async function handleManagedAiAdmin(
     }
     if (body.action === 'setLiveEnabled' && Object.keys(body).every(key => ['action', 'enabled'].includes(key)) && typeof body.enabled === 'boolean') {
       if (body.enabled) {
-        const budget = await db.doc('system/managedAiBudgetPolicy').get();
+        const [budget, managedControl] = await Promise.all([
+          db.doc('system/managedAiBudgetPolicy').get(), db.doc('system/managedAi').get(),
+        ]);
         const projectLimit = Number(budget.get('projectMonthlyLimitMicroUsd'));
         const userLimit = Number(budget.get('userMonthlyLimitMicroUsd'));
         const perOperationLimit = Number(budget.get('maxTurnExposureMicroUsd'));
+        const managedEnabled = managedControl.get('enabled') === true
+          && (managedControl.get('mode') === 'general'
+            || (managedControl.get('mode') === 'test' && Array.isArray(managedControl.get('allowedTestUids')) && managedControl.get('allowedTestUids').length > 0));
         let safeEnvelope = false;
         try { assertLiveSessionEnvelopeIsSafe(); safeEnvelope = true; } catch { /* fail closed below */ }
-        if (budget.get('enabled') !== true || budget.get('currency') !== 'USD'
+        if (!managedEnabled || budget.get('enabled') !== true || budget.get('currency') !== 'USD'
           || budget.get('emergencyStop') === true
           || !Number.isSafeInteger(projectLimit) || projectLimit < LIVE_SESSION_RESERVATION_MICRO_USD
           || !Number.isSafeInteger(userLimit) || userLimit < LIVE_SESSION_RESERVATION_MICRO_USD
