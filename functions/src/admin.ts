@@ -3,6 +3,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { FieldPath, Timestamp, type Firestore } from 'firebase-admin/firestore';
 import type { Request, Response } from 'express';
 import { monthKey } from './policy.js';
+import { assertLiveSessionEnvelopeIsSafe, LIVE_SESSION_RESERVATION_MICRO_USD } from './liveCost.js';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -371,7 +372,22 @@ export async function handleManagedAiAdmin(
       return true;
     }
     if (body.action === 'setLiveEnabled' && Object.keys(body).every(key => ['action', 'enabled'].includes(key)) && typeof body.enabled === 'boolean') {
-      if (body.enabled) { fail(res, 409, 'MANAGED_LIVE_BUDGET_POLICY_REQUIRED'); return true; }
+      if (body.enabled) {
+        const budget = await db.doc('system/managedAiBudgetPolicy').get();
+        const projectLimit = Number(budget.get('projectMonthlyLimitMicroUsd'));
+        const userLimit = Number(budget.get('userMonthlyLimitMicroUsd'));
+        const perOperationLimit = Number(budget.get('maxTurnExposureMicroUsd'));
+        let safeEnvelope = false;
+        try { assertLiveSessionEnvelopeIsSafe(); safeEnvelope = true; } catch { /* fail closed below */ }
+        if (budget.get('enabled') !== true || budget.get('currency') !== 'USD'
+          || budget.get('emergencyStop') === true
+          || !Number.isSafeInteger(projectLimit) || projectLimit < LIVE_SESSION_RESERVATION_MICRO_USD
+          || !Number.isSafeInteger(userLimit) || userLimit < LIVE_SESSION_RESERVATION_MICRO_USD
+          || !Number.isSafeInteger(perOperationLimit) || perOperationLimit < LIVE_SESSION_RESERVATION_MICRO_USD
+          || !safeEnvelope) {
+          fail(res, 409, 'MANAGED_LIVE_BUDGET_POLICY_REQUIRED'); return true;
+        }
+      }
       const controlRef = db.doc('system/managedLive');
       const audit = db.collection('managedAiAdminAudit').doc(randomUUID());
       await db.runTransaction(async transaction => {

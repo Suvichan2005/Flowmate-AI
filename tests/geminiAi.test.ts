@@ -202,6 +202,23 @@ describe('AI Context & History Building', () => {
         expect(history[2].role).toBe('user');
     });
 
+    it('keeps all selected history for managed preflight instead of silently applying the rolling window', () => {
+        const messages: Message[] = Array.from({ length: HISTORY_WINDOW + 3 }, (_, index) => ({
+            id: `full-${index}`,
+            role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+            text: `Selected transcript turn ${index}`,
+            created_at: new Date(Date.UTC(2026, 9, 6, 10, index)).toISOString(),
+        }));
+
+        const history = buildHistory(messages, 'This rolling summary must not replace selected history.', undefined, { includeFullHistory: true });
+        const text = history.flatMap(entry => entry.parts || []).map(part => 'text' in part ? part.text : '').join('\n');
+
+        expect(history).toHaveLength(messages.length);
+        expect(text).toContain('Selected transcript turn 0');
+        expect(text).toContain(`Selected transcript turn ${messages.length - 1}`);
+        expect(text).not.toContain('[Previous conversation context]');
+    });
+
     it('keeps rejected turns as transcript records without replaying them into later context', () => {
         const messages: Message[] = [
             { id: '1', role: 'user', text: 'Keep this successful context', status: 'completed', created_at: '2026-10-06T10:00:00Z' },

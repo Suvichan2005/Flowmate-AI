@@ -50,6 +50,7 @@ test('owner budget route validates policy, preserves emergency stop, and gates m
 
   const noPolicy = await invoke({ action: 'setEnabled', enabled: true });
   assert.equal(noPolicy.statusCode, 409);
+  assert.equal((await invoke({ action: 'setLiveEnabled', enabled: true })).statusCode, 409);
   assert.equal((await controlRef.get()).get('enabled'), false);
 
   const configured = await invoke({ action: 'setBudgetPolicy', projectMonthlyLimitCents: 1000, userMonthlyLimitCents: 500, maxTurnExposureCents: 100 });
@@ -64,7 +65,21 @@ test('owner budget route validates policy, preserves emergency stop, and gates m
   assert.equal(edited.statusCode, 200);
   assert.equal((await policyRef.get()).get('emergencyStop'), true);
   assert.equal((await invoke({ action: 'setEnabled', enabled: true })).statusCode, 409);
+  assert.equal((await invoke({ action: 'setLiveEnabled', enabled: true })).statusCode, 409);
   assert.equal((await invoke({ action: 'clearEmergencyStop' })).statusCode, 200);
+
+  await policyRef.set({ maxTurnExposureMicroUsd: 100_000 }, { merge: true });
+  assert.equal((await invoke({ action: 'setLiveEnabled', enabled: true })).statusCode, 409);
+  await policyRef.set({ maxTurnExposureMicroUsd: 1_200_000 }, { merge: true });
+
+  await controlRef.set({ enabled: true, mode: 'test', testUids: ['test-live-uid'] }, { merge: true });
+  assert.equal((await invoke({ action: 'setLiveEnabled', enabled: true })).statusCode, 200);
+  const enabledLiveControl = await controlRef.get();
+  assert.equal(enabledLiveControl.get('mode'), 'test');
+  assert.deepEqual(enabledLiveControl.get('testUids'), ['test-live-uid']);
+  assert.equal((await db.doc('system/managedLive').get()).get('enabled'), true);
+  assert.equal((await invoke({ action: 'setLiveEnabled', enabled: false })).statusCode, 200);
+
   assert.equal((await invoke({ action: 'setEnabled', enabled: true })).statusCode, 200);
   assert.equal((await invoke({ action: 'setEnabled', enabled: false })).statusCode, 200);
 });

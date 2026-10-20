@@ -72,6 +72,15 @@ export const managedGemini = onRequest({
     res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return;
   }
 
+  // The old endpoint minted provider tokens for browser-owned sockets. A client
+  // could end the Firestore lease while keeping Gemini connected, so it must not
+  // remain an alternate path around the server-owned relay's hard session cap.
+  if (req.path === '/live-session' || req.path === '/live-session/end') {
+    res.set('Cache-Control', 'no-store');
+    res.status(410).json({ error: { code: 'LIVE_RELAY_REQUIRED' } });
+    return;
+  }
+
   let uid: string;
   let email: string | undefined;
   let emailVerified = false;

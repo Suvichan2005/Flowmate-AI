@@ -154,9 +154,13 @@ export const orchestrateMessage = async (
 
   const contextPrompt = promptSections.filter(Boolean).join('\n\n');
 
-  // --- Conversation History (with rolling summary) ---
-  const conversationSummary = summarizeOlderMessages(history);
-  const contents = buildHistory(history, conversationSummary, attachmentDataUrl);
+  // Managed AI must count and authorize the full transcript the user chose to
+  // continue with. If it exceeds the model or cost boundary, the user can
+  // explicitly fork with recent context; do not silently summarize or trim it.
+  const conversationSummary = useManagedAi ? null : summarizeOlderMessages(history);
+  const contents = buildHistory(history, conversationSummary, attachmentDataUrl, {
+    includeFullHistory: useManagedAi,
+  });
 
   // Attach context to the latest user message or append one
   let lastUserEntry: Content | null = null;

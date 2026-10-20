@@ -33,7 +33,7 @@ const limitCopy: Record<ManagedAiLimitCode, {
 }> = {
   GUEST_TURN_ALLOWANCE_EXHAUSTED: {
     title: () => 'Your guest AI turns are used',
-    description: now => `You have used this month’s 30 guest chat turns. They reset ${formatManagedAiResetAt('month', now)}. Your workspace stays on this device. Sign in for 150 included turns each month, or use your own Gemini key.`,
+    description: now => `You have used this month’s 30 guest chat turns. They reset ${formatManagedAiResetAt('month', now)}. Your workspace stays on this device. Sign in for 150 included turns each month.`,
     signInLabel: () => 'Sign in for more monthly chat',
   },
   TURN_ALLOWANCE_EXHAUSTED: {
@@ -42,7 +42,7 @@ const limitCopy: Record<ManagedAiLimitCode, {
   },
   GUEST_BRIEFING_ALLOWANCE_EXHAUSTED: {
     title: () => 'Your guest briefings are used',
-    description: now => `You have used today’s guest briefing allowance. It resets ${formatManagedAiResetAt('day', now)}. Sign in for a larger daily allowance, or use your own Gemini key. Your workspace stays on this device.`,
+    description: now => `You have used today’s guest briefing allowance. It resets ${formatManagedAiResetAt('day', now)}. Sign in for a larger daily allowance. Your workspace stays on this device.`,
     signInLabel: () => 'Sign in for more daily briefings',
   },
   BRIEFING_ALLOWANCE_EXHAUSTED: {

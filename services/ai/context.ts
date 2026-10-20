@@ -235,6 +235,7 @@ export function buildHistory(
   messages: Message[],
   conversationSummary: string | null,
   attachmentDataUrl?: string | null,
+  options: { includeFullHistory?: boolean } = {},
 ): Content[] {
   const contents: Content[] = [];
 
@@ -254,7 +255,7 @@ export function buildHistory(
   });
 
   // Prepend rolling summary if available
-  if (conversationSummary) {
+  if (conversationSummary && !options.includeFullHistory) {
     contents.push({
       role: 'user',
       parts: [{ text: `[Previous conversation context]: ${conversationSummary}` }],
@@ -265,8 +266,14 @@ export function buildHistory(
     });
   }
 
-  // Sliding window of recent messages
-  const messageWindow = contextMessages.slice(-HISTORY_WINDOW);
+  // Managed requests must reach the server with the complete selected
+  // transcript so its exact token and cost checks can reject it honestly.
+  // Windowing is available only where the caller explicitly opts into the
+  // legacy compact-history behavior (for example, an explicit recent-context
+  // recovery branch).
+  const messageWindow = options.includeFullHistory
+    ? contextMessages
+    : contextMessages.slice(-HISTORY_WINDOW);
 
   for (const msg of messageWindow) {
     if (msg.role === 'user') {

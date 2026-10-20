@@ -12,13 +12,107 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from "../store";
 import { EntityKind, ToonOperation, UserSettings } from "../types";
-import { getByokLiveClient, getByokLiveModelOptions, getEphemeralApiKey, getManagedLiveClient, hasAiApiKey, AI_MODELS } from './ai/client';
-import { createManagedLiveSession, endManagedLiveSession, hasManagedAiIdentity } from './ai/managedClient';
+import { getByokLiveClient, getByokLiveModelOptions, getEphemeralApiKey, hasAiApiKey, AI_MODELS } from './ai/client';
+import { createManagedLiveSession, hasManagedAiIdentity, ManagedAiError } from './ai/managedClient';
 import { contextResolver, selectEligibleMemories, isEntityExcludedFromEgress } from './context';
 import { convertOperationsToActionProposal } from './kernel';
 import { getOptedInOnboardingContext } from './onboardingProfile';
 
 const MODEL_NAME = AI_MODELS.LIVE;
+
+type ManagedLiveGrant = Awaited<ReturnType<typeof createManagedLiveSession>>;
+
+function connectManagedRelay(
+  grant: ManagedLiveGrant,
+  setup: LiveConnectConfig,
+  callbacks: { onopen: () => void; onmessage: (message: LiveServerMessage) => Promise<void>; onclose: () => void; onerror: (code?: string) => void },
+): Promise<Session> {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(`${grant.webSocketUrl}?ticket=${encodeURIComponent(grant.ticket)}`);
+    let ready = false;
+    let closed = false;
+    let closingForError = false;
+    const fail = (code: string) => {
+      if (!ready) reject(new ManagedAiError(code, 503));
+      else { closingForError = true; callbacks.onerror(code); }
+      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close(4400, code.slice(0, 100));
+    };
+    const transport = {
+      sendRealtimeInput: (params: { audio?: { mimeType?: string; data?: unknown } }) => {
+        if (socket.readyState !== WebSocket.OPEN || !params.audio || typeof params.audio.data !== 'string') return;
+        if (socket.bufferedAmount > 65_536) { fail('LIVE_SESSION_LIMIT_REACHED'); return; }
+        socket.send(JSON.stringify({ type: 'inputAudio', payload: params.audio }));
+      },
+      sendToolResponse: (params: unknown) => {
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'toolResponse', payload: params }));
+      },
+      close: () => {
+        closed = true;
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close(1000, 'client-ended');
+      },
+    };
+    socket.onopen = () => {
+      callbacks.onopen();
+      const systemInstruction = setup.systemInstruction && typeof setup.systemInstruction === 'object'
+        ? (setup.systemInstruction as { parts?: Array<{ text?: string }> }).parts?.map(part => part.text || '').join('\n') || ''
+        : String(setup.systemInstruction || '');
+      socket.send(JSON.stringify({
+        type: 'setup',
+        payload: {
+          model: grant.model,
+          reasoningLevel: grant.reasoningLevel || 'medium',
+          systemInstruction,
+          tools: setup.tools?.flatMap(tool => 'functionDeclarations' in tool ? tool.functionDeclarations || [] : []) || [],
+        },
+      }));
+    };
+    socket.onmessage = event => {
+      let envelope: unknown;
+      try { envelope = JSON.parse(String(event.data)); } catch { fail('LIVE_RELAY_UNAVAILABLE'); return; }
+      if (!envelope || typeof envelope !== 'object') { fail('LIVE_RELAY_UNAVAILABLE'); return; }
+      const frame = envelope as { type?: string; error?: { code?: string }; message?: LiveServerMessage };
+      if (frame.type === 'error') { fail(frame.error?.code || 'LIVE_RELAY_UNAVAILABLE'); return; }
+      if (frame.type !== 'message' || !frame.message) { fail('LIVE_RELAY_UNAVAILABLE'); return; }
+      // Managed sessions are one-shot server-owned sockets; never expose a
+      // provider resumption handle that could invite a second paid connection.
+      if (frame.message.sessionResumptionUpdate) return;
+      void callbacks.onmessage(frame.message);
+      if (!ready && frame.message.setupComplete) {
+        ready = true;
+        resolve(transport as unknown as Session);
+      }
+    };
+    socket.onerror = () => {
+      if (!ready) reject(new ManagedAiError('LIVE_RELAY_UNAVAILABLE', 503));
+      else { closingForError = true; callbacks.onerror('LIVE_RELAY_UNAVAILABLE'); }
+    };
+    socket.onclose = () => {
+      if (!ready) reject(new ManagedAiError('LIVE_RELAY_UNAVAILABLE', 503));
+      else if (!closed && !closingForError) callbacks.onclose();
+    };
+  });
+}
+
+function managedLiveFailureCopy(code: string): string {
+  const copy: Record<string, string> = {
+    AUTH_REQUIRED: 'Your sign-in session expired. Sign in again, then start Live when ready.',
+    APP_CHECK_REQUIRED: 'Flowmate could not verify this app session. Reload Flowmate and try again; this is an app verification issue, not a usage limit.',
+    MANAGED_AI_DISABLED: 'Managed Live is currently unavailable. Your workspace is still available; you can choose your own Gemini key in Settings.',
+    RATE_LIMITED: 'Too many Live starts were requested. Wait a minute, then start one session again.',
+    LIVE_SESSION_ALREADY_ACTIVE: 'A managed Live session is still closing. Wait a moment before starting another.',
+    LIVE_SESSION_LIMIT_REACHED: 'This managed Live session reached its safety limit and has been closed. You can start another session when the current allowance permits.',
+    USER_MANAGED_BUDGET_EXHAUSTED: 'Your managed-AI monthly safety allowance is used. Check Settings for its reset; you can use your own Gemini key meanwhile.',
+    MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE: 'Flowmate’s included AI is temporarily at its monthly safety limit. This cannot be cleared by changing your request; your workspace is unchanged.',
+    LIVE_USAGE_UNAVAILABLE: 'Flowmate could not verify this Live session’s usage, so it closed the session and kept the safety hold. This needs server-side review; Chat and your workspace remain available.',
+    LIVE_PROVIDER_UNAVAILABLE: 'The Gemini Live connection ended unexpectedly. Flowmate kept the safety hold while usage is checked; no automatic reconnect or duplicate session was started.',
+    LIVE_RELAY_UNAVAILABLE: 'The managed Live connection could not be started. This needs an application-side service check; try again later or use your own Gemini key.',
+    LIVE_RELAY_REQUIRED: 'Managed Live is being moved to a protected connection and is not available in this build yet.',
+    LIVE_TICKET_INVALID: 'This Live start expired before connecting. Start a new session when ready.',
+    LIVE_SETUP_MISMATCH: 'Flowmate could not verify the Live session setup. Reload the app; if it continues, it needs an application-side fix.',
+    MANAGED_AI_NOT_CONFIGURED: 'Managed Live is not configured for this app yet. Your workspace remains available; use your own Gemini key or try later.',
+  };
+  return copy[code] || 'Managed Live could not start. Your workspace remains available; try later or use your own Gemini key in Settings.';
+}
 
 // --- Audio Utils (PCM 16kHz/24kHz processing) ---
 
@@ -276,7 +370,7 @@ const recordCommitmentEvidenceTool: FunctionDeclaration = {
 
 export class LiveManager {
   private ai: GoogleGenAI;
-  private managedSessionId: string | null = null;
+  private managedRelayGrant: ManagedLiveGrant | null = null;
   private liveSessionReady = false;
   private liveUsage: Record<string, unknown> | null = null;
   private inputContext: AudioContext | null = null;
@@ -324,6 +418,15 @@ export class LiveManager {
 
   private openLiveConnection(resumptionHandle?: string): Promise<Session> {
     if (!this.liveConfig) return Promise.reject(new Error('Live session configuration is unavailable.'));
+    const callbacks = {
+      onopen: () => this.setStatus('connecting', 'Connected to Gemini Live; waiting for session setup.'),
+      onmessage: async (message: LiveServerMessage) => { await this.handleMessage(message); },
+      onclose: () => { void this.handleUnexpectedDisconnect(); },
+    };
+    if (this.managedRelayGrant) return connectManagedRelay(this.managedRelayGrant, this.liveConfig, {
+      ...callbacks,
+      onerror: code => { void this.handleUnexpectedDisconnect(code ? managedLiveFailureCopy(code) : undefined); },
+    });
     const config: LiveConnectConfig = {
       ...this.liveConfig,
       sessionResumption: resumptionHandle ? { handle: resumptionHandle } : {},
@@ -331,16 +434,11 @@ export class LiveManager {
     return this.ai.live.connect({
       model: this.liveModel,
       config,
-      callbacks: {
-        onopen: () => this.setStatus('connecting', 'Connected to Gemini Live; waiting for session setup.'),
-        onmessage: async (message: LiveServerMessage) => { await this.handleMessage(message); },
-        onclose: () => { void this.handleUnexpectedDisconnect(); },
-        onerror: () => { void this.handleUnexpectedDisconnect(); },
-      },
+      callbacks: { ...callbacks, onerror: () => { void this.handleUnexpectedDisconnect(); } },
     });
   }
 
-  private async handleUnexpectedDisconnect(): Promise<void> {
+  private async handleUnexpectedDisconnect(details?: string): Promise<void> {
     this.flushBuffers();
     if (this.reconnecting) return;
     if (this.intentionallyStopped) {
@@ -352,14 +450,16 @@ export class LiveManager {
       this.liveSessionReady = false;
       this.stopAllAudioPlayback();
       this.stopMicrophoneCapture();
-      this.setStatus('offline_fallback', 'Connection lost. Flowmate will try to resume when the device reconnects.');
+      this.setStatus('offline_fallback', this.managedRelayGrant
+        ? 'The managed Live connection ended while offline. Start a new session after reconnecting; it will not resume automatically.'
+        : 'Connection lost. Flowmate will try to resume when the device reconnects.');
       return;
     }
     if (this.resumptionHandle && this.resumeAttempts < 2) {
       await this.resumeLiveConnection();
       return;
     }
-    this.setStatus('error', 'The Live session ended and could not be resumed. Retry to start a new session.');
+    this.setStatus('error', details || 'The Live session ended and could not be resumed. Retry to start a new session.');
     this.cleanup();
   }
 
@@ -399,6 +499,11 @@ export class LiveManager {
   private handleOffline = () => {
     this.stopAllAudioPlayback();
     this.stopMicrophoneCapture();
+    if (this.managedRelayGrant) {
+      try { this.session?.close(); } catch { /* server observes the relay close and ends Gemini */ }
+      this.setStatus('offline_fallback', 'Managed Live stopped because the network disconnected. Reconnect, then start a new session.');
+      return;
+    }
     this.setStatus('offline_fallback', 'Network connection lost. Live voice requires an active internet connection.');
   };
 
@@ -505,8 +610,7 @@ ${customInst}`;
             parameters: (declaration.parameters || {}) as Record<string, unknown>,
           })),
         );
-        this.ai = getManagedLiveClient(grant.token);
-        this.managedSessionId = grant.sessionId;
+        this.managedRelayGrant = grant;
       } else if (!getEphemeralApiKey()) {
         throw new Error('The personal Gemini key is no longer available in this browser session. Re-enter it in Settings.');
       }
@@ -524,7 +628,7 @@ ${customInst}`;
           systemInstruction: {
              parts: [{ text: systemInstructionText }]
           },
-          sessionResumption: {},
+          ...(!this.managedRelayGrant ? { sessionResumption: {} } : {}),
           ...(liveModel === 'gemini-3.8-live-extended-thinking'
             ? { thinkingConfig: { thinkingLevel: liveReasoning.toUpperCase() as ThinkingLevel } }
             : {}),
@@ -544,6 +648,8 @@ ${customInst}`;
         this.setStatus('offline_fallback', 'Device is offline.');
         this.cleanup();
         return;
+      } else if (err instanceof ManagedAiError) {
+        errorMsg = managedLiveFailureCopy(err.code);
       } else if (err instanceof Error) {
         errorMsg = err.message;
       }
@@ -1036,10 +1142,7 @@ ${customInst}`;
     this.inputContext?.close();
     this.outputContext?.close();
 
-    if (this.managedSessionId) {
-      void endManagedLiveSession(this.managedSessionId);
-      this.managedSessionId = null;
-    }
+    this.managedRelayGrant = null;
     this.liveSessionReady = false;
     this.resumptionHandle = null;
     this.liveConfig = null;

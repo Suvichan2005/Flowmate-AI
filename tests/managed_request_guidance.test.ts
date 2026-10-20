@@ -30,6 +30,8 @@ describe('managed request history guidance', () => {
     const guest = getManagedRequestGuidance('GUEST_TURN_ALLOWANCE_EXHAUSTED', 'not_sent', new Date('2026-10-20T12:00:00Z'));
     expect(guest.description).toContain('1 Nov 2026');
     expect(guest.actions).toContain('sign_in');
+    expect(guest.actions).toEqual(['sign_in']);
+    expect(guest.description).not.toContain('Gemini key');
     const account = getManagedRequestGuidance('TURN_ALLOWANCE_EXHAUSTED', 'not_sent', new Date('2026-10-20T12:00:00Z'));
     expect(account.description).toContain('1 Nov 2026');
     expect(account.actions).not.toContain('sign_in');

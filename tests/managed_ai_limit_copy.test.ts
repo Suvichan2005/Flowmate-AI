@@ -6,6 +6,8 @@ describe('managed AI allowance messages', () => {
     const copy = getManagedAiLimitCopy('GUEST_BRIEFING_ALLOWANCE_EXHAUSTED');
     expect(copy.description).toContain('today’s guest briefing allowance');
     expect(copy.description).toContain('larger daily allowance');
+    expect(copy.description).toContain('Sign in');
+    expect(copy.description).not.toContain('Gemini key');
     expect(copy.description).not.toContain('this month');
     expect(copy.signInLabel).toContain('daily briefings');
   });
@@ -24,7 +26,10 @@ describe('managed AI allowance messages', () => {
   });
 
   it('keeps chat allowance language monthly', () => {
-    expect(getManagedAiLimitCopy('GUEST_TURN_ALLOWANCE_EXHAUSTED').description).toContain('this month’s 30 guest chat turns');
+    const guest = getManagedAiLimitCopy('GUEST_TURN_ALLOWANCE_EXHAUSTED');
+    expect(guest.description).toContain('this month’s 30 guest chat turns');
+    expect(guest.description).toContain('Sign in');
+    expect(guest.description).not.toContain('Gemini key');
     expect(getManagedAiLimitCopy('TURN_ALLOWANCE_EXHAUSTED').description).toContain('this month’s 150 included chat turns');
   });
 });

@@ -16,7 +16,7 @@ export function getManagedRequestGuidance(code: string, outcome: 'not_sent' | 'u
   }
   switch (code) {
     case 'GUEST_TURN_ALLOWANCE_EXHAUSTED':
-      return notSent('Monthly guest turns used', `Your 30 guest turns reset ${formatManagedAiResetAt('month', now)}. Sign in for the account allowance or add your own Gemini key.`, ['sign_in', 'settings']);
+      return notSent('Monthly guest turns used', `Your 30 guest turns reset ${formatManagedAiResetAt('month', now)}. Sign in for the larger account allowance. Your guest workspace stays on this device.`, ['sign_in']);
     case 'TURN_ALLOWANCE_EXHAUSTED':
       return notSent('Monthly Chat allowance used', `Your 150 included turns reset ${formatManagedAiResetAt('month', now)}. You can use your own Gemini key meanwhile.`);
     case 'REQUEST_COST_ENVELOPE_EXHAUSTED':
