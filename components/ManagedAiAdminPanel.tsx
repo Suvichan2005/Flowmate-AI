@@ -116,7 +116,7 @@ export default function ManagedAiAdminPanel() {
           }} />
           Managed Live voice enabled
         </label>
-        <p className="text-xs text-slate-500 sm:col-span-2">Live uses a server-owned provider connection with a 5-minute maximum, capped audio input and output, and a $0.50 reserved exposure. It remains independently gated from Chat and Briefing. {overview.liveEnableReady ? 'The current server policy is ready to enable it.' : overview.liveEnabled ? 'It is currently enabled.' : 'Enable managed access and configure the approved budget policy before enabling Live.'}</p>
+        <p className="text-xs text-slate-500 sm:col-span-2">Access mode: {overview.managedMode === 'test' ? 'TEST — only exact server-allowlisted identities can use managed AI.' : overview.managedMode === 'general' ? 'GENERAL — eligible guest and verified accounts can use managed AI.' : 'DISABLED — no identities can use managed AI.'} Live uses a server-owned provider connection with a 5-minute maximum, capped audio input and output, and a $0.50 reserved exposure. It remains independently gated from Chat and Briefing. {overview.liveEnableReady ? 'The current server policy is ready to enable it.' : overview.liveEnabled ? 'It is currently enabled.' : 'Enable managed access and configure the approved budget policy before enabling Live.'}</p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 text-sm">
