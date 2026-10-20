@@ -4,7 +4,7 @@ export interface ManagedRequestGuidance {
   outcome: 'not_sent' | 'uncertain';
   title: string;
   description: string;
-  actions: Array<'new_chat' | 'recent_context' | 'settings' | 'sign_in' | 'reload'>;
+  actions: Array<'new_chat' | 'recent_context' | 'essential_context' | 'settings' | 'sign_in' | 'reload'>;
 }
 
 export function getManagedRequestGuidance(code: string, outcome: 'not_sent' | 'uncertain', now = new Date()): ManagedRequestGuidance {
@@ -20,7 +20,7 @@ export function getManagedRequestGuidance(code: string, outcome: 'not_sent' | 'u
     case 'TURN_ALLOWANCE_EXHAUSTED':
       return notSent('Monthly Chat allowance used', `Your 150 included turns reset ${formatManagedAiResetAt('month', now)}. You can use your own Gemini key meanwhile.`);
     case 'REQUEST_COST_ENVELOPE_EXHAUSTED':
-      return notSent('This request is over the included-AI limit', 'Nothing was sent. The estimate includes your chosen model, reasoning and reply length, conversation, workspace context, prompt and attachment. If chat history is the issue, retry using the latest 12 messages or start a fresh chat. If the prompt or attachment is large, edit this saved message and Fork & Send, or remove its attachment in the edit panel. You can also choose a smaller reply length or another available model yourself. If a short, fresh chat still hits this limit, Flowmate needs to reduce its own injected workspace context; your account is not blocked. The original transcript stays unchanged; Flowmate will not rewrite or downgrade it without your choice.', ['recent_context', 'new_chat', 'settings']);
+      return notSent('This request is over the included-AI limit', 'Nothing was sent. The estimate includes your chosen model, reasoning and reply length, conversation, workspace context, prompt and attachment. You can retry with essential Flowmate context while keeping your full transcript and message, or use the latest 12 messages in a separate branch. If your prompt or attachment is the main size, edit this saved message or remove the attachment. You may choose a smaller reply length/model yourself or use your own Gemini key. Flowmate will not rewrite your message or downgrade your choices.', ['essential_context', 'recent_context', 'new_chat', 'settings']);
     case 'BRIEFING_COST_ENVELOPE_EXHAUSTED':
       return notSent('This briefing is over the included-AI limit', 'Nothing was sent and your existing briefing and workspace are unchanged. This is a request-size limit, not a daily allowance. Review unusually long task or event titles, or use your own Gemini key in Settings; retrying unchanged workspace data will not help.', ['settings']);
     case 'TURN_COST_ENVELOPE_EXHAUSTED':
@@ -34,7 +34,7 @@ export function getManagedRequestGuidance(code: string, outcome: 'not_sent' | 'u
     case 'MANAGED_AI_BUDGET_UNAVAILABLE':
       return notSent('Flowmate could not verify its safety controls', 'No managed generation was started. This needs a server-side recovery; your workspace and message are preserved. Try later or use your own Gemini key.');
     case 'MODEL_CONTEXT_LIMIT':
-      return notSent('The selected model’s context is full', 'Nothing was sent. Retry using the latest 12 messages or start a fresh chat. If the prompt or attachment is large, edit this saved message to trim it or remove the attachment, then Fork & Send. You may also choose an available model with a larger context. These choices keep the original transcript; Flowmate will not silently rewrite it. If even a short, fresh chat fails, Flowmate needs an application-side fix to its injected workspace context; your account is not blocked.', ['recent_context', 'new_chat', 'settings']);
+      return notSent('The selected model’s context is full', 'Nothing was sent. Retry with essential Flowmate workspace context while keeping your full transcript and message, or use the latest 12 messages in a separate branch. If the prompt or attachment is large, edit the saved message or remove the attachment. You may choose a compatible model with a larger context. Your original transcript stays unchanged; Flowmate does not silently rewrite it.', ['essential_context', 'recent_context', 'new_chat', 'settings']);
     case 'OUTPUT_TOKEN_LIMIT':
       return notSent('The reply length is above this model’s limit', 'Nothing was sent. Choose a shorter reply length or a model that supports the selected limit, then retry this saved request. Flowmate will not silently shorten the reply.');
     case 'MODEL_NOT_ALLOWED_FOR_ACCOUNT':

@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertCircle, CircleHelp, Clock3, History, LogIn, Plus, Settings2, RotateCw } from 'lucide-react';
+import { AlertCircle, CircleHelp, Clock3, History, LogIn, Plus, Settings2, RotateCw, Sparkles } from 'lucide-react';
 import { getManagedRequestGuidance } from '../services/ai/managedRequestGuidance';
 
 interface ManagedRequestNoticeProps {
@@ -7,11 +7,12 @@ interface ManagedRequestNoticeProps {
   outcome?: 'not_sent' | 'uncertain';
   onNewChat: () => void;
   onRetryWithRecentContext: () => void;
+  onRetryWithEssentialContext: () => void;
   onSettings: () => void;
   onSignIn: () => void;
 }
 
-export const ManagedRequestNotice: React.FC<ManagedRequestNoticeProps> = ({ code = 'GENERATION_FAILED', outcome = 'uncertain', onNewChat, onRetryWithRecentContext, onSettings, onSignIn }) => {
+export const ManagedRequestNotice: React.FC<ManagedRequestNoticeProps> = ({ code = 'GENERATION_FAILED', outcome = 'uncertain', onNewChat, onRetryWithRecentContext, onRetryWithEssentialContext, onSettings, onSignIn }) => {
   const guidance = getManagedRequestGuidance(code, outcome);
   return (
     <aside className={`mt-2 w-full rounded-lg border px-3 py-2.5 text-left ${guidance.outcome === 'uncertain' ? 'border-amber-700/50 bg-amber-950/20' : 'border-slate-700 bg-slate-900/70'}`} aria-label={guidance.outcome === 'uncertain' ? 'AI result not confirmed' : 'AI request was not sent'}>
@@ -26,6 +27,7 @@ export const ManagedRequestNotice: React.FC<ManagedRequestNoticeProps> = ({ code
       {guidance.actions.length > 0 && <div className="mt-2 flex flex-wrap gap-2 pl-5">
         {guidance.actions.includes('new_chat') && <button type="button" onClick={onNewChat} className="inline-flex items-center gap-1 rounded-md border border-slate-600 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800"><Plus size={12} /> New chat</button>}
         {guidance.actions.includes('recent_context') && <button type="button" onClick={onRetryWithRecentContext} title="Create a separate branch using the latest 12 conversation messages; the original stays unchanged" className="inline-flex items-center gap-1 rounded-md border border-slate-600 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800"><History size={12} /> Retry with latest 12</button>}
+        {guidance.actions.includes('essential_context') && <button type="button" onClick={onRetryWithEssentialContext} title="Create a separate branch with the full conversation and prompt, using only essential Flowmate workspace context" className="inline-flex items-center gap-1 rounded-md border border-slate-600 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800"><Sparkles size={12} /> Retry with essential context</button>}
         {guidance.actions.includes('sign_in') && <button type="button" onClick={onSignIn} className="inline-flex items-center gap-1 rounded-md border border-emerald-700/70 px-2 py-1 text-[11px] text-emerald-200 hover:bg-emerald-950/40"><LogIn size={12} /> Sign in</button>}
         {guidance.actions.includes('reload') && <button type="button" onClick={() => window.location.reload()} className="inline-flex items-center gap-1 rounded-md border border-slate-600 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800"><RotateCw size={12} /> Reload Flowmate</button>}
         {guidance.actions.includes('settings') && <button type="button" onClick={onSettings} className="inline-flex items-center gap-1 rounded-md border border-slate-600 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800"><Settings2 size={12} /> Settings / own key</button>}

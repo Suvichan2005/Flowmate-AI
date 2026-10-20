@@ -258,7 +258,7 @@ export interface FlowmateState {
     forkAndSendMessage: (
         messageId: string,
         newText: string,
-        options?: { submissionId?: string; simulatedFailure?: boolean; contextRecovery?: 'recent'; removeAttachment?: boolean }
+        options?: { submissionId?: string; simulatedFailure?: boolean; contextRecovery?: 'recent' | 'essentials'; removeAttachment?: boolean }
     ) => Promise<{ branchId: string; userMessageId: string; assistantMessageId?: string; queueItemId?: string } | null>;
     retryQueuedUserMessage: (userMessageId: string) => Promise<boolean>;
     registerTurnExecutor: (executor: TurnExecutor | null) => void;
@@ -1543,7 +1543,7 @@ export const useStore = create<FlowmateState>()(
                 return newBranchId;
             },
 
-            forkAndSendMessage: async (messageId: string, newText: string, options?: { submissionId?: string; simulatedFailure?: boolean; contextRecovery?: 'recent'; removeAttachment?: boolean }) => {
+            forkAndSendMessage: async (messageId: string, newText: string, options?: { submissionId?: string; simulatedFailure?: boolean; contextRecovery?: 'recent' | 'essentials'; removeAttachment?: boolean }) => {
                 const state = get();
                 const trimmed = newText.trim();
                 if (!trimmed) return null;

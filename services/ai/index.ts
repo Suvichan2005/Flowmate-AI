@@ -73,12 +73,18 @@ export interface OrchestrationCallbacks {
   signal?: AbortSignal;
 }
 
+export interface OrchestrationRequestOptions {
+  /** Explicit retry mode that compacts only Flowmate-generated workspace context. */
+  managedContextMode?: 'full' | 'essentials';
+}
+
 export const orchestrateMessage = async (
   history: Message[],
   userMessage: string,
   snapshot: { entities: Entity[]; relationships: Relationship[] },
   attachmentDataUrl?: string | null,
   callbacks?: OrchestrationCallbacks,
+  requestOptions?: OrchestrationRequestOptions,
 ): Promise<ToonResponse> => {
   const { addDebugLog, settings, universalTags } = useStore.getState();
   const modelName = settings?.preferred_model || DEFAULT_MODEL;
@@ -124,17 +130,26 @@ export const orchestrateMessage = async (
   }
 
   // --- P1-07 Unified Context & Memory Resolution ---
+  const essentialManagedContext = useManagedAi && requestOptions?.managedContextMode === 'essentials';
   const resolvedContext = await contextResolver.resolveContext({
     userMessage,
     source: 'text_chat',
+    ...(essentialManagedContext ? {
+      includeCustomInstructions: false,
+      budgetConfig: {
+        maxMemoryItems: 2,
+        maxSituationalItems: 1,
+        maxEntityItems: 2,
+        maxContextTokensApprox: 300,
+        maxTotalChars: 1_200,
+      },
+    } : {}),
   });
 
-  const entityContext = buildEntityContext(
-    snapshot.entities,
-    snapshot.relationships,
-    userMessage,
-  );
-  const tagList = (universalTags || [])
+  const entityContext = essentialManagedContext
+    ? { entities: [], relationships: [] }
+    : buildEntityContext(snapshot.entities, snapshot.relationships, userMessage);
+  const tagList = essentialManagedContext ? '' : (universalTags || [])
     .slice(0, 20)
     .map(t => `${t.title} (${t.kind[0]})`)
     .join(', ');
@@ -143,10 +158,10 @@ export const orchestrateMessage = async (
     resolvedContext.serializedPromptSection,
     `[Graph] ${JSON.stringify(entityContext)}`,
     tagList ? `[Tags] ${tagList}` : '',
-    getOptedInOnboardingContext(useStore.getState().currentUser?.uid || 'guest'),
+    essentialManagedContext ? '' : getOptedInOnboardingContext(useStore.getState().currentUser?.uid || 'guest'),
   ];
 
-  if (featureToggles.food_tracking) {
+  if (!essentialManagedContext && featureToggles.food_tracking) {
     const food = buildFoodContext();
     if (food.summary) promptSections.push(`[Food] ${food.summary}`);
     if (food.recentMeals) promptSections.push(`[Recent meals] ${food.recentMeals}`);

@@ -390,6 +390,39 @@ describe('Phase 3: Conversation Branching & Graph DAG', () => {
     expect(retry?.parent_id).toBe(original.parent_id);
   });
 
+  it('retries with essential workspace context as a separate branch without changing the full transcript', async () => {
+    const originalId = useStore.getState().addMessage('user', 'Use my complete chat history and attached document.', undefined, null, 'test-session');
+    const original = useStore.getState().messages.find(message => message.id === originalId)!;
+    useStore.setState(state => ({
+      messages: state.messages.map(message => message.id === originalId
+        ? { ...message, attachment: 'data:image/png;base64,c2FtcGxl', status: 'failed' as const, turn_metadata: { managed_failure: { code: 'MODEL_CONTEXT_LIMIT', outcome: 'not_sent' } } }
+        : message),
+    }));
+    useStore.getState().registerTurnExecutor(async ({ branchId, userMessage, assistantMessageId }) => {
+      useStore.setState(state => ({
+        messages: state.messages.map(message => message.id === assistantMessageId
+          ? { ...message, text: 'Recovered with essential workspace context.', status: 'completed' as const }
+          : message.id === userMessage.id ? { ...message, status: 'completed' as const } : message),
+        branches: state.branches.map(branch => branch.id === branchId
+          ? { ...branch, head_message_id: assistantMessageId }
+          : branch),
+      }));
+    });
+
+    await useStore.getState().forkAndSendMessage(originalId, original.text, { contextRecovery: 'essentials' });
+
+    const state = useStore.getState();
+    const retry = state.messages.find(message => message.id !== originalId && message.role === 'user');
+    const preservedOriginal = state.messages.find(message => message.id === originalId);
+    expect(preservedOriginal?.text).toBe(original.text);
+    expect(preservedOriginal?.attachment).toBe('data:image/png;base64,c2FtcGxl');
+    expect(preservedOriginal?.turn_metadata?.managed_failure?.code).toBe('MODEL_CONTEXT_LIMIT');
+    expect(retry?.text).toBe(original.text);
+    expect(retry?.attachment).toBe('data:image/png;base64,c2FtcGxl');
+    expect(retry?.turn_metadata?.context_recovery).toBe('essentials');
+    expect(retry?.parent_id).toBe(original.parent_id);
+  });
+
   it('can explicitly remove an attachment from a retry without changing the historical message', async () => {
     const originalId = useStore.getState().addMessage('user', 'Please inspect this image.', undefined, null, 'test-session');
     useStore.setState(state => ({

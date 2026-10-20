@@ -6,15 +6,18 @@ describe('managed request history guidance', () => {
     const guidance = getManagedRequestGuidance('REQUEST_COST_ENVELOPE_EXHAUSTED', 'not_sent');
     expect(guidance.outcome).toBe('not_sent');
     expect(guidance.description).toContain('Nothing was sent');
-    expect(guidance.description).toContain('fresh chat');
+    expect(guidance.description).toContain('latest 12 messages');
     expect(guidance.actions).toContain('new_chat');
     expect(guidance.actions).toContain('settings');
+    expect(guidance.actions).toContain('essential_context');
   });
 
-  it('distinguishes an application context overflow and says the account is not blocked', () => {
+  it('offers an app-context-only retry for model context overflow', () => {
     const guidance = getManagedRequestGuidance('MODEL_CONTEXT_LIMIT', 'not_sent');
-    expect(guidance.description).toContain('injected workspace context');
-    expect(guidance.description).toContain('your account is not blocked');
+    expect(guidance.description).toContain('essential Flowmate workspace context');
+    expect(guidance.description).toContain('full transcript and message');
+    expect(guidance.actions).toContain('essential_context');
+    expect(guidance.actions).toContain('recent_context');
   });
 
   it('does not tell users to resend an uncertain provider request immediately', () => {
@@ -75,7 +78,7 @@ describe('managed request history guidance', () => {
   it('keeps failed-request guidance durable and out of model context instead of expiring it as a toast', () => {
     const guidance = getManagedRequestGuidance('MODEL_CONTEXT_LIMIT', 'not_sent');
     expect(guidance.description).toContain('original transcript');
-    expect(guidance.description).toContain('will not silently rewrite');
+    expect(guidance.description).toContain('does not silently rewrite it');
   });
 
   it('separates Chat request-size recovery from briefing request-size recovery', () => {
@@ -83,9 +86,9 @@ describe('managed request history guidance', () => {
     expect(chat.description).toContain('reasoning and reply length');
     expect(chat.description).toContain('workspace context');
     expect(chat.description).toContain('latest 12 messages');
-    expect(chat.description).toContain('your account is not blocked');
+    expect(chat.description).toContain('Flowmate will not rewrite your message');
     expect(chat.description).toContain('choose a smaller reply length');
-    expect(chat.description).toContain('will not rewrite or downgrade');
+    expect(chat.description).toContain('will not rewrite your message or downgrade your choices');
     const briefing = getManagedRequestGuidance('BRIEFING_COST_ENVELOPE_EXHAUSTED', 'not_sent');
     expect(briefing.description).toContain('not a daily allowance');
     expect(briefing.description).toContain('retrying unchanged workspace data will not help');

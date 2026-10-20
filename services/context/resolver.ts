@@ -42,6 +42,7 @@ export interface ContextResolverOptions {
   userMessage?: string;
   source?: 'text_chat' | 'voice_session' | 'background_agent';
   budgetConfig?: Partial<ContextBudgetConfig>;
+  includeCustomInstructions?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +250,7 @@ export class ContextResolver {
     // 1. User Profile Context
     const timezone = settings.timezone || 'Asia/Kolkata';
     const stablePreferences: string[] = [];
-    if (settings.custom_instructions) {
+    if (options.includeCustomInstructions !== false && settings.custom_instructions) {
       stablePreferences.push(settings.custom_instructions);
     }
 

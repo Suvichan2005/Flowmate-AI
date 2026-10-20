@@ -1206,7 +1206,8 @@ const App: React.FC = () => {
               if (onMetrics) onMetrics(metrics);
               setLastTurnDiagnostics(collectedMetrics);
             },
-          }
+          },
+          { managedContextMode: userMessage.turn_metadata?.context_recovery === 'essentials' ? 'essentials' : 'full' },
         );
 
         const latestState = useStore.getState();
@@ -1915,6 +1916,7 @@ const App: React.FC = () => {
                             outcome={msg.turn_metadata.managed_failure.outcome}
                             onNewChat={() => { useStore.getState().createChatSession(); setInput(''); setView('chat'); }}
                             onRetryWithRecentContext={() => { void useStore.getState().forkAndSendMessage(msg.id, msg.text || (msg.attachment ? 'Analyze this attachment.' : ''), { contextRecovery: 'recent' }); }}
+                            onRetryWithEssentialContext={() => { void useStore.getState().forkAndSendMessage(msg.id, msg.text || (msg.attachment ? 'Analyze this attachment.' : ''), { contextRecovery: 'essentials' }); }}
                             onSettings={() => setView('settings')}
                             onSignIn={() => setShowAuthModal(true)}
                           />
@@ -2160,6 +2162,7 @@ const App: React.FC = () => {
                               outcome={msg.turn_metadata.managed_failure.outcome}
                               onNewChat={() => { useStore.getState().createChatSession(); setInput(''); setView('chat'); }}
                               onRetryWithRecentContext={() => { void useStore.getState().forkAndSendMessage(msg.id, msg.text || (msg.attachment ? 'Analyze this attachment.' : ''), { contextRecovery: 'recent' }); }}
+                              onRetryWithEssentialContext={() => { void useStore.getState().forkAndSendMessage(msg.id, msg.text || (msg.attachment ? 'Analyze this attachment.' : ''), { contextRecovery: 'essentials' }); }}
                               onSettings={() => setView('settings')}
                               onSignIn={() => setShowAuthModal(true)}
                             />
