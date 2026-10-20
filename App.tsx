@@ -1883,7 +1883,14 @@ const App: React.FC = () => {
                     );
                   }
 
-                  return activeMsgs.map((msg) => (
+                  return activeMsgs.map((msg) => {
+                    // A rejected/uncertain request is recorded on its user
+                    // message with a ManagedRequestNotice. Do not render the
+                    // empty assistant placeholder as a fake model reply (or
+                    // the generic "Attachment" fallback).
+                    if (msg.role === 'assistant' && msg.status === 'failed'
+                      && !msg.text.trim() && msg.turn_metadata?.response_source === 'unavailable') return null;
+                    return (
                     <div key={msg.id} data-message-id={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                       <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 self-start mt-0.5 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
                         {msg.role === 'user' ? <User size={14} /> : <Bot size={14} />}
@@ -1914,7 +1921,8 @@ const App: React.FC = () => {
                         )}
                       </div>
                     </div>
-                  ));
+                    );
+                  });
                 })()}
                 {loading && !isStreaming && (
                   <div className="flex gap-3">
@@ -2125,7 +2133,12 @@ const App: React.FC = () => {
                       );
                     }
 
-                    return activeMsgs.map((msg) => (
+                    return activeMsgs.map((msg) => {
+                      // Keep rejection guidance with the original user
+                      // submission; never show an empty assistant "reply".
+                      if (msg.role === 'assistant' && msg.status === 'failed'
+                        && !msg.text.trim() && msg.turn_metadata?.response_source === 'unavailable') return null;
+                      return (
                       <div key={msg.id} data-message-id={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
                           {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
@@ -2153,7 +2166,8 @@ const App: React.FC = () => {
                           )}
                         </div>
                       </div>
-                    ));
+                      );
+                    });
                   })()}
                   {loading && !isStreaming && (
                     <div className="flex gap-3">
