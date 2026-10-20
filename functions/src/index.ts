@@ -13,7 +13,7 @@ import { ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, ARGON_MODEL, DEF
 import { briefingLedgerRefs, failTurn, finishBriefing, finishTurn, isManagedAiEnabledForIdentity, markCostExposureUncertain, recordGenerationUsage, reserveBriefing, reserveBriefingGenerationCall, reserveCostExposure, reserveGenerationCall, reserveTurn, sanitizeUsageMetadata, settleCostExposure, turnLedgerRefs } from './ledger.js';
 import { handleManagedAiAdmin } from './admin.js';
 import { generateArgonStateless } from './argon.js';
-import { actualTextGenerationCost, estimateTextGenerationCost, outputEnvelope } from './cost.js';
+import { actualTextGenerationCost, estimateTextGenerationCost } from './cost.js';
 
 if (getApps().length === 0) initializeApp();
 const db = getFirestore();
@@ -412,9 +412,8 @@ export const managedGemini = onRequest({
     if (requestsTools && !policyModel.functionCalling) {
       throw new RequestFailure('MODEL_TOOL_CALLING_UNAVAILABLE', 422);
     }
-    const maxOutputTokens = Math.min(outputEnvelope(input.purpose, allowance, refs.isPrivileged), modelInfo.outputTokenLimit);
     const requestedOutputTokens = input.config.maxOutputTokens;
-    if (requestedOutputTokens !== undefined && Number(requestedOutputTokens) > maxOutputTokens) {
+    if (requestedOutputTokens !== undefined && Number(requestedOutputTokens) > modelInfo.outputTokenLimit) {
       throw new RequestFailure('OUTPUT_TOKEN_LIMIT', 413);
     }
     let count: { totalTokens?: unknown };
@@ -452,7 +451,7 @@ export const managedGemini = onRequest({
     const inputTokens = Number(count.totalTokens);
     if (!Number.isSafeInteger(inputTokens) || inputTokens < 0) throw new RequestFailure('MODEL_CATALOG_UNAVAILABLE', 503);
     const requestedOutput = input.config.maxOutputTokens === undefined
-      ? maxOutputTokens
+      ? modelInfo.outputTokenLimit
       : Number(input.config.maxOutputTokens);
     if (policyModel.sharedContextWindow
       ? inputTokens + requestedOutput > modelInfo.inputTokenLimit

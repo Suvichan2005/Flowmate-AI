@@ -397,6 +397,8 @@ export interface ToonResponse {
   ops: ToonOperation[];
   assistant: ToonAssistant;
   provider?: 'managed' | 'byok' | 'unavailable' | 'managed-limited';
+  failureCode?: string;
+  failureOutcome?: 'not_sent' | 'uncertain';
   model?: string;
   reasoningLevel?: string;
 }

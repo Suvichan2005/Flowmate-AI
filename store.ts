@@ -258,7 +258,7 @@ export interface FlowmateState {
     forkAndSendMessage: (
         messageId: string,
         newText: string,
-        options?: { submissionId?: string; simulatedFailure?: boolean }
+        options?: { submissionId?: string; simulatedFailure?: boolean; contextRecovery?: 'recent'; removeAttachment?: boolean }
     ) => Promise<{ branchId: string; userMessageId: string; assistantMessageId?: string; queueItemId?: string } | null>;
     retryQueuedUserMessage: (userMessageId: string) => Promise<boolean>;
     registerTurnExecutor: (executor: TurnExecutor | null) => void;
@@ -1543,7 +1543,7 @@ export const useStore = create<FlowmateState>()(
                 return newBranchId;
             },
 
-            forkAndSendMessage: async (messageId: string, newText: string, options?: { submissionId?: string; simulatedFailure?: boolean }) => {
+            forkAndSendMessage: async (messageId: string, newText: string, options?: { submissionId?: string; simulatedFailure?: boolean; contextRecovery?: 'recent'; removeAttachment?: boolean }) => {
                 const state = get();
                 const trimmed = newText.trim();
                 if (!trimmed) return null;
@@ -1579,6 +1579,8 @@ export const useStore = create<FlowmateState>()(
                             parent_id: parentId,
                             branch_id: newBranchId,
                             channelId: effectiveChannelId,
+                            attachment: options?.removeAttachment ? null : original.attachment || null,
+                            ...(options?.contextRecovery ? { turn_metadata: { context_recovery: options.contextRecovery } } : {}),
                             status: options?.simulatedFailure ? 'failed' : 'queued',
                             created_at: new Date().toISOString()
                         };
@@ -1853,13 +1855,23 @@ export const useStore = create<FlowmateState>()(
 
                     // Complete turn
                     set(state => {
+                        const assistantFailed = (state.messages || []).some(m => m.id === assistantMsgId && m.status === 'failed');
                         const updatedQueue = (state.branchQueues[branchId] || []).map(q =>
-                            q.id === nextItem.id ? { ...q, status: 'completed' as const } : q
+                            q.id === nextItem.id ? {
+                                ...q,
+                                status: assistantFailed ? 'failed' as const : 'completed' as const,
+                                ...(assistantFailed ? { error: 'Managed AI did not return a response. Your message is saved; retry when ready.' } : {}),
+                            } : q
                         );
                         return {
-                            messages: (state.messages || []).map(m =>
-                                m.id === assistantMsgId || m.id === nextItem.user_message.id ? { ...m, status: 'completed' as const } : m
-                            ),
+                            messages: (state.messages || []).map(m => {
+                                if (m.id === assistantMsgId && m.status === 'failed') return m;
+                                if (m.id === nextItem.user_message.id && m.status === 'interrupted') return m;
+                                if (m.id === assistantMsgId || m.id === nextItem.user_message.id) {
+                                    return { ...m, status: assistantFailed ? 'failed' as const : 'completed' as const };
+                                }
+                                return m;
+                            }),
                             branchQueues: {
                                 ...state.branchQueues,
                                 [branchId]: updatedQueue

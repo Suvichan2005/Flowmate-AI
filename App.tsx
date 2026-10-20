@@ -5,7 +5,7 @@ import { orchestrateMessage, generateContextualSuggestions, getInstantContextual
 import { hasAiApiKey, hasAiProviderAvailable } from './services/ai/client';
 import { processFileAttachment } from './utils/imageProcessing';
 import { completeGoogleRedirectSignIn, onAuthChange, signOut } from './services/firebase';
-import { initializeSync, setWorkspaceCloudSyncConsent as setSyncWorkspaceCloudSyncConsent, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
+import { initializeSync, setWorkspaceCloudSyncConsent as setSyncWorkspaceCloudSyncConsent, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud, syncMessage } from './services/syncManager';
 import { mergeData, mergeMessages, mergeChatSessions, mergeCloudSettings } from './services/firestoreSync';
 import { hasWorkspaceCloudSyncConsent, subscribeToWorkspaceCloudSyncConsent } from './services/workspaceSyncConsent';
 import { preventDoubleClick } from './utils/debounce';
@@ -26,6 +26,7 @@ import ChatSessionBar from './components/ChatSessionBar';
 import ConnectionStatus from './components/ConnectionStatus';
 import WorkspaceStatus from './components/WorkspaceStatus';
 import { MessageVersionNav } from './components/MessageVersionNav';
+import { ManagedRequestNotice } from './components/ManagedRequestNotice';
 import { DeveloperModeDrawer } from './components/DeveloperModeDrawer';
 import { resolveBranchHistory } from './utils/conversationGraph';
 import { EntityKind, ToonOperation, ChatSession, Entity, TurnExecutor, BranchQueueItem, ViewType } from './types';
@@ -1179,7 +1180,10 @@ const App: React.FC = () => {
       setLoading(true);
       const state = useStore.getState();
       const snapshot = state.getSnapshot();
-      const currentHistory = resolveBranchHistory(state.messages || [], userMessage.id, channelId);
+      const branchHistory = resolveBranchHistory(state.messages || [], userMessage.id, channelId);
+      const currentHistory = userMessage.turn_metadata?.context_recovery === 'recent'
+        ? branchHistory.slice(-12)
+        : branchHistory;
 
       let accumulatedText = '';
       let collectedMetrics: any = {};
@@ -1192,7 +1196,6 @@ const App: React.FC = () => {
           userMessage.attachment || undefined,
           {
             signal: signal || abortControllerRef.current?.signal,
-            onManagedAiLimit: (code) => setManagedAiLimit(code),
             onChunk: (chunk) => {
               accumulatedText += chunk;
               if (onChunk) onChunk(chunk);
@@ -1210,6 +1213,31 @@ const App: React.FC = () => {
         const currentSession = (latestState.chatSessions || []).find(s => s.id === channelId);
         if (currentSession && currentSession.deleted) {
           console.warn(`[App] Session ${channelId} was deleted during turn. Discarding reply.`);
+          return;
+        }
+
+        if (toon.provider === 'unavailable' || toon.provider === 'managed-limited') {
+          // Keep the reason beside this exact submission as durable metadata,
+          // but never turn a rejection into assistant content or a later turn.
+          const failureOutcome = toon.failureOutcome || 'uncertain';
+          useStore.setState(current => ({
+            messages: current.messages.map(message =>
+              message.id === assistantMessageId
+                ? { ...message, text: '', status: 'failed' as const, turn_metadata: { ...message.turn_metadata, response_source: 'unavailable' } }
+                : message.id === userMessage.id
+                  ? { ...message, status: failureOutcome === 'uncertain' ? 'interrupted' as const : 'failed' as const, turn_metadata: { ...message.turn_metadata, managed_failure: { code: toon.failureCode || 'GENERATION_FAILED', outcome: failureOutcome, recorded_at: new Date().toISOString() } } }
+                  : message
+            ),
+            branches: current.branches.map(branch => branch.id === branchId && branch.head_message_id === assistantMessageId
+              ? { ...branch, head_message_id: userMessage.id, updated_at: new Date().toISOString() }
+              : branch),
+          }));
+          const failedTurnState = useStore.getState();
+          if (!failedTurnState.isDemoMode) {
+            for (const failedMessage of failedTurnState.messages.filter(message => message.id === assistantMessageId || message.id === userMessage.id)) {
+              void syncMessage(failedMessage).catch(error => console.warn('[App] Failed-turn history sync failed:', error));
+            }
+          }
           return;
         }
 
@@ -1822,7 +1850,8 @@ const App: React.FC = () => {
                 {(() => {
                   const currentChannel = activeSessionId || 'general';
                   const currentBranch = (branches || []).find(b => b.id === activeBranchId && (b.conversation_id === currentChannel));
-                  const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel);
+                  const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel)
+                    .filter(message => !(message.role === 'assistant' && message.status === 'failed' && message.turn_metadata?.response_source === 'unavailable' && !message.text.trim()));
                   
                   if (activeMsgs.length === 0) {
                     return (
@@ -1873,6 +1902,16 @@ const App: React.FC = () => {
                           <MessageVersionNav message={msg} />
                           <span className="text-[9px] text-slate-600">{new Date(msg.created_at).toLocaleTimeString()}</span>
                         </div>
+                        {msg.role === 'user' && msg.turn_metadata?.managed_failure && (
+                          <ManagedRequestNotice
+                            code={msg.turn_metadata.managed_failure.code}
+                            outcome={msg.turn_metadata.managed_failure.outcome}
+                            onNewChat={() => { useStore.getState().createChatSession(); setInput(''); setView('chat'); }}
+                            onRetryWithRecentContext={() => { void useStore.getState().forkAndSendMessage(msg.id, msg.text || (msg.attachment ? 'Analyze this attachment.' : ''), { contextRecovery: 'recent' }); }}
+                            onSettings={() => setView('settings')}
+                            onSignIn={() => setShowAuthModal(true)}
+                          />
+                        )}
                       </div>
                     </div>
                   ));
@@ -2053,7 +2092,8 @@ const App: React.FC = () => {
                   {(() => {
                     const currentChannel = activeSessionId || 'general';
                     const currentBranch = (branches || []).find(b => b.id === activeBranchId && (b.conversation_id === currentChannel));
-                    const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel);
+                    const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel)
+                      .filter(message => !(message.role === 'assistant' && message.status === 'failed' && message.turn_metadata?.response_source === 'unavailable' && !message.text.trim()));
 
                     if (activeMsgs.length === 0) {
                       return (
@@ -2101,6 +2141,16 @@ const App: React.FC = () => {
                             <MessageVersionNav message={msg} />
                             <span className="text-[9px] text-slate-600">{new Date(msg.created_at).toLocaleTimeString()}</span>
                           </div>
+                          {msg.role === 'user' && msg.turn_metadata?.managed_failure && (
+                            <ManagedRequestNotice
+                              code={msg.turn_metadata.managed_failure.code}
+                              outcome={msg.turn_metadata.managed_failure.outcome}
+                              onNewChat={() => { useStore.getState().createChatSession(); setInput(''); setView('chat'); }}
+                              onRetryWithRecentContext={() => { void useStore.getState().forkAndSendMessage(msg.id, msg.text || (msg.attachment ? 'Analyze this attachment.' : ''), { contextRecovery: 'recent' }); }}
+                              onSettings={() => setView('settings')}
+                              onSignIn={() => setShowAuthModal(true)}
+                            />
+                          )}
                         </div>
                       </div>
                     ));

@@ -18,6 +18,7 @@ import { extractMemoryItem } from '../services/context/resolver';
 import { hasAiProviderAvailable } from '../services/ai/client';
 import { getManagedAiUsage, hasManagedAiIdentity, type ManagedAiUsage } from '../services/ai/managedClient';
 import { getManagedAiUser } from '../services/firebase';
+import { formatManagedAiResetAt } from '../services/ai/managedAiLimitCopy';
 
 interface StatCardProps {
     icon: React.ReactNode;
@@ -263,10 +264,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                     /* Usage is optional UI information; generation result remains authoritative. */
                 }
             }
-            if (errorCode === 'BRIEFING_ALLOWANCE_EXHAUSTED') {
+            if (errorCode === 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED' || errorCode === 'BRIEFING_ALLOWANCE_EXHAUSTED') {
                 // The UI must still route guests to sign-in when usage telemetry is
                 // temporarily unavailable or an older Function response is deployed.
-                let isGuest = latestUsage?.tier === 'guest';
+                let isGuest = errorCode === 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED' || latestUsage?.tier === 'guest';
                 if (!isGuest) {
                     try {
                         isGuest = (await getManagedAiUser())?.isAnonymous === true;
@@ -275,6 +276,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                     }
                 }
                 onManagedAiLimit?.(isGuest ? 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED' : 'BRIEFING_ALLOWANCE_EXHAUSTED');
+            } else if (errorCode === 'BRIEFING_COST_ENVELOPE_EXHAUSTED') {
+                addToast?.('This briefing is too large for the managed per-generation limit. Nothing was sent and your workspace is unchanged. Reduce the context you include or choose your own Gemini key in Settings.', 'error');
+            } else if (errorCode === 'USER_MANAGED_BUDGET_EXHAUSTED') {
+                addToast?.(`Your managed AI monthly allowance is used. It resets ${formatManagedAiResetAt('month')}. Your workspace is unchanged; your own Gemini key remains available.`, 'error');
+            } else if (errorCode === 'MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE') {
+                addToast?.(`Flowmate’s included AI service has reached its monthly safety limit. It resets ${formatManagedAiResetAt('month')}. Your workspace is unchanged.`, 'error');
+            } else if (errorCode === 'MANAGED_AI_BUDGET_UNAVAILABLE') {
+                addToast?.('Flowmate could not verify its managed-AI safety controls, so it did not generate a briefing. Your workspace is unchanged; try again later or use your own Gemini key.', 'error');
+            } else if (errorCode === 'RATE_LIMITED' || errorCode === 'USER_CALL_IN_PROGRESS') {
+                addToast?.('Another AI request is still running or requests are arriving too quickly. Wait a moment before trying again; your workspace is unchanged.', 'error');
+            } else if (errorCode === 'APP_CHECK_REQUIRED' || errorCode === 'AUTH_REQUIRED') {
+                addToast?.('Flowmate could not verify this app or account for managed AI. Your workspace is unchanged; retry after verification or use your own Gemini key.', 'error');
+            } else if (errorCode === 'GENERATION_FAILED') {
+                addToast?.('Gemini did not return a confirmed briefing. It may have received the request, so the safety hold remains until usage can be reconciled. Your workspace is unchanged; check before retrying.', 'error');
             } else if (errorCode === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' || errorCode === 'TURN_ALLOWANCE_EXHAUSTED') {
                 onManagedAiLimit?.(errorCode);
             } else if (errorCode) {

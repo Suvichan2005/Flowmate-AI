@@ -43,7 +43,7 @@ import { generateManagedContent, ManagedAiError, type ReasoningLevel } from "./m
 import { generateArgonByokContent } from './argon';
 import { getManagedAiUser } from '../firebase';
 import { v4 as uuidv4 } from "uuid";
-import { getManagedAiLimitCopy } from './managedAiLimitCopy';
+import { formatManagedAiResetAt, getManagedAiLimitCopy } from './managedAiLimitCopy';
 import { getOptedInOnboardingContext } from '../onboardingProfile';
 
 // These legacy tools directly mutate local state. Managed AI receives only
@@ -61,7 +61,6 @@ const MANAGED_AI_TOOL_NAMES = new Set(MANAGED_AI_TOOLS.flatMap(tool => tool.func
 
 export interface OrchestrationCallbacks {
   onChunk?: (chunk: string) => void;
-  onManagedAiLimit?: (code: 'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED') => void;
   onThinking?: (thinkingText: string) => void;
   onToolCall?: (tool: { name: string; latency_ms: number; success: boolean }) => void;
   onMetrics?: (metrics: {
@@ -90,7 +89,6 @@ export const orchestrateMessage = async (
   const useManagedAi = !hasAiApiKey() && hasManagedAiIdentity();
   if (!hasAiApiKey() && !useManagedAi) {
     const unavailableMessage = 'Gemini is not configured, so Flowmate did not generate an AI response. Your message is saved in this conversation. Configure an authorized provider in Settings to use AI assistance; your local workspace remains available.';
-    callbacks?.onChunk?.(unavailableMessage);
     return {
       ops: [],
       assistant: {
@@ -487,19 +485,20 @@ export const orchestrateMessage = async (
       return {
         ops: [],
         assistant: {
-          message: accumulatedStreamingText || 'Generation stopped.',
+          message: accumulatedStreamingText || 'The result could not be confirmed.',
           tone: 'neutral',
           follow_up: [],
         },
+        provider: 'unavailable',
+        failureCode: 'GENERATION_FAILED',
+        failureOutcome: 'uncertain',
       };
     }
 
     const managedLimitCodes = ['GUEST_TURN_ALLOWANCE_EXHAUSTED', 'TURN_ALLOWANCE_EXHAUSTED'] as const;
     if (error instanceof ManagedAiError && managedLimitCodes.includes(error.code as (typeof managedLimitCodes)[number])) {
       const message = getManagedAiLimitCopy(error.code as (typeof managedLimitCodes)[number]).description;
-      callbacks?.onManagedAiLimit?.(error.code as (typeof managedLimitCodes)[number]);
-      callbacks?.onChunk?.(message);
-      return { ops: [], assistant: { message, tone: 'neutral', follow_up: ['Open Gemini settings'] }, provider: 'managed-limited' };
+      return { ops: [], assistant: { message, tone: 'neutral', follow_up: ['Open Gemini settings'] }, provider: 'managed-limited', failureCode: error.code, failureOutcome: 'not_sent' };
     }
 
     if (error instanceof ManagedAiError) {
@@ -508,11 +507,12 @@ export const orchestrateMessage = async (
         APP_CHECK_REQUIRED: 'Flowmate could not verify this app for managed AI. Your message is saved; try again later or use your own Gemini key in Settings.',
         RATE_LIMITED: 'Managed AI is receiving requests too quickly. Wait a moment and try again; your message is saved.',
         MODEL_CONTEXT_LIMIT: 'This request exceeds the selected model’s current context capacity. Choose a model with a larger context or shorten the conversation; your message is saved.',
-        OUTPUT_TOKEN_LIMIT: 'This response is longer than Flowmate’s managed limit for this tier. Ask for a shorter answer or use your own Gemini key; your message is saved.',
+        OUTPUT_TOKEN_LIMIT: 'The selected response length exceeds this model’s maximum. No request was sent; choose a length within the model limit or use your own Gemini key.',
         TURN_GENERATION_LIMIT: 'This turn reached its safe multi-step limit. Start a new chat turn to continue; your message is saved.',
-        TURN_COST_ENVELOPE_EXHAUSTED: 'This turn would exceed its managed generation budget. Start a new turn or use your own Gemini key; your workspace is unchanged.',
-        USER_MANAGED_BUDGET_EXHAUSTED: 'Your managed AI monthly spending allowance is used. It resets next month; your message is saved, and your own Gemini key remains available.',
-        MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE: 'Flowmate’s managed AI spending protection is at its current monthly limit. Try again next month or use your own Gemini key; your message is saved.',
+        REQUEST_COST_ENVELOPE_EXHAUSTED: 'This request exceeds Flowmate’s $0.50 managed safety limit. Nothing was sent; reduce the material you include or choose your own Gemini key in Settings. Starting a new turn will not change this request limit.',
+        TURN_COST_ENVELOPE_EXHAUSTED: 'This turn has used its $0.50 managed safety limit across its model/tool steps. Your message is saved; start a new turn or choose your own Gemini key in Settings.',
+        USER_MANAGED_BUDGET_EXHAUSTED: `Your managed AI monthly allowance is used. It resets ${formatManagedAiResetAt('month')}; your message is saved, and your own Gemini key remains available.`,
+        MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE: `Flowmate’s managed AI service is temporarily at its monthly safety limit. It resets ${formatManagedAiResetAt('month')}; your message is saved.`,
         MANAGED_AI_BUDGET_UNAVAILABLE: 'Flowmate’s managed AI spending protection is temporarily unavailable. Your message is saved; please try again later or use your own Gemini key.',
         PRICING_POLICY_UNAVAILABLE: 'Flowmate could not verify current model pricing, so it did not send this managed request. Your message is saved; please try again later or use your own Gemini key.',
         MODEL_NOT_ALLOWED_FOR_ACCOUNT: 'That model or reasoning level needs a privileged account or your own key. Choose an available option in the model control; your message is saved.',
@@ -526,10 +526,14 @@ export const orchestrateMessage = async (
         MODEL_CATALOG_UNAVAILABLE: 'Flowmate could not confirm which models this provider currently supports. No alternate model was selected; your message is saved.',
         MODEL_INPUT_UNSUPPORTED: 'The selected model rejected this input format. No alternate model was selected; your message is saved.',
         PROVIDER_RATE_LIMITED: 'The selected model is temporarily rate-limited by Google. No alternate model was selected; your message is saved.',
+        GENERATION_FAILED: 'Gemini did not return a confirmed result. It may have received the request, so Flowmate is keeping its safety hold until usage can be reconciled. Your message is saved; check the conversation before retrying to avoid duplicate work.',
       };
       const message = managedErrors[error.code] || 'Flowmate could not reach Gemini. No local AI fallback was used; your message is saved. Please retry later or add your own Gemini key in Settings.';
-      callbacks?.onChunk?.(message);
-      return { ops: [], assistant: { message, tone: 'error', follow_up: [] }, provider: 'unavailable' };
+      return {
+        ops: [], assistant: { message, tone: 'error', follow_up: [] }, provider: 'unavailable',
+        failureCode: error.code,
+        failureOutcome: error.code === 'GENERATION_FAILED' ? 'uncertain' : 'not_sent',
+      };
     }
     console.error('Orchestrator failed:', error);
 
@@ -543,6 +547,9 @@ export const orchestrateMessage = async (
     return {
       ops: [],
       assistant: { message: errorMsg, tone: 'error', follow_up: [] },
+      provider: 'unavailable',
+      failureCode: 'GENERATION_FAILED',
+      failureOutcome: 'uncertain',
     };
   }
 };

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { actualTextGenerationCost, estimateTextGenerationCost, modelPrice, outputEnvelope } from '../lib/cost.js';
+import { actualTextGenerationCost, estimateTextGenerationCost, modelPrice } from '../lib/cost.js';
 import { RequestFailure } from '../lib/policy.js';
 
 test('conservative estimate includes the full counted context and output, with integer micro-USD', () => {
@@ -9,13 +9,10 @@ test('conservative estimate includes the full counted context and output, with i
   assert.equal(estimate.pricingVersion, 'gemini-standard-2026-10');
 });
 
-test('a full-context request reserves a bounded maximum-output exposure with margin', () => {
-  const estimate = estimateTextGenerationCost('gemini-3.8-flash', 1_000_000, 8_192, new Date('2026-10-20T12:00:00Z'));
-  assert.equal(estimate.estimatedMicroUsd, 975_900);
-  assert.equal(outputEnvelope('chat', 'guest', false), 8_192);
-  assert.equal(outputEnvelope('chat', 'account', false), 16_384);
-  assert.equal(outputEnvelope('chat', 'guest', true), 32_768);
-  assert.equal(outputEnvelope('briefing', 'account', true), 8_192);
+test('estimates the full provider output capacity instead of silently imposing a tier output cap', () => {
+  const estimate = estimateTextGenerationCost('gemini-3.8-flash', 1_000_000, 65_536, new Date('2026-10-20T12:00:00Z'));
+  assert.equal(estimate.estimatedMicroUsd, 1_244_700);
+  assert.equal(estimate.maximumOutputTokens, 65_536);
 });
 
 test('catalogue pricing automatically selects dated prices and the Pro large-prompt tier', () => {

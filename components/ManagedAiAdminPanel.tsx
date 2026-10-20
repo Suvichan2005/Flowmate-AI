@@ -117,7 +117,7 @@ export default function ManagedAiAdminPanel() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 text-sm">
-        <p className="rounded-lg border border-slate-700 p-3">Provider calls recorded · {overview.ordinary.modelCalls} this month ({overview.month}). This is operator telemetry, not a user allowance.</p>
+        <p className="rounded-lg border border-slate-700 p-3">Managed call reservations · {overview.ordinary.modelCalls} this month ({overview.month}). This is operator telemetry, not a user allowance or a verified count of provider invocations.</p>
         <p className="rounded-lg border border-slate-700 p-3">Privileged accounts · no Flowmate usage ceiling.</p>
       </div>
 

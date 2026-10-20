@@ -13,7 +13,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useStore } from '../store';
 import { User } from '../services/firebase';
-import { DEFAULT_MODEL, AI_MODELS, GEMINI_RETRY_CONFIG } from '../services/ai/client';
+import { DEFAULT_MODEL, AI_MODELS, GEMINI_RETRY_CONFIG, HISTORY_WINDOW } from '../services/ai/client';
 import { FLOWMATE_TOOLS } from '../services/ai/tools';
 import { dispatchToolCall, calculateRelevance } from '../services/ai/executors';
 import { buildBriefingPrompt, IMPROVEMENT_INSTRUCTIONS } from '../services/ai/prompts';
@@ -200,6 +200,38 @@ describe('AI Context & History Building', () => {
         expect((history[0].parts[0] as any).text).toContain('[Previous conversation context]');
         expect(history[1].role).toBe('model');
         expect(history[2].role).toBe('user');
+    });
+
+    it('keeps rejected turns as transcript records without replaying them into later context', () => {
+        const messages: Message[] = [
+            { id: '1', role: 'user', text: 'Keep this successful context', status: 'completed', created_at: '2026-10-06T10:00:00Z' },
+            { id: '2', role: 'assistant', text: 'This answer stays in context', status: 'completed', created_at: '2026-10-06T10:01:00Z' },
+            { id: '3', role: 'user', text: 'Rejected prompt must remain visible but not be replayed', status: 'failed', turn_metadata: { managed_failure: { code: 'MODEL_CONTEXT_LIMIT', outcome: 'not_sent' } }, created_at: '2026-10-06T10:02:00Z' },
+            { id: '4', role: 'assistant', text: '', status: 'failed', turn_metadata: { response_source: 'unavailable' }, created_at: '2026-10-06T10:03:00Z' },
+            { id: '5', role: 'user', text: 'New question', status: 'in_flight', created_at: '2026-10-06T10:04:00Z' },
+        ];
+
+        const history = buildHistory(messages, null);
+        const text = history.flatMap(entry => entry.parts || []).map(part => 'text' in part ? part.text : '').join('\n');
+        expect(history.map(entry => entry.role)).toEqual(['user', 'model', 'user']);
+        expect(text).toContain('Keep this successful context');
+        expect(text).toContain('This answer stays in context');
+        expect(text).toContain('New question');
+        expect(text).not.toContain('Rejected prompt');
+    });
+
+    it('does not let rejected prompts contaminate rolling summaries', () => {
+        const messages: Message[] = [
+            { id: 'rejected', role: 'user', text: 'create task schedule food deadline', status: 'failed', turn_metadata: { managed_failure: { code: 'MODEL_CONTEXT_LIMIT', outcome: 'not_sent' } }, created_at: '2026-10-06T09:00:00Z' },
+            ...Array.from({ length: HISTORY_WINDOW }, (_, index) => ({
+                id: `ok-${index}`,
+                role: 'user' as const,
+                text: `Ordinary conversation ${index}`,
+                status: 'completed' as const,
+                created_at: new Date(Date.UTC(2026, 9, 6, 10, index)).toISOString(),
+            })),
+        ];
+        expect(summarizeOlderMessages(messages)).toBeNull();
     });
 });
 

@@ -127,7 +127,7 @@ test('briefings have a separate daily quota and failed model calls do not consum
   await reserveBriefingGenerationCall(db, first);
   await finishBriefing(db, first, false);
   assert.equal((await first.userMonth.get()).get('successfulBriefings') || 0, 0);
-  assert.equal((await first.month.get()).get('callsReserved'), globalCallsBefore + 1);
+  assert.equal((await first.month.get()).get('callsReserved') || 0, globalCallsBefore, 'a pre-provider failure is rolled out of call reservation telemetry');
 
   for (let index = 0; index < 3; index += 1) {
     const refs = briefingLedgerRefs(db, guestId, `briefing_success_${String(index).padStart(8, '0')}`, date, undefined, 'guest');
@@ -138,7 +138,7 @@ test('briefings have a separate daily quota and failed model calls do not consum
   assert.equal((await first.userMonth.get()).get('successfulBriefings'), 3);
   assert.equal((await first.userDay.get()).get('successfulBriefings'), 3);
   const next = briefingLedgerRefs(db, guestId, 'briefing_success_00000090', date, undefined, 'guest');
-  await assert.rejects(reserveBriefing(db, next), error => error.code === 'BRIEFING_ALLOWANCE_EXHAUSTED');
+  await assert.rejects(reserveBriefing(db, next), error => error.code === 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED');
 
   const chat = turnLedgerRefs(db, guestId, 'chat_independent_0001', 'chat_independent_00001', stableDate, undefined, 'guest');
   await reserveTurn(db, chat);
@@ -180,16 +180,17 @@ test('only one overlapping request succeeds for a UID', async () => {
   assert.equal((await db.doc(`managedAiUsers/${userId}`).get()).get('reservedTurns'), 1);
 });
 
-test('failed provider attempts remain in the per-user and global monthly call ledgers', async () => {
+test('pre-generation monetary denials are removed from per-user and global monthly call ledgers', async () => {
   const userId = uid();
   const refs = turnLedgerRefs(db, userId, 'turn_billable_00001', 'call_billable_000001');
   const globalCallsBefore = Number((await refs.month.get()).get('callsReserved') || 0);
   await reserveTurn(db, refs);
   await reserveGenerationCall(db, refs);
   await failTurn(db, refs, true);
-  assert.equal((await refs.month.get()).get('callsReserved'), globalCallsBefore + 1);
-  assert.equal((await refs.userMonth.get()).get('callsReserved'), 1);
+  assert.equal((await refs.month.get()).get('callsReserved'), globalCallsBefore);
+  assert.equal((await refs.userMonth.get()).get('callsReserved') || 0, 0);
   assert.equal((await refs.call.get()).get('status'), 'failed');
+  assert.equal((await refs.call.get()).get('preGenerationDenied'), true);
 });
 
 test('short-term per-UID rate limit rejects the 21st reservation in a minute', async () => {
@@ -252,6 +253,33 @@ test('monetary holds atomically bound project, user and cumulative turn exposure
   await assert.rejects(reserveCostExposure(db, second, estimate, stableDate), error => error.code === 'TURN_COST_ENVELOPE_EXHAUSTED');
   await failTurn(db, second, true);
   await db.doc('system/managedAiBudgetPolicy').delete();
+});
+
+test('a single Briefing is capped at the approved per-operation amount and pre-generation denials are not counted as provider calls', async () => {
+  const date = new Date('2026-10-20T12:00:00+05:30');
+  const policyRef = db.doc('system/managedAiBudgetPolicy');
+  await policyRef.set({
+    enabled: true, currency: 'USD', projectMonthlyLimitMicroUsd: 20_000_000,
+    userMonthlyLimitMicroUsd: 5_000_000, maxTurnExposureMicroUsd: 500_000,
+    emergencyStop: false, policyVersion: 'owner-pilot-v1',
+  });
+  const refs = briefingLedgerRefs(db, uid(), 'briefing_over_single_operation_cap', date, undefined, 'guest');
+  const callsBefore = Number((await refs.month.get()).get('callsReserved') || 0);
+  await reserveBriefing(db, refs, date.getTime());
+  await reserveBriefingGenerationCall(db, refs);
+  const estimate = { estimatedMicroUsd: 500_001, pricingVersion: 'test-price-v1', inputTokens: 100_000, maximumOutputTokens: 8_192 };
+  await assert.rejects(reserveCostExposure(db, refs, estimate, date), error => error.code === 'BRIEFING_COST_ENVELOPE_EXHAUSTED');
+  await finishBriefing(db, refs, false);
+
+  assert.equal((await refs.month.get()).get('callsReserved') || 0, callsBefore);
+  assert.equal((await refs.userMonth.get()).get('callsReserved') || 0, 0);
+  assert.equal((await refs.userMonth.get()).get('successfulBriefings') || 0, 0);
+  assert.equal((await refs.userDay.get()).get('successfulBriefings') || 0, 0);
+  assert.equal((await refs.call.get()).get('status'), 'failed');
+  assert.equal((await refs.call.get()).get('preGenerationDenied'), true);
+  assert.equal((await refs.call.get()).get('costStatus'), undefined);
+  assert.equal((await db.doc(`managedAiCostProjectMonthly/${monthKey(date)}`).get()).get('reservedMicroUsd') || 0, 0);
+  await policyRef.delete();
 });
 
 test('uncertain provider outcomes retain reserved exposure and global budget rejects concurrent identities', async () => {

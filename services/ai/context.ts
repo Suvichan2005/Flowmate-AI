@@ -238,6 +238,21 @@ export function buildHistory(
 ): Content[] {
   const contents: Content[] = [];
 
+  // Rejected/uncertain turns remain visible in the transcript as a record,
+  // but must not be replayed as conversation context on a later request.
+  // In particular, a provider may already have seen an uncertain turn, so
+  // silently resending it could duplicate work or charges.
+  const contextMessages = messages.filter(msg => {
+    if (msg.role === 'user' && msg.turn_metadata?.managed_failure) return false;
+    if (
+      msg.role === 'assistant' &&
+      msg.status === 'failed' &&
+      msg.turn_metadata?.response_source === 'unavailable' &&
+      !msg.text.trim()
+    ) return false;
+    return true;
+  });
+
   // Prepend rolling summary if available
   if (conversationSummary) {
     contents.push({
@@ -251,7 +266,7 @@ export function buildHistory(
   }
 
   // Sliding window of recent messages
-  const messageWindow = messages.slice(-HISTORY_WINDOW);
+  const messageWindow = contextMessages.slice(-HISTORY_WINDOW);
 
   for (const msg of messageWindow) {
     if (msg.role === 'user') {
@@ -289,9 +304,19 @@ export function buildHistory(
  * to create a lightweight rolling memory.
  */
 export function summarizeOlderMessages(messages: Message[]): string | null {
-  if (messages.length <= HISTORY_WINDOW) return null;
+  const contextMessages = messages.filter(msg => {
+    if (msg.role === 'user' && msg.turn_metadata?.managed_failure) return false;
+    if (
+      msg.role === 'assistant' &&
+      msg.status === 'failed' &&
+      msg.turn_metadata?.response_source === 'unavailable' &&
+      !msg.text.trim()
+    ) return false;
+    return true;
+  });
+  if (contextMessages.length <= HISTORY_WINDOW) return null;
 
-  const older = messages.slice(0, -HISTORY_WINDOW);
+  const older = contextMessages.slice(0, -HISTORY_WINDOW);
 
   // Extract key themes from older messages
   const topics = new Set<string>();

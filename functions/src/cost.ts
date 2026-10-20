@@ -85,14 +85,6 @@ export function estimateTextGenerationCost(
   return { estimatedMicroUsd, pricingVersion: version, inputTokens, maximumOutputTokens };
 }
 
-/** Keep meaningful long-form responses while bounding worst-case provider output. */
-export function outputEnvelope(purpose: 'chat' | 'briefing', allowance: 'guest' | 'account', privileged: boolean): number {
-  // Briefings are a fixed, compact product surface rather than open-ended chat.
-  if (purpose === 'briefing') return 8_192;
-  if (privileged) return 32_768;
-  return allowance === 'guest' ? 8_192 : 16_384;
-}
-
 /**
  * Usage settlement charges reported input and output (thinking is part of
  * output billing). Return null when provider accounting is incomplete; callers

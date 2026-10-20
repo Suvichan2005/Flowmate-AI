@@ -225,7 +225,9 @@ export async function reserveBriefing(db: Firestore, refs: BriefingLedgerRefs, n
     // Reserve against the Asia/Kolkata daily bucket. Expired in-flight calls
     // stop counting, while successful generations remain charged for the day.
     const reserved = Number(userData.activeCallUntilMs || 0) > now ? Number(dailyData.reservedBriefings || 0) : 0;
-    if (!privileged && successes + reserved >= refs.dailyLimit) throw new RequestFailure('BRIEFING_ALLOWANCE_EXHAUSTED', 402);
+    if (!privileged && successes + reserved >= refs.dailyLimit) {
+      throw new RequestFailure(refs.allowance === 'guest' ? 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED' : 'BRIEFING_ALLOWANCE_EXHAUSTED', 402);
+    }
     transaction.set(userRef, {
       ...(!privileged ? {
         rateWindowStartMs: windowStart > now - 60_000 ? windowStart : now,
@@ -275,13 +277,21 @@ export async function finishBriefing(db: Firestore, refs: BriefingLedgerRefs, su
     const userRef = refs.isPrivileged ? refs.privilegedUser : refs.user;
     const usageRef = refs.isPrivileged ? refs.privilegedUserMonth : refs.userMonth;
     const dailyRef = refs.isPrivileged ? refs.privilegedUserDay : refs.userDay;
-    const [call, usage, daily] = await Promise.all([transaction.get(refs.call), transaction.get(usageRef), transaction.get(dailyRef)]);
+    const monthRef = refs.isPrivileged ? refs.privilegedMonth : refs.month;
+    const [call, usage, daily, month] = await Promise.all([
+      transaction.get(refs.call), transaction.get(usageRef), transaction.get(dailyRef), transaction.get(monthRef),
+    ]);
     if (call.get('status') === 'complete' || call.get('status') === 'failed') return;
     const usageData = usage.data() || {};
+    const preGenerationDenied = !successful && call.get('status') === 'reserved' && !call.get('costStatus');
     transaction.set(usageRef, {
       successfulBriefings: Number(usageData.successfulBriefings || 0) + (successful ? 1 : 0),
+      ...(preGenerationDenied ? { callsReserved: Math.max(0, Number(usageData.callsReserved || 0) - 1) } : {}),
       updatedAt: Timestamp.now(),
     }, { merge: true });
+    if (preGenerationDenied) {
+      transaction.set(monthRef, { callsReserved: Math.max(0, Number(month.get('callsReserved') || 0) - 1), updatedAt: Timestamp.now() }, { merge: true });
+    }
     const dailyData = daily.data() || {};
     transaction.set(dailyRef, {
       reservedBriefings: Math.max(0, Number(dailyData.reservedBriefings || 0) - 1),
@@ -291,6 +301,7 @@ export async function finishBriefing(db: Firestore, refs: BriefingLedgerRefs, su
     transaction.set(userRef, { activeCallUntilMs: 0 }, { merge: true });
     transaction.set(refs.call, {
       status: successful ? 'complete' : 'failed',
+      ...(!successful ? { preGenerationDenied, ...(preGenerationDenied ? { denialStage: 'before_provider_authorization' } : {}) } : {}),
       ...(successful ? { completedAt: Timestamp.now() } : { failedAt: Timestamp.now() }),
     }, { merge: true });
   });
@@ -392,11 +403,18 @@ export async function reserveCostExposure(
       if (!turn.exists || turn.get('status') !== 'pending') throw new RequestFailure('TURN_ALREADY_COMPLETE', 409);
       turnReserved = trustedCounter(turn.get('costReservedMicroUsd'));
       turnSettled = trustedCounter(turn.get('costSettledMicroUsd'));
+      if (estimate.estimatedMicroUsd > turnLimit) {
+        throw new RequestFailure('REQUEST_COST_ENVELOPE_EXHAUSTED', 413);
+      }
       const turnExposure = turnReserved + turnSettled + estimate.estimatedMicroUsd;
       if (!Number.isSafeInteger(turnExposure) || turnExposure > turnLimit) {
         throw new RequestFailure('TURN_COST_ENVELOPE_EXHAUSTED', 413);
       }
       transaction.set(turnRef!, { costReservedMicroUsd: turnReserved + estimate.estimatedMicroUsd, updatedAt: Timestamp.now() }, { merge: true });
+    } else if (estimate.estimatedMicroUsd > turnLimit) {
+      // A Briefing has no multi-call Chat turn document, but each fresh
+      // generation is still subject to the same approved per-operation cap.
+      throw new RequestFailure('BRIEFING_COST_ENVELOPE_EXHAUSTED', 413);
     }
     transaction.set(projectBudgetRef, {
       reservedMicroUsd: projectReserved + estimate.estimatedMicroUsd,
@@ -412,6 +430,10 @@ export async function reserveCostExposure(
       costStatus: 'reserved', costMonth: month, costReservedMicroUsd: estimate.estimatedMicroUsd,
       costPricingVersion: estimate.pricingVersion, costInputTokens: estimate.inputTokens,
       costMaximumOutputTokens: estimate.maximumOutputTokens, costReservedAt: Timestamp.now(),
+      // These hashed ledger paths let an owner reconcile an uncertain hold
+      // without storing or exposing the caller's Firebase UID.
+      costUserBudgetPath: userBudgetRef.path,
+      ...(turnRef ? { costTurnPath: turnRef.path } : {}),
     }, { merge: true });
   });
 }
@@ -519,9 +541,13 @@ export async function failTurn(db: Firestore, refs: TurnLedgerRefs, callReserved
   await db.runTransaction(async transaction => {
     const userRef = refs.isPrivileged ? refs.privilegedUser : refs.user;
     const usageRef = refs.isPrivileged ? refs.privilegedUserMonth : refs.userMonth;
-    const [user, turn, usage] = await Promise.all([transaction.get(userRef), transaction.get(refs.turn), transaction.get(usageRef)]);
+    const monthRef = refs.isPrivileged ? refs.privilegedMonth : refs.month;
+    const [user, turn, usage, call, month] = await Promise.all([
+      transaction.get(userRef), transaction.get(refs.turn), transaction.get(usageRef), transaction.get(refs.call), transaction.get(monthRef),
+    ]);
     const userData = user.data() || {};
     const turnData = turn.data() || {};
+    const preGenerationDenied = callReserved && !call.get('costStatus');
     const remaining = Math.max(0, Number(userData.reservedTurns || 0) - (turnData.status === 'pending' ? 1 : 0));
     transaction.set(userRef, {
       reservedTurns: remaining,
@@ -529,10 +555,22 @@ export async function failTurn(db: Firestore, refs: TurnLedgerRefs, callReserved
       activeCallUntilMs: 0,
     }, { merge: true });
     if (turnData.status === 'pending' && turnData.quotaMonth === refs.userMonth.id.slice(0, 7)) {
-      transaction.set(usageRef, { reservedTurns: Math.max(0, Number(usage.get('reservedTurns') || 0) - 1), updatedAt: Timestamp.now() }, { merge: true });
+      transaction.set(usageRef, {
+        reservedTurns: Math.max(0, Number(usage.get('reservedTurns') || 0) - 1),
+        ...(preGenerationDenied ? { callsReserved: Math.max(0, Number(usage.get('callsReserved') || 0) - 1) } : {}),
+        updatedAt: Timestamp.now(),
+      }, { merge: true });
+    } else if (preGenerationDenied) {
+      transaction.set(usageRef, { callsReserved: Math.max(0, Number(usage.get('callsReserved') || 0) - 1), updatedAt: Timestamp.now() }, { merge: true });
+    }
+    if (preGenerationDenied) {
+      transaction.set(monthRef, { callsReserved: Math.max(0, Number(month.get('callsReserved') || 0) - 1), updatedAt: Timestamp.now() }, { merge: true });
     }
     transaction.set(refs.turn, { status: 'failed', failedAt: Timestamp.now() }, { merge: true });
-    if (callReserved) transaction.set(refs.call, { status: 'failed', failedAt: Timestamp.now() }, { merge: true });
+    if (callReserved) transaction.set(refs.call, {
+      status: 'failed', failedAt: Timestamp.now(),
+      ...(preGenerationDenied ? { preGenerationDenied: true, denialStage: 'before_provider_authorization' } : {}),
+    }, { merge: true });
   });
 }
 

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
-import { Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { FieldPath, Timestamp, type Firestore } from 'firebase-admin/firestore';
 import type { Request, Response } from 'express';
 import { monthKey } from './policy.js';
 
@@ -72,6 +72,145 @@ async function readAccessOverview(db: Firestore) {
     allowlist: activeEntries,
     pendingInvitations: pending.docs.map(entry => ({ email: entry.get('emailLower') || '', status: 'pending' })),
   };
+}
+
+async function listUncertainCostReservations(db: Firestore, pageAfter?: string, now = Date.now()) {
+  // Keep this query on Firestore's automatically maintained single-field
+  // index; owner-only operational inspection must not require a new index.
+  if (pageAfter !== undefined && !/^[a-f0-9]{64}$/.test(pageAfter)) throw new Error('INVALID_COST_RECONCILIATION');
+  let query = db.collection('managedAiCalls').where('costStatus', '==', 'uncertain').orderBy(FieldPath.documentId()).limit(501);
+  if (pageAfter) query = query.startAfter(pageAfter);
+  const snapshot = await query.get();
+  const page = snapshot.docs.slice(0, 500);
+  const cutoff = now - 15 * 60_000;
+  const stale = page
+    .filter(document => Number(document.get('costUncertainAt')?.toMillis?.() || 0) <= cutoff)
+    .sort((a, b) => Number(a.get('costUncertainAt')?.toMillis?.() || 0) - Number(b.get('costUncertainAt')?.toMillis?.() || 0));
+  const documents = stale;
+  return {
+    minimumAgeMinutes: 15,
+    hasMore: snapshot.docs.length > 500,
+    nextCursor: snapshot.docs.length > 500 ? page.at(-1)?.id || null : null,
+    reservations: documents.map(document => {
+      const data = document.data();
+      const userBudgetPath = String(data.costUserBudgetPath || '');
+      const turnPath = String(data.costTurnPath || '');
+      return {
+        callId: document.id,
+        purpose: data.purpose === 'briefing' ? 'briefing' : 'chat',
+        model: typeof data.model === 'string' ? data.model : null,
+        month: typeof data.costMonth === 'string' ? data.costMonth : null,
+        reservedMicroUsd: Number.isSafeInteger(data.costReservedMicroUsd) ? data.costReservedMicroUsd : null,
+        inputTokens: Number.isSafeInteger(data.costInputTokens) ? data.costInputTokens : null,
+        maximumOutputTokens: Number.isSafeInteger(data.costMaximumOutputTokens) ? data.costMaximumOutputTokens : null,
+        uncertainSince: data.costUncertainAt?.toDate?.()?.toISOString?.() || null,
+        reconciliationReady: /^managedAiCostUserMonthly\/\d{4}-\d{2}_[a-f0-9]{64}$/.test(userBudgetPath)
+          && (!turnPath || /^managedAiTurns\/[a-f0-9]{64}$/.test(turnPath)),
+      };
+    }),
+  };
+}
+
+async function reconcileCostReservation(
+  db: Firestore,
+  identity: AdminIdentity,
+  callId: string,
+  decision: 'settle' | 'confirmed_not_billed',
+  evidenceRef: string,
+  actualMicroUsd?: number,
+  pricingVersion?: string,
+) {
+  if (!/^[a-f0-9]{64}$/.test(callId) || evidenceRef.trim().length < 8 || evidenceRef.length > 500) {
+    throw new Error('INVALID_COST_RECONCILIATION');
+  }
+  if (decision === 'settle' && (!Number.isSafeInteger(actualMicroUsd) || Number(actualMicroUsd) < 0
+      || typeof pricingVersion !== 'string' || !/^[a-zA-Z0-9._-]{1,80}$/.test(pricingVersion))) {
+    throw new Error('INVALID_COST_RECONCILIATION');
+  }
+  const callRef = db.doc(`managedAiCalls/${callId}`);
+  const auditRef = db.collection('managedAiAdminAudit').doc(randomUUID());
+  return db.runTransaction(async transaction => {
+    const call = await transaction.get(callRef);
+    if (!call.exists || call.get('costStatus') !== 'uncertain') throw new Error('COST_RESERVATION_NOT_RECONCILABLE');
+    const month = String(call.get('costMonth') || '');
+    const userBudgetPath = String(call.get('costUserBudgetPath') || '');
+    const turnPath = String(call.get('costTurnPath') || '');
+    if (!/^\d{4}-\d{2}$/.test(month)
+      || !new RegExp(`^managedAiCostUserMonthly/${month}_[a-f0-9]{64}$`).test(userBudgetPath)
+      || (turnPath && !/^managedAiTurns\/[a-f0-9]{64}$/.test(turnPath))) {
+      throw new Error('COST_RESERVATION_NOT_RECONCILABLE');
+    }
+    const reserved = call.get('costReservedMicroUsd');
+    if (!Number.isSafeInteger(reserved) || reserved < 1) throw new Error('COST_RESERVATION_NOT_RECONCILABLE');
+    const projectRef = db.doc(`managedAiCostProjectMonthly/${month}`);
+    const userRef = db.doc(userBudgetPath);
+    const turnRef = turnPath ? db.doc(turnPath) : null;
+    const [project, user, turn] = await Promise.all([
+      transaction.get(projectRef), transaction.get(userRef), turnRef ? transaction.get(turnRef) : Promise.resolve(null),
+    ]);
+    const projectReserved = project.get('reservedMicroUsd');
+    const userReserved = user.get('reservedMicroUsd');
+    const projectSettled = project.get('settledMicroUsd') ?? 0;
+    const userSettled = user.get('settledMicroUsd') ?? 0;
+    if (!Number.isSafeInteger(projectReserved) || !Number.isSafeInteger(userReserved)
+      || !Number.isSafeInteger(projectSettled) || !Number.isSafeInteger(userSettled)
+      || projectReserved < reserved || userReserved < reserved
+      || projectSettled < 0 || userSettled < 0
+      || (decision === 'settle' && (!Number.isSafeInteger(projectSettled + Number(actualMicroUsd))
+        || !Number.isSafeInteger(userSettled + Number(actualMicroUsd))))) throw new Error('COST_LEDGER_COUNTER_INVALID');
+    const timestamp = Timestamp.now();
+    const actual = decision === 'settle' ? Number(actualMicroUsd) : 0;
+    const patch = {
+      reservedMicroUsd: projectReserved - reserved,
+      ...(decision === 'settle' ? { settledMicroUsd: projectSettled + actual } : {}),
+      updatedAt: timestamp,
+    };
+    const userPatch = {
+      reservedMicroUsd: userReserved - reserved,
+      ...(decision === 'settle' ? { settledMicroUsd: userSettled + actual } : {}),
+      updatedAt: timestamp,
+    };
+    if (turnRef && turn) {
+      const turnReserved = turn.get('costReservedMicroUsd');
+      const turnSettled = turn.get('costSettledMicroUsd') ?? 0;
+      if (!Number.isSafeInteger(turnReserved) || turnReserved < reserved
+        || !Number.isSafeInteger(turnSettled) || turnSettled < 0
+        || (decision === 'settle' && !Number.isSafeInteger(turnSettled + actual))) throw new Error('COST_LEDGER_COUNTER_INVALID');
+      transaction.set(turnRef, {
+        costReservedMicroUsd: turnReserved - reserved,
+        ...(decision === 'settle' ? { costSettledMicroUsd: turnSettled + actual } : {}),
+        updatedAt: timestamp,
+      }, { merge: true });
+    }
+    transaction.set(projectRef, patch, { merge: true });
+    transaction.set(userRef, userPatch, { merge: true });
+    transaction.set(callRef, {
+      costStatus: decision === 'settle' ? 'settled' : 'released_confirmed_not_billed',
+      costReconciledAt: timestamp,
+      costReconciledBy: identity.uid,
+      costReconciliationEvidenceRef: evidenceRef.trim(),
+      ...(decision === 'settle' ? { costSettledMicroUsd: actual, costSettledPricingVersion: pricingVersion, costSettledAt: timestamp } : {}),
+    }, { merge: true });
+    if (decision === 'settle' && actual > reserved) {
+      transaction.set(db.doc('system/managedAiBudgetPolicy'), {
+        emergencyStop: true,
+        emergencyStopReason: 'provider_usage_exceeded_reservation',
+        updatedAt: timestamp,
+      }, { merge: true });
+    }
+    transaction.create(auditRef, {
+      actorUid: identity.uid,
+      action: 'managed_ai_cost_reservation_reconciled',
+      callId,
+      month,
+      decision,
+      reservedMicroUsd: reserved,
+      ...(decision === 'settle' ? { actualMicroUsd: actual, pricingVersion } : {}),
+      evidenceRef: evidenceRef.trim(),
+      createdAt: timestamp,
+    });
+    return { reconciled: true, decision };
+  });
 }
 
 function budgetCents(value: unknown): number | null {
@@ -279,6 +418,25 @@ export async function handleManagedAiAdmin(
       res.status(200).json({ enabled: true, currency: 'USD' });
       return true;
     }
+    if (body.action === 'listUncertainCostReservations'
+      && Object.keys(body).every(key => ['action', 'pageAfter'].includes(key))
+      && (body.pageAfter === undefined || typeof body.pageAfter === 'string')) {
+      res.status(200).json(await listUncertainCostReservations(db, body.pageAfter as string | undefined));
+      return true;
+    }
+    if (body.action === 'reconcileCostReservation'
+      && Object.keys(body).every(key => ['action', 'callId', 'decision', 'evidenceRef', 'actualMicroUsd', 'pricingVersion'].includes(key))
+      && typeof body.callId === 'string'
+      && (body.decision === 'settle' || body.decision === 'confirmed_not_billed')
+      && typeof body.evidenceRef === 'string') {
+      const result = await reconcileCostReservation(
+        db, identity, body.callId, body.decision, body.evidenceRef,
+        typeof body.actualMicroUsd === 'number' ? body.actualMicroUsd : undefined,
+        typeof body.pricingVersion === 'string' ? body.pricingVersion : undefined,
+      );
+      res.status(200).json(result);
+      return true;
+    }
     if (body.action === 'clearEmergencyStop' && Object.keys(body).every(key => key === 'action')) {
       const policyRef = db.doc('system/managedAiBudgetPolicy');
       const audit = db.collection('managedAiAdminAudit').doc(randomUUID());
@@ -308,6 +466,9 @@ export async function handleManagedAiAdmin(
     if (code === 'ALLOWLIST_EMAIL_BOUND_TO_DIFFERENT_UID') { fail(res, 409, 'EMAIL_BOUND_TO_DIFFERENT_UID'); return true; }
     if (code === 'INVALID_ALLOWLIST_TARGET') { fail(res, 400, 'INVALID_ALLOWLIST_TARGET'); return true; }
     if (code === 'ALLOWLIST_ENTRY_NOT_FOUND') { fail(res, 404, 'ALLOWLIST_ENTRY_NOT_FOUND'); return true; }
+    if (code === 'INVALID_COST_RECONCILIATION') { fail(res, 400, 'INVALID_COST_RECONCILIATION'); return true; }
+    if (code === 'COST_RESERVATION_NOT_RECONCILABLE') { fail(res, 409, 'COST_RESERVATION_NOT_RECONCILABLE'); return true; }
+    if (code === 'COST_LEDGER_COUNTER_INVALID') { fail(res, 503, 'COST_LEDGER_COUNTER_INVALID'); return true; }
     fail(res, 503, 'ADMIN_OPERATION_FAILED');
     return true;
   }
