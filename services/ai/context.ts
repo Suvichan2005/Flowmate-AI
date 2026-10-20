@@ -246,7 +246,7 @@ export function buildHistory(
     if (msg.role === 'user' && msg.turn_metadata?.managed_failure) return false;
     if (
       msg.role === 'assistant' &&
-      msg.status === 'failed' &&
+      (msg.status === 'failed' || msg.status === 'interrupted') &&
       msg.turn_metadata?.response_source === 'unavailable' &&
       !msg.text.trim()
     ) return false;
@@ -308,7 +308,7 @@ export function summarizeOlderMessages(messages: Message[]): string | null {
     if (msg.role === 'user' && msg.turn_metadata?.managed_failure) return false;
     if (
       msg.role === 'assistant' &&
-      msg.status === 'failed' &&
+      (msg.status === 'failed' || msg.status === 'interrupted') &&
       msg.turn_metadata?.response_source === 'unavailable' &&
       !msg.text.trim()
     ) return false;

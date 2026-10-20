@@ -19,7 +19,7 @@ export const ManagedRequestNotice: React.FC<ManagedRequestNoticeProps> = ({ code
         {guidance.outcome === 'uncertain' ? <CircleHelp size={15} className="mt-0.5 shrink-0 text-amber-300" /> : <AlertCircle size={15} className="mt-0.5 shrink-0 text-slate-300" />}
         <div className="min-w-0">
           <p className="text-xs font-semibold text-slate-100">{guidance.title}</p>
-          <p className="mt-0.5 text-[10px] text-slate-400">Saved in conversation history · excluded from future AI context</p>
+          <p className="mt-0.5 text-[10px] text-slate-400">Historical record · kept with this message · not sent in future prompts</p>
           <p className="mt-1 text-[11px] leading-relaxed text-slate-300">{guidance.description}</p>
         </div>
       </div>

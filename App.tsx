@@ -1851,7 +1851,7 @@ const App: React.FC = () => {
                   const currentChannel = activeSessionId || 'general';
                   const currentBranch = (branches || []).find(b => b.id === activeBranchId && (b.conversation_id === currentChannel));
                   const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel)
-                    .filter(message => !(message.role === 'assistant' && message.status === 'failed' && message.turn_metadata?.response_source === 'unavailable' && !message.text.trim()));
+                    .filter(message => !(message.role === 'assistant' && (message.status === 'failed' || message.status === 'interrupted') && message.turn_metadata?.response_source === 'unavailable' && !message.text.trim()));
                   
                   if (activeMsgs.length === 0) {
                     return (
@@ -1888,7 +1888,7 @@ const App: React.FC = () => {
                     // message with a ManagedRequestNotice. Do not render the
                     // empty assistant placeholder as a fake model reply (or
                     // the generic "Attachment" fallback).
-                    if (msg.role === 'assistant' && msg.status === 'failed'
+                    if (msg.role === 'assistant' && (msg.status === 'failed' || msg.status === 'interrupted')
                       && !msg.text.trim() && msg.turn_metadata?.response_source === 'unavailable') return null;
                     return (
                     <div key={msg.id} data-message-id={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -2101,7 +2101,7 @@ const App: React.FC = () => {
                     const currentChannel = activeSessionId || 'general';
                     const currentBranch = (branches || []).find(b => b.id === activeBranchId && (b.conversation_id === currentChannel));
                     const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel)
-                      .filter(message => !(message.role === 'assistant' && message.status === 'failed' && message.turn_metadata?.response_source === 'unavailable' && !message.text.trim()));
+                      .filter(message => !(message.role === 'assistant' && (message.status === 'failed' || message.status === 'interrupted') && message.turn_metadata?.response_source === 'unavailable' && !message.text.trim()));
 
                     if (activeMsgs.length === 0) {
                       return (
@@ -2136,7 +2136,7 @@ const App: React.FC = () => {
                     return activeMsgs.map((msg) => {
                       // Keep rejection guidance with the original user
                       // submission; never show an empty assistant "reply".
-                      if (msg.role === 'assistant' && msg.status === 'failed'
+                      if (msg.role === 'assistant' && (msg.status === 'failed' || msg.status === 'interrupted')
                         && !msg.text.trim() && msg.turn_metadata?.response_source === 'unavailable') return null;
                       return (
                       <div key={msg.id} data-message-id={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
