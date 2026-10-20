@@ -38,7 +38,7 @@ describe('Dashboard managed briefing rejection notice', () => {
 
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(screen.getByText('This briefing is over the included-AI limit')).toBeInTheDocument();
-    expect(screen.getByText(/clears automatically at .* or when dismissed/i)).toBeInTheDocument();
+    expect(screen.getByText(/clears automatically at .*\d{1,2}:\d{2}.* or when dismissed/i)).toBeInTheDocument();
     expect(screen.getByText('Last successful briefing stays visible.')).toBeInTheDocument();
     const stored = JSON.parse(sessionStorage.getItem('flowmate:briefing-warning:v1') || '{}');
     expect(stored.code).toBe('BRIEFING_COST_ENVELOPE_EXHAUSTED');

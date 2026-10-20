@@ -595,7 +595,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                                 <div className="min-w-0 flex-1">
                                     <p className="text-sm font-semibold text-amber-100">{copy.title}</p>
                                     <p className="mt-1 text-xs leading-relaxed text-amber-50/80">{copy.body}</p>
-                                    <p className="mt-2 text-[10px] text-amber-200/70">Temporary notice · clears automatically at {new Date(briefingWarning.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} or when dismissed.</p>
+                                    <p className="mt-2 text-[10px] text-amber-200/70">Temporary notice · clears automatically at {new Date(briefingWarning.expiresAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} or when dismissed.</p>
                                     {copy.action !== 'none' && <button type="button" onClick={() => copy.action === 'settings' ? setView('settings') : copy.action === 'reload' ? window.location.reload() : onRequestSignIn?.()} className="mt-2 rounded-md border border-amber-700/70 px-2.5 py-1 text-xs font-medium text-amber-100 hover:bg-amber-900/40">{copy.action === 'settings' ? 'Open Settings' : copy.action === 'reload' ? 'Reload Flowmate' : 'Sign in'}</button>}
                                 </div>
                                 <button type="button" onClick={() => { setBriefingWarning(null); try { sessionStorage.removeItem(BRIEFING_WARNING_KEY); } catch { /* Ignore unavailable storage. */ } }} className="shrink-0 rounded p-1 text-amber-200/70 hover:bg-amber-900/40 hover:text-amber-100" aria-label="Dismiss briefing warning"><X size={15} /></button>
