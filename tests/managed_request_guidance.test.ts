@@ -13,7 +13,7 @@ describe('managed request history guidance', () => {
 
   it('distinguishes an application context overflow and says the account is not blocked', () => {
     const guidance = getManagedRequestGuidance('MODEL_CONTEXT_LIMIT', 'not_sent');
-    expect(guidance.description).toContain('application-side context fix');
+    expect(guidance.description).toContain('injected workspace context');
     expect(guidance.description).toContain('your account is not blocked');
   });
 
@@ -81,6 +81,9 @@ describe('managed request history guidance', () => {
   it('separates Chat request-size recovery from briefing request-size recovery', () => {
     const chat = getManagedRequestGuidance('REQUEST_COST_ENVELOPE_EXHAUSTED', 'not_sent');
     expect(chat.description).toContain('reasoning and reply length');
+    expect(chat.description).toContain('workspace context');
+    expect(chat.description).toContain('latest 12 messages');
+    expect(chat.description).toContain('your account is not blocked');
     expect(chat.description).toContain('choose a smaller reply length');
     expect(chat.description).toContain('will not rewrite or downgrade');
     const briefing = getManagedRequestGuidance('BRIEFING_COST_ENVELOPE_EXHAUSTED', 'not_sent');
