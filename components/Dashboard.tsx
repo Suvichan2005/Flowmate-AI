@@ -132,11 +132,63 @@ const InsightModal: React.FC<InsightModalProps> = ({ title, items, onClose, onSe
 };
 
 type ManagedAiLimit = 'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED' | 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED' | 'BRIEFING_ALLOWANCE_EXHAUSTED';
+type BriefingWarningCode = 'BRIEFING_COST_ENVELOPE_EXHAUSTED' | 'USER_MANAGED_BUDGET_EXHAUSTED' | 'MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE' | 'MANAGED_AI_BUDGET_UNAVAILABLE' | 'RATE_LIMITED' | 'USER_CALL_IN_PROGRESS' | 'APP_CHECK_REQUIRED' | 'AUTH_REQUIRED' | 'GENERATION_FAILED' | 'MANAGED_AI_DISABLED' | 'MANAGED_AI_NOT_CONFIGURED' | 'MANAGED_AI_UNAVAILABLE' | 'MODEL_CATALOG_UNAVAILABLE' | 'PRICING_POLICY_UNAVAILABLE' | 'OTHER';
+type BriefingWarning = { code: BriefingWarningCode; expiresAt: number };
+const BRIEFING_WARNING_KEY = 'flowmate:briefing-warning:v1';
+const BRIEFING_WARNING_TTL_MS = 60 * 60 * 1000;
+
+function readBriefingWarning(): BriefingWarning | null {
+    try {
+        const raw = sessionStorage.getItem(BRIEFING_WARNING_KEY);
+        if (!raw) return null;
+        const warning = JSON.parse(raw) as Partial<BriefingWarning>;
+        if (typeof warning.code !== 'string' || typeof warning.expiresAt !== 'number' || warning.expiresAt <= Date.now()) {
+            sessionStorage.removeItem(BRIEFING_WARNING_KEY);
+            return null;
+        }
+        return { code: warning.code as BriefingWarningCode, expiresAt: warning.expiresAt };
+    } catch {
+        return null;
+    }
+}
+
+function briefingWarningCopy(code: BriefingWarningCode): { title: string; body: string; action: 'settings' | 'reload' | 'sign_in' | 'none' } {
+    switch (code) {
+        case 'BRIEFING_COST_ENVELOPE_EXHAUSTED':
+            return { title: 'This briefing is over the included-AI limit', body: 'Nothing was sent; your existing briefing and workspace are unchanged. This is a request-size limit, not a daily allowance. Review unusually long task or event titles, or use your own Gemini key in Settings. Retrying unchanged workspace data will not help.', action: 'settings' };
+        case 'USER_MANAGED_BUDGET_EXHAUSTED':
+            return { title: 'Your monthly managed-AI budget is used', body: `It resets ${formatManagedAiResetAt('month')}. This account-level limit cannot be cleared by changing workspace data; your own Gemini key remains available.`, action: 'settings' };
+        case 'MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE':
+            return { title: 'Flowmate’s included AI is at its monthly safety limit', body: `This service-side limit cannot be cleared by changing your workspace. It resets ${formatManagedAiResetAt('month')}; your existing briefing remains available.`, action: 'settings' };
+        case 'MANAGED_AI_BUDGET_UNAVAILABLE':
+            return { title: 'Flowmate could not verify its safety controls', body: 'No briefing was generated. This needs a server-side recovery; your existing briefing and workspace remain unchanged. Try later or use your own Gemini key.', action: 'settings' };
+        case 'RATE_LIMITED':
+        case 'USER_CALL_IN_PROGRESS':
+            return { title: 'Another AI request needs to finish first', body: 'Wait for the current request to finish, then try again. Flowmate did not automatically submit another request.', action: 'none' };
+        case 'APP_CHECK_REQUIRED':
+            return { title: 'Flowmate could not verify this app session', body: 'No briefing was generated. Reload Flowmate and retry; if it continues, this needs an application-side App Check fix.', action: 'reload' };
+        case 'AUTH_REQUIRED':
+            return { title: 'Flowmate could not verify your account', body: 'No briefing was generated. Sign in again, then retry. Your existing briefing and workspace are unchanged.', action: 'sign_in' };
+        case 'GENERATION_FAILED':
+            return { title: 'The briefing result is not confirmed', body: 'Gemini may have received the request, so the safety hold remains until usage is reconciled. Check whether a new briefing appeared before retrying; your existing workspace data is unchanged.', action: 'none' };
+        case 'MANAGED_AI_DISABLED':
+        case 'MANAGED_AI_NOT_CONFIGURED':
+        case 'MANAGED_AI_UNAVAILABLE':
+            return { title: 'Managed AI is temporarily unavailable', body: 'This needs an application-side service change. Your existing briefing and workspace are still available; you can use your own Gemini key in Settings.', action: 'settings' };
+        case 'MODEL_CATALOG_UNAVAILABLE':
+        case 'PRICING_POLICY_UNAVAILABLE':
+            return { title: 'Flowmate could not verify this request', body: 'No managed briefing was started because model limits or current pricing could not be confirmed. This needs a server-side fix; try later or use your own Gemini key.', action: 'settings' };
+        default:
+            return { title: 'The briefing could not be generated', body: 'No local fallback was used. Your existing briefing and workspace are unchanged; review the status and try again later.', action: 'none' };
+    }
+}
+
 interface DashboardProps {
     onOpenGraphFixer?: () => void;
     onManagedAiLimit?: (code: ManagedAiLimit) => void;
+    onRequestSignIn?: () => void;
 }
-const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimit }) => {
+const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimit, onRequestSignIn }) => {
     const { entities: rawEntities, kernelEntities, relationships, selectEntity, dailyBriefing, refreshDailyBriefing, setView, addMessage, addToast, setPendingOrchestration, applyOperations, settings, isHydrated } = useStore();
     const entities = useMemo(() => getActiveEntities(rawEntities), [rawEntities]);
     const commitmentEntityIds = useMemo(() => {
@@ -151,6 +203,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
             .sort((a, b) => new Date(b.memory.valid_from || 0).getTime() - new Date(a.memory.valid_from || 0).getTime());
     }, [kernelEntities]);
     const [briefingLoading, setBriefingLoading] = useState(false);
+    const [briefingWarning, setBriefingWarning] = useState<BriefingWarning | null>(readBriefingWarning);
     const [managedAiUsage, setManagedAiUsage] = useState<ManagedAiUsage | null>(null);
     const [briefingUsageStatus, setBriefingUsageStatus] = useState<'checking' | 'ready' | 'unavailable'>('checking');
     const [showOrphansModal, setShowOrphansModal] = useState(false);
@@ -158,6 +211,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
     const [showProjectsModal, setShowProjectsModal] = useState(false);
     const [addingNextActionProjectId, setAddingNextActionProjectId] = useState<string | null>(null);
     const [nextActionTitle, setNextActionTitle] = useState<string>('');
+
+    useEffect(() => {
+        if (!briefingWarning) return;
+        try { sessionStorage.setItem(BRIEFING_WARNING_KEY, JSON.stringify(briefingWarning)); } catch { /* The in-memory notice still works when storage is unavailable. */ }
+        const remainingMs = briefingWarning.expiresAt - Date.now();
+        if (remainingMs <= 0) {
+            setBriefingWarning(null);
+            try { sessionStorage.removeItem(BRIEFING_WARNING_KEY); } catch { /* Ignore unavailable storage. */ }
+            return;
+        }
+        const timeout = window.setTimeout(() => {
+            setBriefingWarning(null);
+            try { sessionStorage.removeItem(BRIEFING_WARNING_KEY); } catch { /* Ignore unavailable storage. */ }
+        }, remainingMs);
+        return () => window.clearTimeout(timeout);
+    }, [briefingWarning]);
+
+    const showBriefingWarning = (code: BriefingWarningCode) => setBriefingWarning({ code, expiresAt: Date.now() + BRIEFING_WARNING_TTL_MS });
 
     useEffect(() => {
         if (!isHydrated) return;
@@ -276,24 +347,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                     }
                 }
                 onManagedAiLimit?.(isGuest ? 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED' : 'BRIEFING_ALLOWANCE_EXHAUSTED');
-            } else if (errorCode === 'BRIEFING_COST_ENVELOPE_EXHAUSTED') {
-                addToast?.('This briefing is too large for the managed per-generation limit. Nothing was sent and your workspace is unchanged. Reduce the context you include or choose your own Gemini key in Settings.', 'error');
-            } else if (errorCode === 'USER_MANAGED_BUDGET_EXHAUSTED') {
-                addToast?.(`Your managed AI monthly allowance is used. It resets ${formatManagedAiResetAt('month')}. Your workspace is unchanged; your own Gemini key remains available.`, 'error');
-            } else if (errorCode === 'MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE') {
-                addToast?.(`Flowmate’s included AI service has reached its monthly safety limit. It resets ${formatManagedAiResetAt('month')}. Your workspace is unchanged.`, 'error');
-            } else if (errorCode === 'MANAGED_AI_BUDGET_UNAVAILABLE') {
-                addToast?.('Flowmate could not verify its managed-AI safety controls, so it did not generate a briefing. Your workspace is unchanged; try again later or use your own Gemini key.', 'error');
-            } else if (errorCode === 'RATE_LIMITED' || errorCode === 'USER_CALL_IN_PROGRESS') {
-                addToast?.('Another AI request is still running or requests are arriving too quickly. Wait a moment before trying again; your workspace is unchanged.', 'error');
-            } else if (errorCode === 'APP_CHECK_REQUIRED' || errorCode === 'AUTH_REQUIRED') {
-                addToast?.('Flowmate could not verify this app or account for managed AI. Your workspace is unchanged; retry after verification or use your own Gemini key.', 'error');
-            } else if (errorCode === 'GENERATION_FAILED') {
-                addToast?.('Gemini did not return a confirmed briefing. It may have received the request, so the safety hold remains until usage can be reconciled. Your workspace is unchanged; check before retrying.', 'error');
             } else if (errorCode === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' || errorCode === 'TURN_ALLOWANCE_EXHAUSTED') {
                 onManagedAiLimit?.(errorCode);
             } else if (errorCode) {
-                addToast?.('The briefing could not be generated. No local fallback was used; your workspace is unchanged.', 'error');
+                const knownWarningCodes: BriefingWarningCode[] = [
+                    'BRIEFING_COST_ENVELOPE_EXHAUSTED', 'USER_MANAGED_BUDGET_EXHAUSTED',
+                    'MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE', 'MANAGED_AI_BUDGET_UNAVAILABLE',
+                    'RATE_LIMITED', 'USER_CALL_IN_PROGRESS', 'APP_CHECK_REQUIRED', 'AUTH_REQUIRED',
+                    'GENERATION_FAILED', 'MANAGED_AI_DISABLED', 'MANAGED_AI_NOT_CONFIGURED',
+                    'MANAGED_AI_UNAVAILABLE', 'MODEL_CATALOG_UNAVAILABLE', 'PRICING_POLICY_UNAVAILABLE',
+                ];
+                showBriefingWarning(knownWarningCodes.includes(errorCode as BriefingWarningCode) ? errorCode as BriefingWarningCode : 'OTHER');
+            } else {
+                setBriefingWarning(null);
+                try { sessionStorage.removeItem(BRIEFING_WARNING_KEY); } catch { /* Ignore unavailable storage. */ }
             }
         } finally {
             setBriefingLoading(false);
@@ -519,6 +586,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onOpenGraphFixer, onManagedAiLimi
                             </button>
                         </div>
                     </div>
+
+                    {briefingWarning && (() => {
+                        const copy = briefingWarningCopy(briefingWarning.code);
+                        return (
+                            <div role="alert" aria-live="polite" className="relative z-10 mb-4 flex items-start gap-3 rounded-xl border border-amber-700/60 bg-amber-950/30 p-3 text-left">
+                                <AlertTriangle size={17} className="mt-0.5 shrink-0 text-amber-300" />
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-semibold text-amber-100">{copy.title}</p>
+                                    <p className="mt-1 text-xs leading-relaxed text-amber-50/80">{copy.body}</p>
+                                    <p className="mt-2 text-[10px] text-amber-200/70">Temporary notice · clears automatically at {new Date(briefingWarning.expiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} or when dismissed.</p>
+                                    {copy.action !== 'none' && <button type="button" onClick={() => copy.action === 'settings' ? setView('settings') : copy.action === 'reload' ? window.location.reload() : onRequestSignIn?.()} className="mt-2 rounded-md border border-amber-700/70 px-2.5 py-1 text-xs font-medium text-amber-100 hover:bg-amber-900/40">{copy.action === 'settings' ? 'Open Settings' : copy.action === 'reload' ? 'Reload Flowmate' : 'Sign in'}</button>}
+                                </div>
+                                <button type="button" onClick={() => { setBriefingWarning(null); try { sessionStorage.removeItem(BRIEFING_WARNING_KEY); } catch { /* Ignore unavailable storage. */ } }} className="shrink-0 rounded p-1 text-amber-200/70 hover:bg-amber-900/40 hover:text-amber-100" aria-label="Dismiss briefing warning"><X size={15} /></button>
+                            </div>
+                        );
+                    })()}
 
                     <div className="relative z-10 min-h-[80px]">
                         {briefingLoading ? (

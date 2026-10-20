@@ -39,7 +39,7 @@ describe('managed request history guidance', () => {
     const guidance = getManagedRequestGuidance('MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE', 'not_sent', new Date('2026-10-20T12:00:00Z'));
     expect(guidance.description).toContain('service-side limit');
     expect(guidance.description).toContain('cannot be cleared by changing your message');
-    expect(guidance.actions).toEqual([]);
+    expect(guidance.actions).toEqual(['settings']);
   });
 
   it('offers reload for App Check failures without implying a BYOK or quota fix', () => {
@@ -47,5 +47,48 @@ describe('managed request history guidance', () => {
     expect(guidance.description).toContain('application-side App Check fix');
     expect(guidance.actions).toEqual(['reload']);
     expect(guidance.actions).not.toContain('settings');
+  });
+
+  it.each([
+    ['OUTPUT_TOKEN_LIMIT', 'shorter reply length'],
+    ['MODEL_NOT_ALLOWED_FOR_ACCOUNT', 'listed for your current account'],
+    ['MODEL_UNAVAILABLE', 'did not switch models automatically'],
+    ['MODEL_TOOL_CALLING_UNAVAILABLE', 'No workspace changes were made'],
+    ['UNSUPPORTED_REASONING_LEVEL', 'reasoning levels offered'],
+    ['MODEL_INPUT_UNSUPPORTED', 'Remove the unsupported attachment'],
+    ['PROVIDER_RATE_LIMITED', 'Wait briefly'],
+    ['REQUEST_ALREADY_PROCESSED', 'Check this conversation'],
+    ['TURN_ALREADY_COMPLETE', 'Send a new message'],
+    ['TURN_GENERATION_LIMIT', 'before sending another model step'],
+    ['INVALID_REQUEST', 'Review the message'],
+    ['MANAGED_AI_NOT_CONFIGURED', 'application-side configuration'],
+    ['MANAGED_AI_UNAVAILABLE', 'application-side configuration'],
+  ])('gives specific recovery guidance for %s', (code, expected) => {
+    const guidance = getManagedRequestGuidance(code, 'not_sent');
+    expect(guidance.outcome).toBe('not_sent');
+    expect(guidance.title).not.toBe('No AI response was received');
+    expect(guidance.description).toContain(expected);
+  });
+
+  it('keeps failed-request guidance durable and out of model context instead of expiring it as a toast', () => {
+    const guidance = getManagedRequestGuidance('MODEL_CONTEXT_LIMIT', 'not_sent');
+    expect(guidance.description).toContain('original transcript');
+    expect(guidance.description).toContain('will not silently rewrite');
+  });
+
+  it('separates Chat request-size recovery from briefing request-size recovery', () => {
+    const chat = getManagedRequestGuidance('REQUEST_COST_ENVELOPE_EXHAUSTED', 'not_sent');
+    expect(chat.description).toContain('reasoning and reply length');
+    expect(chat.description).toContain('choose a smaller reply length');
+    expect(chat.description).toContain('will not rewrite or downgrade');
+    const briefing = getManagedRequestGuidance('BRIEFING_COST_ENVELOPE_EXHAUSTED', 'not_sent');
+    expect(briefing.description).toContain('not a daily allowance');
+    expect(briefing.description).toContain('retrying unchanged workspace data will not help');
+  });
+
+  it('does not show irrelevant Settings actions when the right next step is to wait or inspect the existing turn', () => {
+    expect(getManagedRequestGuidance('USER_CALL_IN_PROGRESS', 'not_sent').actions).toEqual([]);
+    expect(getManagedRequestGuidance('PROVIDER_RATE_LIMITED', 'not_sent').actions).toEqual([]);
+    expect(getManagedRequestGuidance('REQUEST_ALREADY_PROCESSED', 'not_sent').actions).toEqual([]);
   });
 });

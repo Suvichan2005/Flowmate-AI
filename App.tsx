@@ -1369,7 +1369,7 @@ const App: React.FC = () => {
   const renderMainContent = () => {
     switch (currentView) {
       case 'dashboard':
-        return <Dashboard onManagedAiLimit={setManagedAiLimit} />;
+        return <Dashboard onManagedAiLimit={setManagedAiLimit} onRequestSignIn={() => setShowAuthModal(true)} />;
       case 'chat':
         // Mobile: 'chat' view should show chat panel + graph
         if (!isChatOpen) setIsChatOpen(true);
