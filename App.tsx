@@ -1223,7 +1223,7 @@ const App: React.FC = () => {
           useStore.setState(current => ({
             messages: current.messages.map(message =>
               message.id === assistantMessageId
-                ? { ...message, text: '', status: 'failed' as const, turn_metadata: { ...message.turn_metadata, response_source: 'unavailable' } }
+                ? { ...message, text: accumulatedText, status: 'failed' as const, turn_metadata: { ...message.turn_metadata, response_source: 'unavailable' } }
                 : message.id === userMessage.id
                   ? { ...message, status: failureOutcome === 'uncertain' ? 'interrupted' as const : 'failed' as const, turn_metadata: { ...message.turn_metadata, managed_failure: { code: toon.failureCode || 'GENERATION_FAILED', outcome: failureOutcome, recorded_at: new Date().toISOString() } } }
                   : message
@@ -1901,7 +1901,7 @@ const App: React.FC = () => {
                           ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20 rounded-tr-sm'
                           : 'bg-slate-800 border border-slate-700 rounded-tl-sm text-slate-200'
                           }`}>
-                          {msg.role === 'assistant' && msg.turn_metadata?.response_source && msg.turn_metadata.response_source !== 'gemini' && <p className="text-[10px] text-slate-400 mb-1">{msg.turn_metadata.response_source === 'unavailable' ? 'No AI response · unavailable' : 'Local rules · no AI request'}</p>}
+                          {msg.role === 'assistant' && msg.turn_metadata?.response_source && msg.turn_metadata.response_source !== 'gemini' && <p className="text-[10px] text-slate-400 mb-1">{msg.turn_metadata.response_source === 'unavailable' ? (msg.text.trim() ? 'Partial response · not included in future prompts' : 'No AI response · unavailable') : 'Local rules · no AI request'}</p>}
                           {msg.text ? <MarkdownText content={msg.text} /> : (isStreaming && msg.id === useStore.getState().streamingMessageId ? <span className="text-slate-400 italic">Thinking...</span> : <em className="text-slate-400">Attachment</em>)}
                           {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
                         </div>
@@ -2146,7 +2146,7 @@ const App: React.FC = () => {
                         <div className={`flex flex-col max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                           {renderAttachmentPreview(msg)}
                           <div className={`px-3 py-2 rounded-xl text-sm ${msg.role === 'user' ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20' : 'bg-slate-800 border border-slate-700 text-slate-200'}`}>
-                            {msg.role === 'assistant' && msg.turn_metadata?.response_source && msg.turn_metadata.response_source !== 'gemini' && <p className="text-[10px] text-slate-400 mb-1">{msg.turn_metadata.response_source === 'unavailable' ? 'No AI response · unavailable' : 'Local rules · no AI request'}</p>}
+                            {msg.role === 'assistant' && msg.turn_metadata?.response_source && msg.turn_metadata.response_source !== 'gemini' && <p className="text-[10px] text-slate-400 mb-1">{msg.turn_metadata.response_source === 'unavailable' ? (msg.text.trim() ? 'Partial response · not included in future prompts' : 'No AI response · unavailable') : 'Local rules · no AI request'}</p>}
                           {msg.text ? <MarkdownText content={msg.text} /> : (isStreaming && msg.id === useStore.getState().streamingMessageId ? <span className="text-slate-400 italic">Thinking...</span> : <em className="text-slate-400">Attachment</em>)}
                             {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
                           </div>

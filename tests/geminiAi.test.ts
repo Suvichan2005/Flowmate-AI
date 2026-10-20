@@ -224,26 +224,32 @@ describe('AI Context & History Building', () => {
             { id: '1', role: 'user', text: 'Keep this successful context', status: 'completed', created_at: '2026-10-06T10:00:00Z' },
             { id: '2', role: 'assistant', text: 'This answer stays in context', status: 'completed', created_at: '2026-10-06T10:01:00Z' },
             { id: '3', role: 'user', text: 'Rejected prompt must remain visible but not be replayed', status: 'failed', turn_metadata: { managed_failure: { code: 'MODEL_CONTEXT_LIMIT', outcome: 'not_sent' } }, created_at: '2026-10-06T10:02:00Z' },
-            { id: '4', role: 'assistant', text: '', status: 'failed', turn_metadata: { response_source: 'unavailable' }, created_at: '2026-10-06T10:03:00Z' },
+            { id: '4', role: 'assistant', text: 'This is a partial streamed answer', status: 'failed', turn_metadata: { response_source: 'unavailable' }, created_at: '2026-10-06T10:03:00Z' },
             { id: '5', role: 'user', text: 'Uncertain prompt must remain visible but not be replayed', status: 'interrupted', turn_metadata: { managed_failure: { code: 'GENERATION_FAILED', outcome: 'uncertain' } }, created_at: '2026-10-06T10:04:00Z' },
             { id: '6', role: 'assistant', text: '', status: 'interrupted', turn_metadata: { response_source: 'unavailable' }, created_at: '2026-10-06T10:05:00Z' },
             { id: '7', role: 'user', text: 'New question', status: 'in_flight', created_at: '2026-10-06T10:06:00Z' },
         ];
 
-        const history = buildHistory(messages, null);
-        const text = history.flatMap(entry => entry.parts || []).map(part => 'text' in part ? part.text : '').join('\n');
-        expect(history.map(entry => entry.role)).toEqual(['user', 'model', 'user']);
-        expect(text).toContain('Keep this successful context');
-        expect(text).toContain('This answer stays in context');
-        expect(text).toContain('New question');
-        expect(text).not.toContain('Rejected prompt');
-        expect(text).not.toContain('Uncertain prompt');
+        // Managed requests deliberately send the full selected transcript to
+        // the server for exact context/cost checks. Rejected attempts must be
+        // excluded in both that mode and the default compact-history mode.
+        for (const options of [undefined, { includeFullHistory: true }]) {
+            const history = buildHistory(messages, null, undefined, options);
+            const text = history.flatMap(entry => entry.parts || []).map(part => 'text' in part ? part.text : '').join('\n');
+            expect(history.map(entry => entry.role)).toEqual(['user', 'model', 'user']);
+            expect(text).toContain('Keep this successful context');
+            expect(text).toContain('This answer stays in context');
+            expect(text).toContain('New question');
+            expect(text).not.toContain('Rejected prompt');
+            expect(text).not.toContain('Uncertain prompt');
+            expect(text).not.toContain('partial streamed answer');
+        }
     });
 
     it('does not let rejected prompts contaminate rolling summaries', () => {
         const messages: Message[] = [
             { id: 'rejected', role: 'user', text: 'create task schedule food deadline', status: 'failed', turn_metadata: { managed_failure: { code: 'MODEL_CONTEXT_LIMIT', outcome: 'not_sent' } }, created_at: '2026-10-06T09:00:00Z' },
-            { id: 'uncertain', role: 'assistant', text: '', status: 'interrupted', turn_metadata: { response_source: 'unavailable' }, created_at: '2026-10-06T09:01:00Z' },
+            { id: 'uncertain', role: 'assistant', text: 'A partial interrupted response', status: 'interrupted', turn_metadata: { response_source: 'unavailable' }, created_at: '2026-10-06T09:01:00Z' },
             ...Array.from({ length: HISTORY_WINDOW }, (_, index) => ({
                 id: `ok-${index}`,
                 role: 'user' as const,

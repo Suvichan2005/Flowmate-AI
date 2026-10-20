@@ -248,8 +248,7 @@ export function buildHistory(
     if (
       msg.role === 'assistant' &&
       (msg.status === 'failed' || msg.status === 'interrupted') &&
-      msg.turn_metadata?.response_source === 'unavailable' &&
-      !msg.text.trim()
+      msg.turn_metadata?.response_source === 'unavailable'
     ) return false;
     return true;
   });
@@ -316,8 +315,7 @@ export function summarizeOlderMessages(messages: Message[]): string | null {
     if (
       msg.role === 'assistant' &&
       (msg.status === 'failed' || msg.status === 'interrupted') &&
-      msg.turn_metadata?.response_source === 'unavailable' &&
-      !msg.text.trim()
+      msg.turn_metadata?.response_source === 'unavailable'
     ) return false;
     return true;
   });
