@@ -361,7 +361,7 @@ describe('Phase-0 Kernel: Capability Registry', () => {
 
   it('supports open projection contracts without hardcoded view enums', () => {
     const locCap = capRegistry.get('locational');
-    expect(locCap?.supported_projections).toEqual(['map', 'travel_route']);
+    expect(locCap?.supported_projections).toEqual(['map']);
   });
 });
 

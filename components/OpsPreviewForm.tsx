@@ -236,6 +236,8 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
     const confirmPlan = useStore(state => state.confirmPlan);
     const kernelEntities = useStore(state => state.kernelEntities);
     const pendingOps = useStore(state => state.pendingOps);
+    const currentUser = useStore(state => state.currentUser);
+    const draftIdentity = currentUser?.uid || 'legacy';
     const rawEntities = useStore(state => state.entities);
     const entities = useMemo(() => getActiveEntities(rawEntities), [rawEntities]);
 
@@ -261,7 +263,8 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
             {
                 proposalId: pendingOps?.reviewId,
                 originalMessageId: pendingOps?.originalMessageId
-            }
+            },
+            draftIdentity
         ).then(draft => {
             if (isCurrent) {
                 draftIdRef.current = draft.id;
@@ -271,7 +274,7 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
         return () => {
             isCurrent = false;
         };
-    }, [editableOps, kernelEntities, pendingOps?.reviewId, pendingOps?.originalMessageId]);
+    }, [editableOps, kernelEntities, pendingOps?.reviewId, pendingOps?.originalMessageId, draftIdentity]);
 
     useEffect(() => {
         const previous = document.activeElement as HTMLElement | null;
@@ -335,7 +338,7 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
             const committed = await onConfirm(confirmPlan(planResult.plan));
             if (committed) {
                 if (draftIdRef.current) {
-                    deleteReviewDraft(draftIdRef.current).catch(() => {});
+                    deleteReviewDraft(draftIdRef.current, draftIdentity).catch(() => {});
                 }
             } else {
                 setExecutionError('Changes could not be saved. Your proposal is still here; review it before trying again.');
@@ -350,7 +353,7 @@ const OpsPreviewForm: React.FC<OpsPreviewFormProps> = ({ ops, onConfirm, onCance
 
     const handleCancel = () => {
         if (draftIdRef.current) {
-            deleteReviewDraft(draftIdRef.current).catch(() => {});
+            deleteReviewDraft(draftIdRef.current, draftIdentity).catch(() => {});
         }
         onCancel();
     };

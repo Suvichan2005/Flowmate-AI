@@ -15,7 +15,6 @@ import { useStore } from "../../store";
 import { stripBase64Prefix, getMimeType } from "../../utils/imageProcessing";
 import { calculateRelevance } from "./executors";
 import { HISTORY_WINDOW } from "./client";
-import type { DeviceLocationWithFreshness } from "../context/types";
 
 // ---------------------------------------------------------------------------
 // Entity Context
@@ -236,11 +235,26 @@ export function buildHistory(
   messages: Message[],
   conversationSummary: string | null,
   attachmentDataUrl?: string | null,
+  options: { includeFullHistory?: boolean } = {},
 ): Content[] {
   const contents: Content[] = [];
 
+  // Rejected/uncertain turns remain visible in the transcript as a record,
+  // but must not be replayed as conversation context on a later request.
+  // In particular, a provider may already have seen an uncertain turn, so
+  // silently resending it could duplicate work or charges.
+  const contextMessages = messages.filter(msg => {
+    if (msg.role === 'user' && msg.turn_metadata?.managed_failure) return false;
+    if (
+      msg.role === 'assistant' &&
+      (msg.status === 'failed' || msg.status === 'interrupted') &&
+      msg.turn_metadata?.response_source === 'unavailable'
+    ) return false;
+    return true;
+  });
+
   // Prepend rolling summary if available
-  if (conversationSummary) {
+  if (conversationSummary && !options.includeFullHistory) {
     contents.push({
       role: 'user',
       parts: [{ text: `[Previous conversation context]: ${conversationSummary}` }],
@@ -251,8 +265,14 @@ export function buildHistory(
     });
   }
 
-  // Sliding window of recent messages
-  const messageWindow = messages.slice(-HISTORY_WINDOW);
+  // Managed requests must reach the server with the complete selected
+  // transcript so its exact token and cost checks can reject it honestly.
+  // Windowing is available only where the caller explicitly opts into the
+  // legacy compact-history behavior (for example, an explicit recent-context
+  // recovery branch).
+  const messageWindow = options.includeFullHistory
+    ? contextMessages
+    : contextMessages.slice(-HISTORY_WINDOW);
 
   for (const msg of messageWindow) {
     if (msg.role === 'user') {
@@ -290,9 +310,18 @@ export function buildHistory(
  * to create a lightweight rolling memory.
  */
 export function summarizeOlderMessages(messages: Message[]): string | null {
-  if (messages.length <= HISTORY_WINDOW) return null;
+  const contextMessages = messages.filter(msg => {
+    if (msg.role === 'user' && msg.turn_metadata?.managed_failure) return false;
+    if (
+      msg.role === 'assistant' &&
+      (msg.status === 'failed' || msg.status === 'interrupted') &&
+      msg.turn_metadata?.response_source === 'unavailable'
+    ) return false;
+    return true;
+  });
+  if (contextMessages.length <= HISTORY_WINDOW) return null;
 
-  const older = messages.slice(0, -HISTORY_WINDOW);
+  const older = contextMessages.slice(0, -HISTORY_WINDOW);
 
   // Extract key themes from older messages
   const topics = new Set<string>();
@@ -330,96 +359,4 @@ export function summarizeOlderMessages(messages: Message[]): string | null {
   parts.push(`(${older.length} earlier messages summarized)`);
 
   return parts.join('. ');
-}
-
-// ---------------------------------------------------------------------------
-// Current-Turn Live Context Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Detects whether the current turn's query is location-sensitive
- * (e.g., travel, commute, directions, nearby places, weather, "where am I").
- */
-export function isLocationRelevantQuery(message: string): boolean {
-  if (!message || typeof message !== 'string') return false;
-  const lower = message.toLowerCase().trim();
-
-  // Multi-word phrases
-  const phrases = [
-    'where am i',
-    'where are we',
-    'my location',
-    'current location',
-    'near me',
-    'how far',
-    'when should i leave',
-    'leave for',
-    'head out',
-    'how long to reach',
-    'way to',
-  ];
-  if (phrases.some(p => lower.includes(p))) return true;
-
-  // Spatial intent regex patterns
-  const patterns = [
-    /\b(nearby|nearest|closest)\b/,
-    /\b(commute|commutes|travel|route|routes|directions?)\b/,
-    /\b(distance|eta|navigation|navigate)\b/,
-    /\b(station|airport|terminal)\b/,
-    /\b(weather|forecast)\b/,
-    /\b(coffee\s*shop|restaurant|cafe|pharmacy|petrol|gas\s*station|atm)\b/,
-  ];
-
-  return patterns.some(pattern => pattern.test(lower));
-}
-
-/**
- * Formats a live device location reading into human-readable model-facing context prose.
- * High-level locality/place name is prioritized over raw coordinates so LLMs can reason naturally.
- */
-export function formatLiveLocationForContext(
-  reading: DeviceLocationWithFreshness,
-  placeName?: string,
-): string {
-  const ageSec = Math.max(1, Math.round(reading.ageMs / 1000));
-  const accM = Math.round(reading.accuracy_meters);
-  const locationLabel = placeName || `${reading.lat.toFixed(4)}°N, ${reading.lon.toFixed(4)}°E`;
-  const tierLabel = reading.freshnessTier === 'fresh' ? 'fresh' : `${reading.freshnessTier} observation`;
-
-  return `Current approximate location: ${locationLabel}. Accuracy: ~${accM}m. Acquired ${ageSec}s ago. Source: device location (${tierLabel}).`;
-}
-
-// ---------------------------------------------------------------------------
-// Full Context Prompt
-// ---------------------------------------------------------------------------
-
-/**
- * Assemble the full context prompt that gets prepended to the user's message.
- * Combines entity snapshot, tags, food data, time awareness, and live context.
- */
-export function buildContextPrompt(
-  contextSnapshot: ContextSnapshot,
-  tagList: string,
-  foodEnabled: boolean,
-  timezone: string,
-  homeLocation?: string,
-  liveLocationContext?: string | null,
-): string {
-  const { timeString, timeOfDay, isoDate } = buildTimeContext(timezone);
-
-  const sections: string[] = [
-    `[Graph] ${JSON.stringify(contextSnapshot)}`,
-    tagList ? `[Tags] ${tagList}` : '',
-    `[Time] ${timeString} (${timeOfDay}) | Reference ISO: ${isoDate}`,
-    liveLocationContext ? `[Live Context] ${liveLocationContext}` : '',
-    homeLocation ? `[Location] Configured Default Starting Location: ${homeLocation}` : '',
-  ];
-
-  if (foodEnabled) {
-    const food = buildFoodContext();
-    if (food.summary) sections.push(`[Food] ${food.summary}`);
-    if (food.recentMeals) sections.push(`[Recent meals] ${food.recentMeals}`);
-  }
-
-  return sections.filter(Boolean).join('\n');
 }

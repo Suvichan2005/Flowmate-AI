@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   setDoc: vi.fn(),
   deleteField: vi.fn(() => ({ firestoreSentinel: 'deleteField' })),
   serverTimestamp: vi.fn(() => ({ firestoreSentinel: 'serverTimestamp' })),
+  runTransaction: vi.fn(),
 }));
 
 vi.mock('firebase/firestore', () => ({
@@ -13,6 +14,7 @@ vi.mock('firebase/firestore', () => ({
   setDoc: mocks.setDoc,
   deleteField: mocks.deleteField,
   serverTimestamp: mocks.serverTimestamp,
+  runTransaction: mocks.runTransaction,
   getDoc: vi.fn(),
   getDocs: vi.fn(),
   writeBatch: vi.fn(),
@@ -24,12 +26,13 @@ vi.mock('../services/firebase', () => ({ db: { test: true }, isFirebaseConfigure
 vi.mock('../services/syncManager', () => ({ isDemoSyncBlocked: () => false }));
 vi.mock('../services/legacySyntheticEntity', () => ({ isLegacySyntheticEntity: () => false }));
 
-import { saveUserConfig } from '../services/firestoreSync';
+import { saveUserConfig, saveUserData } from '../services/firestoreSync';
 
 describe('Firestore user settings serialization', () => {
   beforeEach(() => {
     mocks.setDoc.mockReset().mockResolvedValue(undefined);
     mocks.deleteField.mockReset().mockImplementation(() => ({ firestoreSentinel: 'deleteField' }));
+    mocks.runTransaction.mockReset().mockRejectedValue(new Error('synthetic metadata write failure'));
   });
 
   it('omits undefined optional settings without changing defined values or the server timestamp', async () => {
@@ -40,7 +43,6 @@ describe('Firestore user settings serialization', () => {
       sync_ai_preferences: true,
       debug_mode: false,
       feature_toggles: { food_tracking: true, attendance_tracking: true, people_tracking: true },
-      home_location: undefined,
     } as unknown as Partial<UserSettings>;
 
     await expect(saveUserConfig('synthetic-user', { settings })).resolves.toBe(true);
@@ -50,6 +52,9 @@ describe('Firestore user settings serialization', () => {
     ];
     expect(reference.path).toBe('users/synthetic-user');
     expect(payload.settings).toEqual({
+      home_location: { firestoreSentinel: 'deleteField' },
+      travel_preferences: { firestoreSentinel: 'deleteField' },
+      privacy_preferences: { capabilities: { device_location: { firestoreSentinel: 'deleteField' } } },
       timezone: 'Asia/Kolkata',
       preferred_model: 'gemini-3.8-flash',
       sync_enabled: true,
@@ -69,5 +74,19 @@ describe('Firestore user settings serialization', () => {
     const [, payload] = mocks.setDoc.mock.calls[0] as [unknown, { settings: Record<string, unknown> }];
     expect(payload.settings.preferred_model).toEqual({ firestoreSentinel: 'deleteField' });
     expect(payload.settings.sync_ai_preferences).toBe(false);
+    expect(payload.settings.home_location).toEqual({ firestoreSentinel: 'deleteField' });
+    expect(payload.settings.travel_preferences).toEqual({ firestoreSentinel: 'deleteField' });
+    expect(payload.settings.privacy_preferences).toEqual({ capabilities: { device_location: { firestoreSentinel: 'deleteField' } } });
+  });
+
+  it.each([
+    ['chat sessions', { chatSessions: [{ id: 'chat-1', title: 'General' }] }],
+    ['chat branches', { conversationBranches: [{ id: 'branch-1', conversation_id: 'chat-1' }] }],
+  ])('reports an incomplete full save when the %s metadata write fails', async (_label, metadata) => {
+    await expect(saveUserData('synthetic-user', {
+      entities: [], relationships: [], universalTags: [], ...metadata,
+    } as any)).resolves.toBe(false);
+    expect(mocks.setDoc).toHaveBeenCalledTimes(1);
+    expect(mocks.runTransaction).toHaveBeenCalledOnce();
   });
 });

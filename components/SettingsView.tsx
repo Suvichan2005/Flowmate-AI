@@ -1,17 +1,12 @@
-import WorkspaceStatus from './WorkspaceStatus';
 import AppearanceSettings from './AppearanceSettings';
 import React, { useRef, useState, useEffect } from 'react';
 import { useFocusTrap } from '../utils/accessibility';
 import { useStore } from '../store';
-import { AlertTriangle, Download, Upload, FileText, Trash2, Bot, EyeOff, MapPin, Navigation, RefreshCw, Shield, Activity, Brain, Clock, Plus } from 'lucide-react';
+import { AlertTriangle, Download, Upload, FileText, Trash2, EyeOff, Shield, Activity, Brain, Clock, Plus, ChevronDown, LogOut, UserCircle } from 'lucide-react';
 import { exportToMarkdown, downloadMarkdown } from '../utils/exportMarkdown';
 import {
-  liveContext,
   privacyManager,
-  DeviceLocationWithFreshness,
-  GeolocationPermissionState,
   SensitiveAccessLogEntry,
-  DEFAULT_PRIVACY_POLICY,
   extractMemoryItem,
   extractSituationalItem,
   MemoryCategory,
@@ -24,6 +19,8 @@ import AiModelSelector from './AiModelSelector';
 import ManagedAiUsagePanel from './ManagedAiUsagePanel';
 import { clearOnboardingProfile } from '../services/onboardingProfile';
 import { hasWorkspaceCloudSyncConsent, setWorkspaceCloudSyncConsentForUser, subscribeToWorkspaceCloudSyncConsent } from '../services/workspaceSyncConsent';
+import { getGoogleAccessToken, signOut } from '../services/firebase';
+import { getAccountWorkspaceSummary, type AccountWorkspaceSummary } from '../services/firestoreSync';
 
 const DEFAULT_FEATURE_TOGGLES: FeatureToggles = {
   food_tracking: true,
@@ -33,15 +30,11 @@ const DEFAULT_FEATURE_TOGGLES: FeatureToggles = {
   quick_streaks: true,
 };
 
-const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboarding }) => {
+const SettingsView: React.FC<{ onShowOnboarding?: () => void; onRequestAuth?: () => void }> = ({ onShowOnboarding, onRequestAuth }) => {
   const { settings, updateSettings, entities, relationships, messages, importData, kernelEntities, applyOperations, deleteEntity } = useStore();
   const currentUser = useStore(state => state.currentUser);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [liveReading, setLiveReading] = useState<DeviceLocationWithFreshness | null>(() => liveContext.getLastReading());
-  const [permission, setPermission] = useState<GeolocationPermissionState>('prompt');
-  const [isAcquiring, setIsAcquiring] = useState(false);
-  const [reverseGeoAddress, setReverseGeoAddress] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<SensitiveAccessLogEntry[]>(() => privacyManager.getAccessLogs());
 
   // Memory UI State (P1-07)
@@ -52,13 +45,23 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
   const [apiKeyInput, setApiKeyInput] = useState<string>(() => getEphemeralApiKey() || '');
   const [keySavedToast, setKeySavedToast] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
+  const [accountMessage, setAccountMessage] = useState('');
+  const [signOutPending, setSignOutPending] = useState(false);
   const [workspaceSyncEnabled, setWorkspaceSyncEnabled] = useState(() => hasWorkspaceCloudSyncConsent(currentUser?.uid));
   const [showWorkspaceSyncConsent, setShowWorkspaceSyncConsent] = useState(false);
   const [workspaceSyncConsentAcknowledged, setWorkspaceSyncConsentAcknowledged] = useState(false);
   const [workspaceSyncMessage, setWorkspaceSyncMessage] = useState('');
+  const [workspaceSummary, setWorkspaceSummary] = useState<AccountWorkspaceSummary | null>(null);
+  const [workspaceSummaryLoading, setWorkspaceSummaryLoading] = useState(false);
+  const [workspaceSummaryError, setWorkspaceSummaryError] = useState(false);
+  const workspaceSummaryRequestRef = useRef(0);
   const workspaceSyncDialogRef = useRef<HTMLElement>(null);
   const workspaceSyncTriggerRef = useRef<HTMLButtonElement>(null);
   const workspaceSyncFocusReturnRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    setApiKeyInput('');
+  }, [currentUser?.uid]);
 
   useFocusTrap(workspaceSyncDialogRef, showWorkspaceSyncConsent);
 
@@ -86,11 +89,45 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
   }, [showWorkspaceSyncConsent]);
 
   useEffect(() => {
+    workspaceSummaryRequestRef.current += 1;
     setWorkspaceSyncEnabled(hasWorkspaceCloudSyncConsent(currentUser?.uid));
     setWorkspaceSyncMessage('');
     setShowWorkspaceSyncConsent(false);
     setWorkspaceSyncConsentAcknowledged(false);
+    setWorkspaceSummary(null);
+    setWorkspaceSummaryLoading(false);
+    setWorkspaceSummaryError(false);
   }, [currentUser?.uid]);
+
+  const reviewWorkspaceSync = async () => {
+    if (!currentUser) return;
+    const requestedUid = currentUser.uid;
+    const requestId = ++workspaceSummaryRequestRef.current;
+    let timeoutId: number | undefined;
+    setWorkspaceSummary(null);
+    setWorkspaceSummaryError(false);
+    setWorkspaceSummaryLoading(true);
+    setShowWorkspaceSyncConsent(true);
+    try {
+      const summary = await Promise.race([
+        getAccountWorkspaceSummary(requestedUid),
+        new Promise<never>((_, reject) => {
+          timeoutId = window.setTimeout(() => reject(new Error('Workspace inventory request timed out.')), 8000);
+        }),
+      ]);
+      if (workspaceSummaryRequestRef.current !== requestId || useStore.getState().currentUser?.uid !== requestedUid) return;
+      setWorkspaceSummary(summary);
+    } catch {
+      if (workspaceSummaryRequestRef.current === requestId && useStore.getState().currentUser?.uid === requestedUid) {
+        setWorkspaceSummaryError(true);
+      }
+    } finally {
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      if (workspaceSummaryRequestRef.current === requestId && useStore.getState().currentUser?.uid === requestedUid) {
+        setWorkspaceSummaryLoading(false);
+      }
+    }
+  };
 
   useEffect(() => subscribeToWorkspaceCloudSyncConsent(({ uid, enabled }) => {
     if (uid !== currentUser?.uid) return;
@@ -122,6 +159,8 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
   };
 
   const closeWorkspaceSyncConsent = () => {
+    workspaceSummaryRequestRef.current += 1;
+    setWorkspaceSummaryLoading(false);
     setShowWorkspaceSyncConsent(false);
     setWorkspaceSyncConsentAcknowledged(false);
   };
@@ -135,67 +174,8 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
     .map(extractSituationalItem);
 
   useEffect(() => {
-    liveContext.checkPermission().then(p => setPermission(p));
-    const r = liveContext.getLastReading();
-    if (r) {
-      setLiveReading(r);
-    }
     setAuditLogs(privacyManager.getAccessLogs());
   }, []);
-
-  const currentPrivacyPolicy = settings.privacy_preferences || DEFAULT_PRIVACY_POLICY;
-
-  const handleUpdateCapabilityMode = (capability: 'device_location', mode: 'allow' | 'ask' | 'deny') => {
-    const updated = {
-      ...currentPrivacyPolicy,
-      capabilities: {
-        ...currentPrivacyPolicy.capabilities,
-        [capability]: {
-          ...currentPrivacyPolicy.capabilities[capability],
-          read: mode,
-        },
-      },
-    };
-    handleChange('privacy_preferences', updated);
-  };
-
-  const handleAcquireLocation = async () => {
-    setIsAcquiring(true);
-    try {
-      const reading = await liveContext.acquireLocation({
-        forceFresh: true,
-        reason: 'User manual location check in Settings',
-      });
-      setLiveReading(reading);
-      const perm = await liveContext.checkPermission();
-      setPermission(perm);
-      if (reading) {
-        privacyManager.recordAccess(
-          'device_location',
-          'read',
-          'User manual location check in Settings',
-          settings.privacy_preferences,
-        );
-        const address = await liveContext.reverseGeocode(reading.lat, reading.lon);
-        setReverseGeoAddress(address);
-      }
-      setAuditLogs(privacyManager.getAccessLogs());
-    } finally {
-      setIsAcquiring(false);
-    }
-  };
-
-  const handleSetAsHome = () => {
-    if (!liveReading) return;
-    const locText = reverseGeoAddress || `${liveReading.lat.toFixed(4)}, ${liveReading.lon.toFixed(4)}`;
-    handleChange('home_location', locText);
-  };
-
-  const handleClearLocationCache = () => {
-    liveContext.clearCache();
-    setLiveReading(null);
-    setReverseGeoAddress(null);
-  };
 
   const handleClearAudit = () => {
     privacyManager.clearAccessLogs();
@@ -303,31 +283,57 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
   };
 
   return (
-    <div className="flex-1 w-full min-w-0 overflow-y-auto bg-slate-950 p-6 md:p-8">
-      <header className="mb-8 border-b border-slate-800 pb-6 pl-14">
-        <h1 className="text-2xl font-bold text-slate-100">Settings</h1>
-        <p className="text-slate-400 text-sm mt-1">
-          Configure your Flowmate preferences and environment.
-        </p>
+    <div className="flex-1 w-full min-w-0 overflow-y-auto bg-ideapad-base p-4 sm:p-6 lg:p-8">
+      <header className="mb-5 flex flex-wrap items-end justify-between gap-3 border-b border-ideapad-border pb-4">
+        <div>
+          <h1 className="text-2xl font-bold text-ideapad-text">Settings</h1>
+          <p className="mt-1 text-sm text-ideapad-muted">Personalize your workspace, AI and privacy.</p>
+        </div>
+        <span className="pb-0.5 text-xs text-ideapad-muted">Changes save automatically</span>
       </header>
 
-      <nav aria-label="Settings sections" className="sticky top-0 z-20 -mx-2 mb-6 flex min-w-0 gap-2 overflow-x-auto border-b border-slate-800 bg-slate-950/95 px-2 py-2 backdrop-blur">
-        {[
-          ['general-settings', 'General'],
-          ['ai-model-settings', 'AI & Models'],
-          ['privacy-sync-settings', 'Privacy & Sync'],
-          ['data-backup-settings', 'Data & Backup'],
-        ].map(([id, label]) => <button key={id} type="button" onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-          className="shrink-0 rounded-full border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-emerald-400/60 hover:text-emerald-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-400">
-          {label}
-        </button>)}
-      </nav>
+      <div data-testid="settings-content" className="w-full max-w-none min-w-0 space-y-3">
 
-      <div data-testid="settings-content" className="w-full min-w-0 space-y-8">
-
-        <div id="general-settings" className="scroll-mt-16 space-y-8">
-        <WorkspaceStatus detailed />
+        <details name="flowmate-settings-sections" data-testid="settings-group-general" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">General</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Appearance, profile and planning defaults</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
+          <div id="general-settings" className="settings-group-content space-y-5">
         <AppearanceSettings />
+        <section aria-labelledby="settings-account-title" className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 id="settings-account-title" className="text-lg font-semibold text-slate-100">Account</h2>
+              {currentUser ? (
+                <>
+                  <p className="mt-1 truncate text-sm text-slate-200">{currentUser.email || 'Signed in with Google'}</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">Signing in does not upload this browser’s workspace. Cloud sync is a separate choice below.</p>
+                </>
+              ) : (
+                <p className="mt-1 text-sm leading-5 text-slate-400">You’re using a local guest workspace saved in this browser. Sign in only when you want an account.</p>
+              )}
+            </div>
+            {currentUser ? (
+              <button type="button" disabled={signOutPending} onClick={async () => {
+                setSignOutPending(true);
+                setAccountMessage('');
+                const result = await signOut();
+                setSignOutPending(false);
+                setAccountMessage(result.error
+                  ? 'Could not sign out. Your current account is still active; try again.'
+                  : 'Signed out. This browser’s local workspace was left unchanged.');
+              }} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-200 hover:border-rose-500/50 hover:bg-rose-950/30 hover:text-rose-100 disabled:opacity-50">
+                <LogOut size={16} aria-hidden="true" /> {signOutPending ? 'Signing out…' : 'Sign out'}
+              </button>
+            ) : (
+              <button type="button" onClick={onRequestAuth} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm font-medium text-emerald-100 hover:bg-emerald-500/20">
+                <UserCircle size={16} aria-hidden="true" /> Sign in or create account
+              </button>
+            )}
+          </div>
+          {accountMessage && <p role="status" aria-live="polite" className="mt-3 text-xs text-slate-400">{accountMessage}</p>}
+        </section>
         <section className="rounded-xl border border-slate-800 bg-slate-900 p-5">
           <h2 className="text-lg font-semibold text-slate-100">Your Flowmate profile</h2>
           <p className="mt-1 text-sm leading-6 text-slate-400">Review the optional context you shared during setup. It stays in this browser and is added to AI requests only if you opted in.</p>
@@ -345,109 +351,9 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           </div>
           {profileMessage && <p role="status" className="mt-2 text-xs text-slate-400">{profileMessage}</p>}
         </section>
-        {import.meta.env.DEV && <details aria-label="Developer and experimental tools" className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-          <summary className="cursor-pointer text-sm font-medium text-slate-200">Developer / Experimental</summary>
-          <div className="mt-3 space-y-3">
-            <p className="text-sm text-slate-400">Development-only prototypes, separate from normal workspace behavior.</p>
-            <button onClick={() => useStore.getState().toggleDeveloperMode()}>Toggle diagnostics</button>
-          </div>
-        </details>}
-        </div>
 
-        {/* Model & API Key Settings */}
-        <section id="ai-model-settings" className="scroll-mt-16">
-          <h2 className="text-lg font-semibold text-slate-200 mb-4">AI Model & Runtime Access</h2>
-          <AiModelSelector />
-          <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm">
-            <input
-              type="checkbox"
-              checked={settings.sync_ai_preferences === true}
-              onChange={event => updateSettings({ sync_ai_preferences: event.target.checked })}
-              className="mt-0.5 accent-emerald-500"
-            />
-            <span>
-              <span className="block font-medium text-slate-200">Sync model and reasoning choices to my account</span>
-              <span className="mt-1 block text-xs leading-5 text-slate-400">Off by default. When enabled, your selected text and Live models and reasoning levels sync across your signed-in devices. Turning it off removes those preferences from cloud settings.</span>
-            </span>
-          </label>
-          <ManagedAiUsagePanel />
-          <label className="mt-4 flex items-start gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 text-sm">
-            <input
-              type="checkbox"
-              checked={settings.save_voice_transcripts === true}
-              onChange={event => updateSettings({ save_voice_transcripts: event.target.checked })}
-              className="mt-0.5 accent-emerald-500"
-            />
-            <span>
-              <span className="block font-medium text-slate-200">Save Live voice transcripts in chat history</span>
-              <span className="mt-1 block text-xs leading-5 text-slate-400">Off by default. Live captions remain visible during the current session, but spoken text is not added to saved conversations unless you turn this on. Raw audio is not stored by Flowmate.</span>
-            </span>
-          </label>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
-            <div className="pt-4 border-t border-slate-800/80">
-              <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-medium text-slate-200">
-                  Your Gemini API Key (Optional BYOK)
-                </label>
-                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                  hasAiApiKey()
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                    : 'bg-slate-800 text-slate-400 border border-slate-700'
-                }`}>
-                  {hasAiApiKey() ? 'Your key active' : hasManagedAiIdentity() ? 'Guest and account access available' : currentUser ? 'Managed access unavailable here' : 'AI provider unavailable here'}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  value={apiKeyInput}
-                  onChange={(e) => setApiKeyInput(e.target.value)}
-                  placeholder="Paste your Gemini API key to use BYOK"
-                  className="flex-1 bg-slate-950 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500/50 outline-none"
-                />
-                <button
-                  onClick={() => {
-                    setEphemeralApiKey(apiKeyInput.trim() || null);
-                    setKeySavedToast(true);
-                    setTimeout(() => setKeySavedToast(false), 3000);
-                  }}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors"
-                >
-                  Save Key
-                </button>
-                {hasAiApiKey() && (
-                  <button
-                    onClick={() => {
-                      setApiKeyInput('');
-                      setEphemeralApiKey(null);
-                    }}
-                    className="px-3 py-2 bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-300 border border-slate-700 rounded-lg text-xs font-medium transition-colors"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-              {keySavedToast && (
-                <p className="text-xs text-emerald-400 mt-2 font-medium">✓ Runtime key updated in memory.</p>
-              )}
-              <div className="mt-3 p-3 bg-slate-950/60 rounded-lg border border-slate-800/80 text-xs text-slate-400 space-y-1">
-                <p className="font-semibold text-slate-300">Security & Privacy Disclosures:</p>
-                <ul className="list-disc list-inside space-y-0.5 text-slate-400">
-                  <li>Your key is held <strong>in memory for this browser session only</strong>.</li>
-                  <li>It is <strong>never</strong> written to disk, localStorage, or git.</li>
-                  <li>It is sent directly from your browser only to Google's official Gemini endpoint.</li>
-                  <li>Guests receive 10 successful managed AI chat turns. A verified account receives 50 lifetime turns; after either allowance, add your own key here to continue. BYOK keys remain browser-session-only.</li>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <ManagedAiAdminPanel />
-
-        {/* Feature Toggles */}
         <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-4">Features</h2>
+          <h2 className="text-lg font-semibold text-slate-200 mb-4">Productivity preferences</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
             <p className="text-sm text-slate-400 mb-2">
               Enable or disable features to customize your experience.
@@ -456,7 +362,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
 
             <div className="flex items-center justify-between py-2 border-b border-slate-800">
               <div>
-                <label className="block text-sm font-medium text-slate-200">🧠 Productivity Score Method</label>
+                <label className="block text-sm font-medium text-slate-200">Productivity score</label>
                 <p className="text-xs text-slate-500">
                   {settings.productivity_calc_method === 'AWAKE_TIME'
                     ? 'Relative to Awake Time (24h - Sleep)'
@@ -476,10 +382,14 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
 
             <div className="flex items-center justify-between py-2">
               <div>
-                <label className="block text-sm font-medium text-slate-200">👥 People Tracking</label>
+                <label className="block text-sm font-medium text-slate-200">People tracking</label>
                 <p className="text-xs text-slate-500">Track relationships, promises, and contacts</p>
               </div>
               <button
+                type="button"
+                role="switch"
+                aria-label="People tracking"
+                aria-checked={settings.feature_toggles?.people_tracking ?? true}
                 onClick={() => {
                   const current = settings.feature_toggles || DEFAULT_FEATURE_TOGGLES;
                   handleChange('feature_toggles', { ...current, people_tracking: !current.people_tracking });
@@ -492,12 +402,100 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           </div>
         </section>
 
-        {/* AI Persona Settings */}
+        {/* Environment */}
         <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
-            <Bot size={18} /> AI Persona
-          </h2>
+          <h2 className="text-lg font-semibold text-slate-200 mb-4">Planning defaults</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-2">Timezone</label>
+              <input
+                type="text"
+                value={settings.timezone}
+                onChange={(e) => handleChange('timezone', e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
+              />
+            </div>
+
+          </div>
+        </section>
+
+        </div>
+        </details>
+
+        {/* Model & API Key Settings */}
+        <details open name="flowmate-settings-sections" data-testid="settings-group-ai" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">AI & Models</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Access, preferences and your own key</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
+          <div className="settings-group-content space-y-5">
+        <section id="ai-model-settings" className="space-y-5">
+          <ManagedAiUsagePanel />
+          <AiModelSelector />
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
+            <div className="pt-4 border-t border-slate-800/80">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <label className="block text-sm font-semibold text-ideapad-text">
+                  Use your own Gemini key
+                </label>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
+                  hasAiApiKey()
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                }`}>
+                  {hasAiApiKey() ? 'Using your key' : hasManagedAiIdentity() ? 'Included AI available' : 'No provider connected'}
+                </span>
+              </div>
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row">
+                <input
+                  type="password"
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  placeholder="Paste your Gemini API key to use BYOK"
+                  aria-label="Your Gemini API key"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-mono text-slate-200 outline-none focus:ring-2 focus:ring-emerald-500/40"
+                />
+                <button
+                  onClick={() => {
+                    setEphemeralApiKey(apiKeyInput.trim() || null);
+                    setKeySavedToast(true);
+                    setTimeout(() => setKeySavedToast(false), 3000);
+                  }}
+                  className="min-h-10 shrink-0 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+                >
+                  Save Key
+                </button>
+                {hasAiApiKey() && (
+                  <button
+                    onClick={() => {
+                      setApiKeyInput('');
+                      setEphemeralApiKey(null);
+                    }}
+                    className="min-h-10 shrink-0 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 transition-colors hover:bg-rose-900/40 hover:text-rose-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              {keySavedToast && (
+                <p className="text-xs text-emerald-400 mt-2 font-medium">✓ Runtime key updated in memory.</p>
+              )}
+              <details className="mt-3 rounded-lg border border-ideapad-border/70 px-3 py-2 text-xs text-ideapad-muted">
+                <summary className="cursor-pointer font-medium text-ideapad-text">How your key is handled</summary>
+                <p className="mt-2 leading-5">Your key stays in this browser session and is sent directly to Google. Flowmate does not persist it. Included access and daily briefing usage are shown above.</p>
+              </details>
+            </div>
+          </div>
+        </section>
+
+        <details className="settings-subgroup">
+          <summary className="settings-subgroup-summary">
+            <span><span className="block text-sm font-medium text-slate-200">Assistant style</span><span className="mt-0.5 block text-xs text-slate-400">Optional response preferences</span></span>
+            <ChevronDown aria-hidden="true" size={16} className="settings-group-chevron" />
+          </summary>
+          <div className="settings-subgroup-content">
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-2">Custom System Instructions</label>
               <textarea
@@ -511,228 +509,18 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
               </p>
             </div>
           </div>
-        </section>
+        </details>
 
-        {/* Environment */}
-        <section>
-          <h2 className="text-lg font-semibold text-slate-200 mb-4">Environment</h2>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Timezone</label>
-              <input
-                type="text"
-                value={settings.timezone}
-                onChange={(e) => handleChange('timezone', e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
-              />
-            </div>
-
-            <div className="flex items-center justify-between pt-2">
-              <div>
-                <label className="block text-sm font-medium text-slate-200">Debug Mode</label>
-                <p className="text-xs text-slate-500">Show raw orchestrator outputs in console.</p>
-              </div>
-              <button
-                onClick={() => handleChange('debug_mode', !settings.debug_mode)}
-                className={`w-12 h-6 rounded-full transition-colors relative ${settings.debug_mode ? 'bg-indigo-600' : 'bg-slate-700'}`}
-              >
-                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${settings.debug_mode ? 'translate-x-6' : ''}`} />
-              </button>
-            </div>
+        <ManagedAiAdminPanel />
           </div>
-        </section>
+        </details>
 
-        {/* Privacy & Context (P1-03) */}
-        <section id="privacy-settings-section">
-          <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
-            <Shield size={18} className="text-indigo-400" /> Privacy & Context
-          </h2>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Flowmate is built privacy-first. Every sensitive context source operates under explicit capability permissions.
-              Live context is ephemeral and never silently written to persistent memory.
-            </p>
-
-            {/* Live Context Capabilities */}
-            <div className="space-y-4">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Live Device Capabilities</h3>
-
-              {/* Device Location Capability */}
-              <div className="bg-slate-950/70 border border-slate-800 rounded-lg p-4 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-start gap-2.5">
-                    <Navigation className="text-indigo-400 w-4 h-4 mt-0.5 shrink-0" />
-                    <div>
-                      <div className="text-sm font-medium text-slate-200">Device Geolocation</div>
-                      <div className="text-xs text-slate-500">
-                        Authoritative request-time GPS coordinates for travel routing and commute planning.
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3 self-end sm:self-auto">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] text-slate-500">Hardware:</span>
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                        permission === 'granted'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                          : permission === 'denied'
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                          : permission === 'unsupported'
-                          ? 'bg-slate-700 text-slate-300'
-                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      }`}>
-                        {permission.toUpperCase()}
-                      </span>
-                    </div>
-
-                    <select
-                      value={currentPrivacyPolicy.capabilities.device_location?.read || 'ask'}
-                      onChange={(e) => handleUpdateCapabilityMode('device_location', e.target.value as any)}
-                      className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
-                    >
-                      <option value="ask">Ask on Demand</option>
-                      <option value="allow">Allow Always</option>
-                      <option value="deny">Deny Access</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Ephemeral reading monitor */}
-                {liveReading ? (
-                  <div className="bg-slate-900/90 rounded-md p-3 border border-slate-800/80 text-xs space-y-1.5">
-                    <div className="flex items-center justify-between text-slate-300">
-                      <span className="font-mono">
-                        {liveReading.lat.toFixed(5)}°N, {liveReading.lon.toFixed(5)}°E
-                      </span>
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                        liveReading.freshnessTier === 'fresh'
-                          ? 'bg-emerald-500/20 text-emerald-400'
-                          : liveReading.freshnessTier === 'recent'
-                          ? 'bg-blue-500/20 text-blue-400'
-                          : 'bg-amber-500/20 text-amber-400'
-                      }`}>
-                        {liveReading.freshnessTier} (±{Math.round(liveReading.accuracy_meters)}m)
-                      </span>
-                    </div>
-                    {reverseGeoAddress && (
-                      <div className="text-slate-400 truncate">
-                        <span className="text-slate-500">Reverse Geocoded:</span> {reverseGeoAddress}
-                      </div>
-                    )}
-                    <div className="text-[11px] text-slate-500">
-                      Acquired {Math.max(0, Math.round((Date.now() - liveReading.timestamp) / 1000))}s ago ({liveReading.source})
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-slate-500">
-                    No active device location reading. Ephemeral live location is requested on-demand when calculating travel routes.
-                  </p>
-                )}
-
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleAcquireLocation}
-                    disabled={isAcquiring}
-                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-900/50 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isAcquiring ? 'animate-spin' : ''}`} />
-                    {isAcquiring ? 'Acquiring GPS...' : 'Acquire Fresh Location'}
-                  </button>
-
-                  {liveReading && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={handleSetAsHome}
-                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 border border-slate-700"
-                      >
-                        <MapPin className="w-3.5 h-3.5 text-indigo-400" />
-                        Set as Home Base
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleClearLocationCache}
-                        className="px-2.5 py-1.5 text-slate-400 hover:text-rose-400 rounded-lg text-xs transition-colors"
-                      >
-                        Clear Cache
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Connected Services (Extensible Architecture Placeholder) */}
-            <div className="space-y-3">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Connected Services (Preview)</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
-                  <span className="text-slate-300 font-medium">Google Calendar</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">SIMULATED / NOT CONNECTED</span>
-                </div>
-                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
-                  <span className="text-slate-300 font-medium">Gmail</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
-                </div>
-                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
-                  <span className="text-slate-300 font-medium">Contacts & People</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
-                </div>
-                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
-                  <span className="text-slate-300 font-medium">Drive / Files</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
-                </div>
-              </div>
-              <p className="text-[11px] text-slate-500 italic">
-                Flowmate strictly enforces separate Read and Mutation permissions for all future personal data integrations.
-              </p>
-            </div>
-
-            {/* Sensitive Context Access Audit Log */}
-            <div className="space-y-3 pt-2 border-t border-slate-800">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Activity size={15} className="text-indigo-400" />
-                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Sensitive Access Audit History</h3>
-                </div>
-                {auditLogs.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={handleClearAudit}
-                    className="text-[11px] text-slate-400 hover:text-rose-400 transition-colors"
-                  >
-                    Clear History
-                  </button>
-                )}
-              </div>
-
-              {auditLogs.length > 0 ? (
-                <div className="bg-slate-950 border border-slate-800 rounded-lg divide-y divide-slate-800/60 max-h-48 overflow-y-auto">
-                  {auditLogs.map((entry) => (
-                    <div key={entry.id} className="p-2.5 text-xs flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-300">
-                          {entry.capabilityId}
-                        </span>
-                        <span className="text-slate-300 truncate">{entry.reason}</span>
-                      </div>
-                      <span className="text-[10px] text-slate-500 shrink-0">
-                        {Math.max(0, Math.round((Date.now() - entry.timestamp) / 1000))}s ago
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-slate-500 bg-slate-950/40 border border-slate-800/50 rounded-lg p-3">
-                  No sensitive context accessed yet in this session.
-                </p>
-              )}
-            </div>
-          </div>
-        </section>
-
+        <details name="flowmate-settings-sections" data-testid="settings-group-context" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Personal context</span><span className="mt-0.5 block text-xs font-normal text-slate-400">What Flowmate remembers and uses for planning</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
+          <div className="settings-group-content space-y-5">
         {/* Persistent Memory & Situational State (P1-07) */}
         <section id="context-memory-section">
           <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
@@ -858,72 +646,95 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
                 </div>
               ) : (
                 <p className="text-xs text-slate-500 bg-slate-950/40 border border-slate-800/50 rounded-lg p-3">
-                  No active temporary situational states (e.g., travel this week, temporary deadlines).
+                  No active temporary situational states (for example, short-term deadlines).
                 </p>
               )}
             </div>
           </div>
         </section>
 
-        {/* Location & Travel Preferences */}
-        <section>
+          </div>
+        </details>
+
+        {/* Privacy & Context (P1-03) */}
+        <details name="flowmate-settings-sections" data-testid="settings-group-privacy" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Privacy & Sync</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Control connected services and decide what is saved or synced</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
+          <div className="settings-group-content space-y-5">
+        <section id="privacy-settings-section">
           <h2 className="text-lg font-semibold text-slate-200 mb-4 flex items-center gap-2">
-            <MapPin size={18} /> Location & Travel
+            <Shield size={18} className="text-indigo-400" /> Privacy & Context
           </h2>
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-            {/* Default Starting Location / Home Base */}
-            <div>
-              <label className="block text-sm font-medium text-slate-400 mb-2">Default Starting Location / Home Base</label>
-              <input
-                type="text"
-                value={settings.home_location || ''}
-                onChange={(e) => handleChange('home_location', e.target.value)}
-                placeholder="e.g. Campus 25, KIIT University or 123 Main St, New York"
-                className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm"
-              />
-              <p className="text-xs text-slate-500 mt-1">
-                Used as fallback origin when live device location is unavailable or denied.
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+            <p className="text-sm text-ideapad-muted leading-relaxed">Choose what Flowmate can save, sync or share with AI. Workspace sync and AI context are separate choices.</p>
+
+            {/* Connected Services (Extensible Architecture Placeholder) */}
+            <div className="space-y-3">
+              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Connected Services (Preview)</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Google Calendar</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">SIMULATED / NOT CONNECTED</span>
+                </div>
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Gmail</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
+                </div>
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Contacts & People</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
+                </div>
+                <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 text-xs flex items-center justify-between">
+                  <span className="text-slate-300 font-medium">Drive / Files</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800/80 text-slate-500 font-mono">UPCOMING</span>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500 italic">
+                Flowmate strictly enforces separate Read and Mutation permissions for all future personal data integrations.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-              <div>
-                <label className="block text-sm font-medium text-slate-400 mb-2">Station Arrival Buffer (minutes)</label>
-                <input
-                  type="number"
-                  min={10}
-                  max={180}
-                  value={settings.travel_preferences?.station_buffer_minutes ?? 45}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10) || 45;
-                    handleChange('travel_preferences', {
-                      ...settings.travel_preferences,
-                      station_buffer_minutes: val,
-                    });
-                  }}
-                  className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm"
-                />
-                <p className="text-xs text-slate-500 mt-1">Buffer time before train departure to reach platform & coach.</p>
+            {/* Sensitive Context Access Audit Log */}
+            <div className="space-y-3 pt-2 border-t border-slate-800">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Activity size={15} className="text-indigo-400" />
+                  <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Sensitive Access Audit History</h3>
+                </div>
+                {auditLogs.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAudit}
+                    className="text-[11px] text-slate-400 hover:text-rose-400 transition-colors"
+                  >
+                    Clear History
+                  </button>
+                )}
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-slate-400 mb-2">Airport Arrival Buffer (minutes)</label>
-                <input
-                  type="number"
-                  min={30}
-                  max={300}
-                  value={settings.travel_preferences?.airport_buffer_minutes ?? 120}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10) || 120;
-                    handleChange('travel_preferences', {
-                      ...settings.travel_preferences,
-                      airport_buffer_minutes: val,
-                    });
-                  }}
-                  className="w-full bg-slate-950 border border-slate-700 text-slate-200 rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm"
-                />
-                <p className="text-xs text-slate-500 mt-1">Buffer time before flight departure for check-in & security.</p>
-              </div>
+              {auditLogs.length > 0 ? (
+                <div className="bg-slate-950 border border-slate-800 rounded-lg divide-y divide-slate-800/60 max-h-48 overflow-y-auto">
+                  {auditLogs.map((entry) => (
+                    <div key={entry.id} className="p-2.5 text-xs flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-300">
+                          {entry.capabilityId}
+                        </span>
+                        <span className="text-slate-300 truncate">{entry.reason}</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 shrink-0">
+                        {Math.max(0, Math.round((Date.now() - entry.timestamp) / 1000))}s ago
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 bg-slate-950/40 border border-slate-800/50 rounded-lg p-3">
+                  No sensitive context accessed yet in this session.
+                </p>
+              )}
             </div>
           </div>
         </section>
@@ -932,6 +743,16 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
         <section id="privacy-sync-settings" className="scroll-mt-16">
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Privacy, Sync & Backup</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+            <div className="space-y-3">
+              <label className="flex items-start gap-3 rounded-lg border border-ideapad-border bg-ideapad-base p-4 text-sm">
+                <input type="checkbox" checked={settings.sync_ai_preferences === true} onChange={event => updateSettings({ sync_ai_preferences: event.target.checked })} className="mt-0.5 accent-emerald-500" />
+                <span><span className="block font-medium text-ideapad-text">Sync AI model and reasoning choices</span><span className="mt-1 block text-xs leading-5 text-ideapad-muted">This applies on devices where workspace cloud sync is enabled. Turning this on alone does not connect a device or upload workspace content.</span></span>
+              </label>
+              <label className="flex items-start gap-3 rounded-lg border border-ideapad-border bg-ideapad-base p-4 text-sm">
+                <input type="checkbox" checked={settings.save_voice_transcripts === true} onChange={event => updateSettings({ save_voice_transcripts: event.target.checked })} className="mt-0.5 accent-emerald-500" />
+                <span><span className="block font-medium text-ideapad-text">Save voice transcripts in chat history</span><span className="mt-1 block text-xs leading-5 text-ideapad-muted">Off by default. Raw audio is not stored by Flowmate.</span></span>
+              </label>
+            </div>
             <div className="rounded-lg border border-slate-700 bg-slate-950/50 p-4 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                 <div>
@@ -949,9 +770,9 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
                       Turn off cloud sync
                     </button>
                   ) : (
-                    <button ref={workspaceSyncTriggerRef} type="button" onClick={() => setShowWorkspaceSyncConsent(true)}
+                    <button ref={workspaceSyncTriggerRef} type="button" onClick={() => void reviewWorkspaceSync()}
                       className="shrink-0 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200 hover:bg-emerald-500/20">
-                      Review and enable
+                      Review cloud workspace
                     </button>
                   )
                 ) : (
@@ -988,9 +809,17 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
             )}
           </div>
         </section>
+          </div>
+        </details>
 
         {/* Data Management */}
-        <section id="data-backup-settings" className="scroll-mt-16">
+        <details name="flowmate-settings-sections" data-testid="settings-group-data" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Data & Backup</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Export, restore or reset this workspace</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
+          <div className="settings-group-content">
+        <section id="data-backup-settings">
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Data Management</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
             <p className="text-sm text-slate-400 mb-4">
@@ -1040,10 +869,15 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
             </div>
           </div>
         </section>
+          </div>
+        </details>
 
         {/* Debug Tools */}
-        <details className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-          <summary className="cursor-pointer text-sm font-medium text-slate-300">Advanced troubleshooting</summary>
+        <details name="flowmate-settings-sections" data-testid="settings-group-advanced" className="settings-group">
+          <summary className="settings-group-summary">
+            <span className="min-w-0"><span className="block text-sm font-semibold text-slate-100">Advanced</span><span className="mt-0.5 block text-xs font-normal text-slate-400">Troubleshooting and maintenance tools</span></span>
+            <ChevronDown aria-hidden="true" size={17} className="settings-group-chevron" />
+          </summary>
           <section className="mt-4">
           <h2 className="text-lg font-semibold text-slate-200 mb-4">Debug Tools</h2>
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
@@ -1051,10 +885,31 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
               Advanced tools for troubleshooting and maintenance.
             </p>
 
+            <div className="flex items-center justify-between rounded-lg border border-ideapad-border bg-ideapad-base p-4">
+              <div>
+                <label className="block text-sm font-medium text-ideapad-text">Debug Mode</label>
+                <p className="text-xs text-ideapad-muted">Show raw orchestrator outputs in the browser console.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={settings.debug_mode}
+                aria-label="Debug Mode"
+                onClick={() => handleChange('debug_mode', !settings.debug_mode)}
+                className={`w-12 h-6 rounded-full transition-colors relative ${settings.debug_mode ? 'bg-ideapad-mint' : 'bg-slate-700'}`}
+              >
+                <span className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${settings.debug_mode ? 'translate-x-6' : ''}`} />
+              </button>
+            </div>
+
             <div className="space-y-3">
+              {import.meta.env.DEV && <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                <p className="mb-2 text-xs text-slate-400">Development-only prototypes, separate from normal workspace behavior.</p>
+                <button type="button" onClick={() => useStore.getState().toggleDeveloperMode()} className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800">Toggle diagnostics</button>
+              </div>}
               <button
                 onClick={async () => {
-                  const accessToken = localStorage.getItem('flowmate_google_calendar_token');
+                  const accessToken = getGoogleAccessToken();
                   if (!accessToken) {
                     alert('❌ No Google Calendar token found. Please sync in Calendar first.');
                     return;
@@ -1240,16 +1095,30 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void }> = ({ onShowOnboa
           <section ref={workspaceSyncDialogRef} role="dialog" aria-modal="true" aria-labelledby="workspace-sync-consent-title"
             className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
             <h2 id="workspace-sync-consent-title" className="text-lg font-semibold text-slate-100">Enable workspace cloud sync?</h2>
-            <p className="mt-3 text-sm leading-relaxed text-slate-300">
-              Flowmate will read and sync this device's workspace with the signed-in account. This can include goals, projects, tasks, relationships, conversations, profile settings and activity records. Existing cloud content will be merged with local content.
-            </p>
+            <p className="mt-3 text-sm leading-relaxed text-slate-300">Check what is already saved to this account before connecting this device. This check does not enable sync or download workspace records.</p>
+            <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950/60 p-3" aria-live="polite">
+              {workspaceSummaryLoading ? (
+                <p className="text-sm text-slate-300">Checking the account’s saved workspace…</p>
+              ) : workspaceSummary ? (
+                <>
+                  <p className="text-sm font-medium text-slate-100">{workspaceSummary.entityCount + workspaceSummary.messageCount + workspaceSummary.conversationCount > 0 ? 'This account has saved cloud data' : 'No cloud workspace records are saved yet'}</p>
+                  <p className="mt-1 text-sm text-slate-300">{workspaceSummary.entityCount} workspace records · {workspaceSummary.messageCount} saved chat messages · {workspaceSummary.conversationCount} conversations</p>
+                  <p className="mt-2 text-xs leading-relaxed text-slate-400">Counts come from the server. The check reads conversation-list metadata only; it does not read message text or workspace record contents.</p>
+                </>
+              ) : workspaceSummaryError ? (
+                <p className="text-sm text-amber-200">Could not check the cloud workspace right now. You can keep this device local, or choose to continue with the merge behavior described below.</p>
+              ) : (
+                <p className="text-sm text-slate-300">No cloud workspace records were found for this account yet.</p>
+              )}
+            </div>
+            <p className="mt-3 text-sm leading-relaxed text-slate-300">If you enable sync, Flowmate will load this account’s workspace and reconcile it with this device. Existing local records stay available; when the same item changed in both places, Flowmate uses the current conflict-resolution rules and keeps chat versions available for review. New changes from this device will then sync to this account.</p>
             <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-100">
               This is standard Firestore storage, not end-to-end encryption. Authorized administrators of the Flowmate Firebase project can technically read stored workspace content. Your AI provider and Google Calendar choices remain separate.
             </p>
             <label className="mt-4 flex items-start gap-3 text-sm text-slate-200">
               <input type="checkbox" checked={workspaceSyncConsentAcknowledged}
                 onChange={event => setWorkspaceSyncConsentAcknowledged(event.target.checked)} className="mt-1" />
-              <span>I understand this device will upload and read workspace content in standard Flowmate cloud storage.</span>
+              <span>I want this device connected to the account workspace. I understand workspace content is stored in standard Flowmate cloud storage.</span>
             </label>
             <div className="mt-6 flex justify-end gap-3">
               <button type="button" onClick={closeWorkspaceSyncConsent}

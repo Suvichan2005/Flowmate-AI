@@ -2,10 +2,10 @@
  * Flowmate Privacy & Capability Access Layer
  *
  * Core architectural boundary that regulates access to all sensitive
- * context sources (device location, external calendar, email, contacts, files).
+ * context sources (external calendar, email, contacts, files).
  *
  * Architectural Guarantees:
- * 1. Reusable & Extensible: Not hardcoded to location; location is the first consumer.
+ * 1. Reusable & Extensible: Capability identifiers are supplied by the active integration.
  * 2. Separation of Concerns: READ (access) and WRITE (mutation) are strictly distinct.
  * 3. Policy Enforcement: Respects 'allow', 'ask', 'deny', and revocation.
  * 4. Transparent Auditability: Maintains lightweight access log with purpose/timestamp,
@@ -29,10 +29,6 @@ export interface PrivacyAccessDecision {
 
 export const DEFAULT_PRIVACY_POLICY: PrivacyPolicySettings = {
   capabilities: {
-    device_location: {
-      read: 'ask',       // Prompt user or query on-demand
-      mutation: 'deny',  // Location is purely read-only sensor data
-    },
   },
   audit_logging_enabled: true,
 };

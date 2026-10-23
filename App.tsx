@@ -2,11 +2,12 @@ import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from 
 import { useStore } from './store';
 import { getActiveEntities, getActiveChatSessions, isChatSessionActive } from './store/helpers';
 import { orchestrateMessage, generateContextualSuggestions, getInstantContextualSuggestions, type ContextualSuggestion } from './services/ai';
-import { hasAiApiKey, hasAiProviderAvailable } from './services/ai/client';
+import { hasAiApiKey, hasAiProviderAvailable, setEphemeralApiKey } from './services/ai/client';
 import { processFileAttachment } from './utils/imageProcessing';
 import { completeGoogleRedirectSignIn, onAuthChange, signOut } from './services/firebase';
-import { initializeSync, setWorkspaceCloudSyncConsent as setSyncWorkspaceCloudSyncConsent, cleanupSync, forceSync, scheduleSync, syncFoodLogsToCloud, syncAttendanceToCloud } from './services/syncManager';
-import { mergeData, mergeMessages, mergeChatSessions, mergeCloudSettings } from './services/firestoreSync';
+import { initializeSync, setWorkspaceCloudSyncConsent as setSyncWorkspaceCloudSyncConsent, cleanupSync, forceSync, scheduleSync, replayPendingEntityMutations, setSyncConflictedEntityIds, refreshWorkspaceFromCloud, syncFoodLogsToCloud, syncAttendanceToCloud, syncMessage, syncChatSessionsToCloud, syncChatBranchesToCloud } from './services/syncManager';
+import { mergeData, mergeMessages, mergeChatSessions, filterMessagesBySessionState, mergeCloudSettings, isDefaultWelcomeMessage } from './services/firestoreSync';
+import { mergeConversationBranches, sameConversationBranches } from './services/chatBranchSync';
 import { hasWorkspaceCloudSyncConsent, subscribeToWorkspaceCloudSyncConsent } from './services/workspaceSyncConsent';
 import { preventDoubleClick } from './utils/debounce';
 import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers, Sparkles, LayoutDashboard, Settings, Library } from 'lucide-react';
@@ -26,19 +27,30 @@ import ChatSessionBar from './components/ChatSessionBar';
 import ConnectionStatus from './components/ConnectionStatus';
 import WorkspaceStatus from './components/WorkspaceStatus';
 import { MessageVersionNav } from './components/MessageVersionNav';
+import { ManagedRequestNotice } from './components/ManagedRequestNotice';
 import { DeveloperModeDrawer } from './components/DeveloperModeDrawer';
-import { resolveBranchHistory } from './utils/conversationGraph';
+import { repairStaleConversationBranchHeads, resolveBranchHistory } from './utils/conversationGraph';
 import { EntityKind, ToonOperation, ChatSession, Entity, TurnExecutor, BranchQueueItem, ViewType } from './types';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfirmedExecutionPlan } from './services/kernel';
 
-import { reconcileEntityCollection, globalPendingMutationQueue } from './services/sync';
+import { reconcileEntityCollection, globalPendingMutationQueue, retainCanonicalReference, canonicalJson } from './services/sync';
 import { projectKernelEntitiesToLegacy } from './store/kernelProjection';
-import { setupCrossTabSync } from './services/storage';
+import {
+  setupCrossTabSync,
+  beginWorkspaceStorageIdentitySwitch,
+  finishWorkspaceStorageIdentitySwitch,
+  getActiveWorkspaceStorageIdentity,
+  summarizeWorkspaceStorageSnapshot,
+  copyWorkspaceStorageSnapshot,
+  readWorkspaceStorageSnapshot,
+} from './services/storage';
 import { getLatestReviewDraft, deleteReviewDraft, revalidateReviewDraft, type ReviewDraft } from './services/action-review';
-import { MOBILE_GESTURE_EDGE_PX, mobileGestureThreshold, mobileSidebarCloseThreshold, resolveMobileGestureIntent } from './utils/mobileNavigationGestures';
+import { mobileGestureThreshold, mobileSidebarCloseThreshold, mobileSidebarOpenThreshold, resolveMobileGestureIntent } from './utils/mobileNavigationGestures';
 import OnboardingFlow from './components/OnboardingFlow';
-import { buildOnboardingChatDraft, hasCompletedOnboarding } from './services/onboardingProfile';
+import WelcomeLanding from './components/WelcomeLanding';
+import { buildOnboardingChatDraft, hasCompletedOnboarding, skipOnboarding } from './services/onboardingProfile';
+import { getManagedAiLimitCopy, type ManagedAiLimitCode } from './services/ai/managedAiLimitCopy';
 
 // Helper to safely load dynamic chunks across deployments
 function lazyWithRetry<T extends React.ComponentType<any>>(
@@ -85,6 +97,39 @@ const LazyLoadFallback = () => (
   </div>
 );
 
+async function rehydrateWorkspaceForIdentity(identity: string, holdPersistenceWrites = false): Promise<void> {
+  // BYOK is kept only in memory; clear it before another identity becomes active.
+  setEphemeralApiKey(null);
+  beginWorkspaceStorageIdentitySwitch(identity);
+  globalPendingMutationQueue.setStorageIdentity(identity);
+  useStore.setState({ ...useStore.getInitialState(), workspaceStorageIdentity: identity, isHydrated: false });
+  let hydrated = false;
+  try {
+    await new Promise<void>(resolve => {
+      let unsubscribe = () => {};
+      unsubscribe = useStore.persist.onFinishHydration(() => {
+        unsubscribe();
+        resolve();
+      });
+      useStore.persist.rehydrate();
+    });
+    hydrated = true;
+  } finally {
+    if (!holdPersistenceWrites || !hydrated) finishWorkspaceStorageIdentitySwitch(identity);
+  }
+}
+
+function waitForInitialWorkspaceHydration(): Promise<void> {
+  if (useStore.getState().isHydrated) return Promise.resolve();
+  return new Promise(resolve => {
+    let unsubscribe = () => {};
+    unsubscribe = useStore.persist.onFinishHydration(() => {
+      unsubscribe();
+      resolve();
+    });
+  });
+}
+
 const App: React.FC = () => {
   const {
     isHydrated,
@@ -122,6 +167,8 @@ const App: React.FC = () => {
     setLastTurnDiagnostics,
     addToast,
   } = useStore();
+  const syncConflicts = useStore(state => state.conflicts);
+  const resolveSyncConflict = useStore(state => state.resolveConflict);
 
   const input = useStore(state => state.unsentDrafts[state.activeBranchId]?.text || '');
   const setInput = useCallback((text: string) => {
@@ -163,34 +210,64 @@ const App: React.FC = () => {
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authInitialMode, setAuthInitialMode] = useState<'signin' | 'signup'>('signin');
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
   const [authResolved, setAuthResolved] = useState(false);
-  const [managedAiLimit, setManagedAiLimit] = useState<'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED' | null>(null);
+  const [workspaceTransitioning, setWorkspaceTransitioning] = useState(false);
+  const [legacyWorkspaceRecovery, setLegacyWorkspaceRecovery] = useState<{
+    uid: string;
+    entities: number;
+    relationships: number;
+    messages: number;
+    chatSessions: number;
+    otherItems: number;
+    preferencesChanged: boolean;
+  } | null>(null);
+  const [managedAiLimit, setManagedAiLimit] = useState<ManagedAiLimitCode | null>(null);
   const managedAiDialogRef = useRef<HTMLElement | null>(null);
   const [chatWidth, setChatWidth] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
   const chatPaneRef = useRef<HTMLDivElement>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [mobileSidebarDragX, setMobileSidebarDragX] = useState(0);
+  const resolvedAuthUidRef = useRef<string | null | undefined>(undefined);
   const mobileSidebarRef = useRef<HTMLDivElement>(null);
   const mobileSidebarCloseRef = useRef<HTMLButtonElement>(null);
   const mobileSidebarGestureRef = useRef<{ x: number; y: number; lastX: number; lastY: number } | null>(null);
+  const suppressSidebarClickRef = useRef(false);
+  const mobileNavigationLockUntilRef = useRef(0);
+  const mobileSidebarCloseTimerRef = useRef<number | null>(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [mobileGestureOffset, setMobileGestureOffset] = useState({ x: 0, y: 0 });
   const [isMobileRefreshing, setIsMobileRefreshing] = useState(false);
   const lastNonChatViewRef = useRef<ViewType>(currentView === 'chat' ? 'dashboard' : currentView);
+  const mobileCurrentViewRef = useRef<ViewType>(currentView);
   const mobileTouchStartRef = useRef<{
+    touchId: number;
+    gestureTarget: Element | null;
     x: number;
     y: number;
     startX: number;
     startedAtTop: boolean;
     canNavigateToChat: boolean;
     canReturnToView: boolean;
+    canOpenSidebar: boolean;
+    sidebarDragActive: boolean;
   } | null>(null);
 
+  useEffect(() => () => {
+    if (mobileSidebarCloseTimerRef.current !== null) window.clearTimeout(mobileSidebarCloseTimerRef.current);
+  }, []);
+
   useEffect(() => {
+    mobileCurrentViewRef.current = currentView;
     if (currentView !== 'chat') lastNonChatViewRef.current = currentView;
   }, [currentView]);
+
+  const getMobileReturnView = () => lastNonChatViewRef.current === 'chat'
+    ? 'dashboard' as ViewType
+    : lastNonChatViewRef.current;
 
   useEffect(() => {
     if (!isMobileSidebarOpen) return;
@@ -235,12 +312,12 @@ const App: React.FC = () => {
   }, [isMobileSidebarOpen]);
   // Dynamic context-aware suggestions (time of day, events, tasks, meals)
   useEffect(() => {
-    const ctx = { entities: getActiveEntities(entities), foodLogs, subjects };
+    const ctx = { entities: getActiveEntities(entities), foodLogs, subjects, timezone: settings.timezone };
     setContextualSuggestions(getInstantContextualSuggestions(ctx));
     generateContextualSuggestions(ctx).then(res => {
       if (res && res.length > 0) setContextualSuggestions(res);
     }).catch(err => console.warn('[App] Suggestions generation failed:', err));
-  }, [entities.length, foodLogs?.length, subjects?.length]);
+  }, [entities.length, foodLogs?.length, subjects?.length, settings.timezone]);
 
   const handleSelectSuggestion = (suggestion: ContextualSuggestion) => {
     setInput(suggestion.prompt);
@@ -256,7 +333,10 @@ const App: React.FC = () => {
   const { currentUser, setCurrentUser, loadFromCloud, syncToCloud } = useStore();
 
   const handleMobileTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    if (!isMobile || isMobileSidebarOpen || loading || isStreaming || isLiveMode) return;
+    if (!isMobile || Date.now() < mobileNavigationLockUntilRef.current || isMobileSidebarOpen || loading || isStreaming || isLiveMode) {
+      mobileTouchStartRef.current = null;
+      return;
+    }
     if (event.touches.length !== 1) {
       mobileTouchStartRef.current = null;
       setMobileGestureOffset({ x: 0, y: 0 });
@@ -281,20 +361,30 @@ const App: React.FC = () => {
       if (scrollable && node.scrollTop > 0) startedAtTop = false;
       node = node.parentElement;
     }
+    const activeView = mobileCurrentViewRef.current;
     mobileTouchStartRef.current = {
+      touchId: touch.identifier,
+      gestureTarget: target,
       x: touch.clientX,
       y: touch.clientY,
       startX: touch.clientX,
       startedAtTop,
-      canNavigateToChat: currentView !== 'chat',
-      canReturnToView: currentView === 'chat' && lastNonChatViewRef.current !== 'chat',
+      canNavigateToChat: activeView !== 'chat',
+      canReturnToView: activeView === 'chat',
+      canOpenSidebar: activeView !== 'chat',
+      sidebarDragActive: false,
     };
   };
 
   const handleMobileTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
     const start = mobileTouchStartRef.current;
     if (!start) return;
-    if (document.getSelection()?.isCollapsed === false) {
+    const selection = document.getSelection();
+    const selectionIntersectsTouchTarget = Boolean(
+      selection && !selection.isCollapsed && selection.rangeCount > 0 && start.gestureTarget
+      && selection.getRangeAt(0).intersectsNode(start.gestureTarget),
+    );
+    if (selectionIntersectsTouchTarget) {
       mobileTouchStartRef.current = null;
       setMobileGestureOffset({ x: 0, y: 0 });
       return;
@@ -311,11 +401,23 @@ const App: React.FC = () => {
     const isHorizontal = Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
     const isPullingDown = deltaY > 0 && Math.abs(deltaY) > Math.abs(deltaX) * 1.2 && start.startedAtTop;
 
-    if (isHorizontal && ((deltaX < 0 && start.canNavigateToChat) || (deltaX > 0 && (start.startX <= MOBILE_GESTURE_EDGE_PX || start.canReturnToView)))) {
+    if (isHorizontal && deltaX > 0 && start.canOpenSidebar) {
+      // Reveal the real drawer over a stationary page. The page itself only
+      // slides for Chat navigation, which has a separate destination preview.
+      if (deltaX > 8) {
+        start.sidebarDragActive = true;
+        setIsMobileSidebarOpen(true);
+        setMobileSidebarDragX(Math.min(0, -256 + deltaX));
+      }
+      setMobileGestureOffset({ x: 0, y: 0 });
+    } else if (isHorizontal && ((deltaX < 0 && start.canNavigateToChat) || (deltaX > 0 && start.canReturnToView))) {
       const dragLimit = Math.max(150, window.innerWidth * 0.78);
       setMobileGestureOffset({ x: Math.max(-dragLimit, Math.min(dragLimit, deltaX * 0.94)), y: 0 });
     } else if (isPullingDown && !loading && !isStreaming && !isLiveMode) {
-      setMobileGestureOffset({ x: 0, y: Math.min(88, deltaY * 0.42) });
+      // Keep the release state reachable: the previous 44px visual cap was
+      // below the 47px arm point on a 390px viewport, so it could never say
+      // "Release to update" even though the gesture itself could commit.
+      setMobileGestureOffset({ x: 0, y: Math.min(88, deltaY * 0.72) });
     } else {
       setMobileGestureOffset({ x: 0, y: 0 });
     }
@@ -329,6 +431,24 @@ const App: React.FC = () => {
       return;
     }
 
+    if (start.sidebarDragActive) {
+      mobileNavigationLockUntilRef.current = Date.now() + 300;
+      const shouldOpen = deltaX >= mobileSidebarOpenThreshold(window.innerWidth) && Math.abs(deltaX) > Math.abs(deltaY) * 1.2;
+      if (shouldOpen) {
+        mobileNavigationLockUntilRef.current = Date.now() + 260;
+        setIsMobileSidebarOpen(true);
+        setMobileSidebarDragX(0);
+      } else {
+        setMobileSidebarDragX(-256);
+        mobileSidebarCloseTimerRef.current = window.setTimeout(() => {
+          setIsMobileSidebarOpen(false);
+          setMobileSidebarDragX(0);
+          mobileSidebarCloseTimerRef.current = null;
+        }, 180);
+      }
+      return;
+    }
+
     const intent = resolveMobileGestureIntent({
       deltaX,
       deltaY,
@@ -336,14 +456,32 @@ const App: React.FC = () => {
       startedAtTop: start.startedAtTop,
       canNavigateToChat: start.canNavigateToChat,
       canReturnToView: start.canReturnToView,
-      distanceThresholdPx: mobileGestureThreshold(window.innerWidth),
+      canOpenSidebar: start.canOpenSidebar,
+      distanceThresholdPx: start.canOpenSidebar
+        ? mobileSidebarOpenThreshold(window.innerWidth)
+        : mobileGestureThreshold(window.innerWidth),
     });
     setMobileGestureOffset({ x: 0, y: 0 });
     if (intent === 'open-menu') {
+      mobileNavigationLockUntilRef.current = Date.now() + 260;
       openMobileSidebar();
     }
-    if (intent === 'open-chat') setView('chat');
-    if (intent === 'return-view') setView(lastNonChatViewRef.current);
+    if (intent === 'open-chat') {
+      // Keep a short settle window beyond the 220ms page transition so a
+      // rapid reverse drag cannot race the view swap / gesture preview.
+      mobileNavigationLockUntilRef.current = Date.now() + 560;
+      const activeView = mobileCurrentViewRef.current;
+      if (activeView !== 'chat') lastNonChatViewRef.current = activeView;
+      mobileCurrentViewRef.current = 'chat';
+      setView('chat');
+    }
+    if (intent === 'return-view') {
+      mobileNavigationLockUntilRef.current = Date.now() + 560;
+      const destination = getMobileReturnView();
+      lastNonChatViewRef.current = destination;
+      mobileCurrentViewRef.current = destination;
+      setView(destination);
+    }
     if (intent === 'refresh' && !loading && !isStreaming && !isLiveMode) {
       try {
         sessionStorage.setItem('flowmate-mobile-refresh-draft', input);
@@ -359,29 +497,86 @@ const App: React.FC = () => {
 
   const handleMobileTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
     const start = mobileTouchStartRef.current;
-    const touch = event.changedTouches[0];
+    const touch = start && Array.from(event.changedTouches).find(item => item.identifier === start.touchId);
     if (start && touch) finishMobileGesture(touch.clientX - start.x, touch.clientY - start.y);
-    else setMobileGestureOffset({ x: 0, y: 0 });
   };
 
-  const handleMobileTouchCancel = () => {
+  const handleMobileTouchCancel = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = mobileTouchStartRef.current;
+    if (start && !Array.from(event.changedTouches).some(item => item.identifier === start.touchId)) return;
     mobileTouchStartRef.current = null;
     setMobileGestureOffset({ x: 0, y: 0 });
   };
 
   const openMobileSidebar = () => {
+    if (mobileSidebarCloseTimerRef.current !== null) {
+      window.clearTimeout(mobileSidebarCloseTimerRef.current);
+      mobileSidebarCloseTimerRef.current = null;
+    }
+    mobileNavigationLockUntilRef.current = Date.now() + 300;
     setMobileSidebarDragX(-256);
     setIsMobileSidebarOpen(true);
     window.requestAnimationFrame(() => setMobileSidebarDragX(0));
   };
 
+  const navigateFromMobileControl = (view: ViewType) => {
+    // An explicit tap is a fresh, unambiguous navigation action. It should
+    // clear the short gesture-settling lock so a following swipe can begin.
+    mobileNavigationLockUntilRef.current = 0;
+    if (view !== 'chat') lastNonChatViewRef.current = view;
+    else if (mobileCurrentViewRef.current !== 'chat') lastNonChatViewRef.current = mobileCurrentViewRef.current;
+    mobileCurrentViewRef.current = view;
+    setView(view);
+  };
+
+  // The fixed mobile header sits outside the page gesture surface. Track edge
+  // swipes there too, so starting beside the hamburger does not silently miss.
+  const handleMobileHeaderTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0];
+    if (!isMobile || Date.now() < mobileNavigationLockUntilRef.current || isMobileSidebarOpen || loading || isStreaming || isLiveMode || event.touches.length !== 1 || !touch) {
+      mobileTouchStartRef.current = null;
+      return;
+    }
+    mobileTouchStartRef.current = {
+      touchId: touch.identifier,
+      gestureTarget: event.target instanceof Element ? event.target : null,
+      x: touch.clientX,
+      y: touch.clientY,
+      startX: touch.clientX,
+      startedAtTop: false,
+      canNavigateToChat: mobileCurrentViewRef.current !== 'chat',
+      canReturnToView: mobileCurrentViewRef.current === 'chat',
+      canOpenSidebar: mobileCurrentViewRef.current !== 'chat',
+      sidebarDragActive: false,
+    };
+  };
+
+  const handleMobileHeaderTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = mobileTouchStartRef.current;
+    const touch = start && Array.from(event.changedTouches).find(item => item.identifier === start.touchId);
+    if (start && touch) {
+      const deltaX = touch.clientX - start.startX;
+      const deltaY = touch.clientY - start.y;
+      const commitThreshold = currentView === 'chat'
+        ? mobileGestureThreshold(window.innerWidth)
+        : mobileSidebarOpenThreshold(window.innerWidth);
+      if (deltaX >= commitThreshold && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) event.preventDefault();
+      finishMobileGesture(deltaX, deltaY);
+    }
+  };
+
   const handleMobileSidebarTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (Date.now() < mobileNavigationLockUntilRef.current) return;
     const touch = event.touches[0];
     if (!touch) return;
     const target = event.target instanceof Element ? event.target : null;
-    if (target?.closest('button, a, input, textarea, select, [data-swipe-lock]')) {
+    // Navigation rows are the main usable swipe surface in the drawer, so a
+    // horizontal drag may begin on a button. Keep text-entry and explicit
+    // gesture-locked controls native.
+    if (target?.closest('input, textarea, select, [data-swipe-lock]')) {
       return;
     }
+    suppressSidebarClickRef.current = false;
     mobileSidebarGestureRef.current = { x: touch.clientX, y: touch.clientY, lastX: touch.clientX, lastY: touch.clientY };
   };
 
@@ -393,8 +588,9 @@ const App: React.FC = () => {
     start.lastY = touch.clientY;
     const deltaX = touch.clientX - start.x;
     const deltaY = touch.clientY - start.y;
-    if (deltaX < 0 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
-      setMobileSidebarDragX(Math.max(-220, deltaX));
+    if (deltaX < -8 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+      suppressSidebarClickRef.current = true;
+      setMobileSidebarDragX(Math.max(-256, deltaX));
     } else {
       setMobileSidebarDragX(0);
     }
@@ -419,14 +615,19 @@ const App: React.FC = () => {
       distanceThresholdPx: mobileSidebarCloseThreshold(window.innerWidth),
     });
     if (intent === 'close-menu') {
+      mobileNavigationLockUntilRef.current = Date.now() + 300;
       setMobileSidebarDragX(-256);
-      window.setTimeout(() => {
+      suppressSidebarClickRef.current = true;
+      mobileSidebarCloseTimerRef.current = window.setTimeout(() => {
         setIsMobileSidebarOpen(false);
         setMobileSidebarDragX(0);
+        suppressSidebarClickRef.current = false;
+        mobileSidebarCloseTimerRef.current = null;
       }, 180);
       return;
     }
     setMobileSidebarDragX(0);
+    window.setTimeout(() => { suppressSidebarClickRef.current = false; }, 300);
   };
 
   const handleMobileSidebarTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
@@ -529,15 +730,19 @@ const App: React.FC = () => {
   const [restoredDraft, setRestoredDraft] = useState<ReviewDraft | null>(null);
 
   useEffect(() => {
-    getLatestReviewDraft().then(draft => {
+    setRestoredDraft(null);
+    if (!isHydrated || !authResolved || workspaceTransitioning) return;
+    const identity = currentUser?.uid || 'legacy';
+    getLatestReviewDraft(identity).then(draft => {
       if (!draft || draft.ops.length === 0) return;
+      if ((useStore.getState().currentUser?.uid || 'legacy') !== identity) return;
       const kernelEntities = useStore.getState().kernelEntities || {};
       const validation = revalidateReviewDraft(draft, kernelEntities);
       if (validation.isValid || validation.validOpCount > validation.conflictCount) {
         setRestoredDraft(draft);
       }
     }).catch(() => {});
-  }, []);
+  }, [currentUser?.uid, isHydrated, authResolved, workspaceTransitioning]);
 
   const handleResumeDraft = () => {
     if (!restoredDraft) return;
@@ -547,8 +752,27 @@ const App: React.FC = () => {
 
   const handleDiscardDraft = async () => {
     if (!restoredDraft) return;
-    await deleteReviewDraft(restoredDraft.id).catch(() => {});
+    await deleteReviewDraft(restoredDraft.id, currentUser?.uid || 'legacy').catch(() => {});
     setRestoredDraft(null);
+  };
+
+  const resolveLegacyWorkspaceChoice = (adopt: boolean) => {
+    if (!legacyWorkspaceRecovery) return;
+    const { uid } = legacyWorkspaceRecovery;
+    const decisionKey = `flowmate:workspace:legacy-decision:${encodeURIComponent(uid)}`;
+    if (adopt && !copyWorkspaceStorageSnapshot('legacy', uid)) {
+      addToast('The saved local workspace could not be copied safely. Nothing was overwritten.', 'error');
+      return;
+    }
+    try {
+      window.localStorage.setItem(decisionKey, adopt ? 'adopted' : 'separate');
+    } catch {
+      addToast('This choice could not be saved in this browser. Your workspaces remain separate.', 'error');
+      return;
+    }
+    if (!adopt) finishWorkspaceStorageIdentitySwitch(uid);
+    setLegacyWorkspaceRecovery(null);
+    window.location.reload();
   };
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -596,159 +820,292 @@ const App: React.FC = () => {
     }
   }, [input]);
 
-  // Force close chat if Zen Mode is active
-  useEffect(() => {
-    if (isZenMode) setIsChatOpen(false);
-    else setIsChatOpen(true);
-  }, [isZenMode]);
-
   // Auth State Listener + Sync Integration
   useEffect(() => {
+    let transitionSequence = 0;
+    let disposed = false;
+
+    const startSyncForUser = (user: NonNullable<typeof currentUser>) => {
+      initializeSync(
+        user.uid,
+        (status, error) => {
+          if (useStore.getState().currentUser?.uid !== user.uid ||
+              useStore.getState().workspaceStorageIdentity !== user.uid) return;
+          useStore.setState({ syncStatus: status, syncError: error || null });
+        },
+        (remoteData) => {
+          const ownerState = useStore.getState();
+          if (ownerState.currentUser?.uid !== user.uid || ownerState.workspaceStorageIdentity !== user.uid) return;
+          if (remoteData.initialReadFailed) {
+            useStore.setState({ syncStatus: 'error', syncError: 'Could not load cloud workspace' });
+            return;
+          }
+          const state = useStore.getState();
+          const { nextKernelEntities, conflicts: newConflicts } = reconcileEntityCollection(
+            state.kernelEntities,
+            remoteData.entities || [],
+            globalPendingMutationQueue,
+            new Date().toISOString(),
+            new Set((state.conflicts || []).map(conflict => conflict.entity_id))
+          );
+          const unresolvedConflicts = [...(state.conflicts || []), ...newConflicts];
+          setSyncConflictedEntityIds(new Set(unresolvedConflicts.map(conflict => conflict.entity_id)));
+          const stableKernelEntities = retainCanonicalReference(state.kernelEntities, nextKernelEntities);
+          const projectedCandidate = projectKernelEntitiesToLegacy(stableKernelEntities);
+          const projectedEntities = retainCanonicalReference(state.entities, projectedCandidate);
+          const merged = mergeData(
+            { entities: projectedEntities as unknown as Entity[], relationships: state.relationships },
+            { entities: remoteData.entities, relationships: remoteData.relationships }
+          );
+          const rawMergedMsgs = remoteData.messages
+            ? mergeMessages(state.messages || [], remoteData.messages)
+            : state.messages;
+          const mergedChatSessions = remoteData.chatSessions
+            ? mergeChatSessions(state.chatSessions || [], remoteData.chatSessions)
+            : (state.chatSessions || []);
+          const mergedConversationBranchesBeforeRecovery = remoteData.conversationBranches
+            ? mergeConversationBranches(state.branches || [], remoteData.conversationBranches)
+            : (state.branches || []);
+          const prunedMessages = filterMessagesBySessionState(rawMergedMsgs || [], mergedChatSessions);
+          const existingSessionIds = new Set(mergedChatSessions.map(s => s.id));
+          const missingSessions: ChatSession[] = prunedMessages
+            .filter(m => m.channelId && !existingSessionIds.has(m.channelId))
+            .map(m => {
+              existingSessionIds.add(m.channelId!);
+              return {
+                id: m.channelId!, title: 'Chat ' + m.channelId!.slice(0, 8),
+                created_at: m.created_at, updated_at: m.created_at, deleted: false,
+              };
+            });
+          const finalChatSessions = [...mergedChatSessions, ...missingSessions];
+          const mergedMsgs = filterMessagesBySessionState(prunedMessages, finalChatSessions);
+          const mergedConversationBranches = repairStaleConversationBranchHeads(
+            mergedConversationBranchesBeforeRecovery,
+            mergedMsgs,
+          );
+          const branchesChangedByReconciliation = !sameConversationBranches(
+            state.branches || [], mergedConversationBranches,
+          );
+          const activeSessions = getActiveChatSessions(finalChatSessions);
+          const currentActive = state.activeSessionId;
+          const nextActive = activeSessions.length > 0 && (!currentActive || !activeSessions.some(s => s.id === currentActive))
+            ? activeSessions[0].id
+            : activeSessions.length === 0 ? 'general' : currentActive;
+          // Remote updates may enrich an existing message with final status,
+          // failure guidance, attachment metadata, or tool-review state while
+          // preserving its ID/text/time. Compare the full record so another
+          // device does not keep a stale pre-response version indefinitely.
+          const sessionsUnchanged = canonicalJson(state.chatSessions || []) === canonicalJson(finalChatSessions);
+          const messagesUnchanged = canonicalJson(state.messages || []) === canonicalJson(mergedMsgs || []);
+
+          useStore.setState({
+            kernelEntities: nextKernelEntities,
+            entities: projectedEntities,
+            relationships: retainCanonicalReference(state.relationships, merged.relationships),
+            conflicts: unresolvedConflicts.filter((conflict, index, conflicts) =>
+              conflicts.findIndex(candidate => candidate.entity_id === conflict.entity_id && candidate.conflict_type === conflict.conflict_type) === index
+            ),
+            universalTags: remoteData.universalTags
+              ? retainCanonicalReference(state.universalTags, remoteData.universalTags)
+              : state.universalTags,
+            messages: messagesUnchanged ? state.messages : mergedMsgs,
+            chatSessions: sessionsUnchanged ? state.chatSessions : finalChatSessions,
+            branches: sameConversationBranches(state.branches || [], mergedConversationBranches)
+              ? state.branches
+              : mergedConversationBranches,
+            ...(nextActive !== currentActive ? { activeSessionId: nextActive } : {}),
+            ...(remoteData.settings ? {
+              settings: retainCanonicalReference(
+                state.settings,
+                mergeCloudSettings(state.settings, remoteData.settings) as typeof state.settings
+              ),
+            } : {}),
+            ...(remoteData.foodLogs?.length ? { foodLogs: remoteData.foodLogs } : {}),
+            ...(remoteData.subjects?.length ? { subjects: remoteData.subjects } : {}),
+            ...(remoteData.classSchedule?.length ? { classSchedule: remoteData.classSchedule } : {}),
+            ...(remoteData.holidays?.length ? { holidays: remoteData.holidays } : {}),
+            ...(remoteData.attendanceLogs?.length ? { attendanceLogs: remoteData.attendanceLogs } : {}),
+          });
+
+          // Replay identity-local chat outbox only after the server snapshot has
+          // been reconciled. A missing remote message is safe to append by ID;
+          // an existing remote message remains canonical until an edit model
+          // with an explicit base revision is available.
+          if (remoteData.messages && !useStore.getState().isDemoMode) {
+            const remoteMessageIds = new Set(remoteData.messages.map(message => message.id));
+            const localOnlyMessages = mergedMsgs
+              .filter(message => !remoteMessageIds.has(message.id) && !isDefaultWelcomeMessage(message))
+              .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+            void (async () => {
+              for (const message of localOnlyMessages) await syncMessage(message);
+            })();
+          }
+
+          if (remoteData.chatSessions && !useStore.getState().isDemoMode) {
+            const remoteSessionsById = new Map(remoteData.chatSessions.map(session => [session.id, session]));
+            const hasLocalSessionChanges = finalChatSessions.some(session => {
+              const remote = remoteSessionsById.get(session.id);
+              return !remote || session.updated_at > remote.updated_at ||
+                !!session.deleted !== !!remote.deleted || session.messages_cleared_at !== remote.messages_cleared_at;
+            });
+            if (hasLocalSessionChanges) {
+              void syncChatSessionsToCloud(finalChatSessions).catch(error =>
+                console.warn('[Sync] Could not replay chat session metadata:', error));
+            }
+          }
+
+          if (!branchesChangedByReconciliation && remoteData.conversationBranches && !useStore.getState().isDemoMode &&
+              !sameConversationBranches(mergedConversationBranches, remoteData.conversationBranches)) {
+            void syncChatBranchesToCloud(mergedConversationBranches);
+          }
+
+          // Seed only after explicit sync consent and only when the server confirms an empty entity collection.
+          if (remoteData.isInitialLoad && !useStore.getState().isDemoMode &&
+              (!remoteData.entities || remoteData.entities.length === 0) && merged.entities.length > 0) {
+            scheduleSync(() => ({
+              entities: merged.entities,
+              relationships: merged.relationships,
+              universalTags: remoteData.universalTags || state.universalTags,
+              settings: state.settings,
+            }));
+          }
+
+          // The debounced save is memory-only. After a tab restart, replay the
+          // identity-scoped durable queue only after this authoritative server
+          // snapshot has been merged and conflict IDs are protected.
+          if (remoteData.isInitialLoad && !useStore.getState().isDemoMode) {
+            replayPendingEntityMutations(() => {
+              const latest = useStore.getState();
+              return {
+                entities: latest.entities,
+                relationships: latest.relationships,
+                universalTags: latest.universalTags,
+                settings: latest.settings,
+              };
+            });
+          }
+        },
+        hasWorkspaceCloudSyncConsent(user.uid),
+        (metadata) => {
+          const active = useStore.getState();
+          if (active.currentUser?.uid !== user.uid || active.workspaceStorageIdentity !== user.uid) return;
+          useStore.setState({
+            syncReadSource: metadata.fromCache ? 'cache' : 'server',
+            syncHasPendingWrites: metadata.hasPendingWrites,
+          });
+        },
+      );
+    };
+
+    // Enabling sync can happen after authentication has completed. If the
+    // workspace was previously withheld while an identity transition was
+    // resolving, the manager may not yet have a user-bound session; a plain
+    // consent toggle would then have no baseline to load. Re-initialize from
+    // the current store identity so saved cloud data appears without requiring
+    // a page reload. Revocation stays immediate and never deletes cloud data.
+    const unsubscribeConsent = subscribeToWorkspaceCloudSyncConsent(({ uid, enabled }) => {
+      const activeUser = useStore.getState().currentUser;
+      if (disposed || activeUser?.uid !== uid) return;
+      if (enabled) startSyncForUser(activeUser);
+      else setSyncWorkspaceCloudSyncConsent(false);
+      useStore.setState({ syncError: null, syncStatus: enabled ? 'syncing' : 'idle' });
+    });
+
+    const applyAuthState = (user: typeof currentUser, startWorkspaceSync: boolean) => {
+      const nextUid = user?.uid ?? null;
+      if (resolvedAuthUidRef.current !== nextUid) {
+        resolvedAuthUidRef.current = nextUid;
+        useStore.setState({
+          syncStatus: 'idle', syncError: null, lastSyncedAt: null,
+          syncReadSource: 'unknown', syncHasPendingWrites: false,
+        });
+      }
+      setCurrentUser(user);
+      setAuthResolved(true);
+      if (user && startWorkspaceSync) startSyncForUser(user);
+      else cleanupSync();
+    };
+
     void completeGoogleRedirectSignIn().then(result => {
       if (result.error) addToast('Google sign-in could not be completed. Please try again.', 'error');
     });
     const unsubscribe = onAuthChange((user) => {
-      setCurrentUser(user);
-      setAuthResolved(true);
-      if (user) {
-        // Initialize sync manager
-        initializeSync(
-          user.uid,
-          (status, error) => {
-            useStore.setState({
-              syncStatus: status,
-              syncError: error || null,
-              lastSyncedAt: status === 'idle' ? new Date().toISOString() : useStore.getState().lastSyncedAt
-            });
-          },
-          (remoteData) => {
-            if (remoteData.initialReadFailed) {
-              useStore.setState({ syncStatus: 'error', syncError: 'Could not load cloud workspace' });
-              return;
-            }
-            // Reconcile remote changes into canonical kernel state (P1-09)
-            const state = useStore.getState();
-            const { nextKernelEntities, conflicts: newConflicts } = reconcileEntityCollection(
-              state.kernelEntities,
-              remoteData.entities || [],
-              globalPendingMutationQueue
-            );
-            const projectedEntities = projectKernelEntitiesToLegacy(nextKernelEntities);
+      const transition = ++transitionSequence;
+      void (async () => {
+      await waitForInitialWorkspaceHydration();
+      if (disposed || transition !== transitionSequence) return;
+      const targetIdentity = user?.uid || 'legacy';
+      const activeIdentity = getActiveWorkspaceStorageIdentity();
+      const legacySummary = user && activeIdentity === 'legacy'
+        ? summarizeWorkspaceStorageSnapshot('legacy', useStore.getInitialState().settings)
+        : null;
+      const accountSnapshotMissing = !!user && !readWorkspaceStorageSnapshot(user.uid);
+      const decisionKey = user ? `flowmate:workspace:legacy-decision:${encodeURIComponent(user.uid)}` : '';
+      let legacyDecision: string | null = null;
+      try { legacyDecision = decisionKey ? window.localStorage.getItem(decisionKey) : null; } catch { /* Keep the prompt suppressed only when verified below. */ }
+      const needsLegacyRecoveryChoice = !!legacySummary?.hasContent && accountSnapshotMissing && !legacyDecision;
 
-            const merged = mergeData(
-              { entities: projectedEntities as unknown as Entity[], relationships: state.relationships },
-              { entities: remoteData.entities, relationships: remoteData.relationships }
-            );
-            const rawMergedMsgs = remoteData.messages
-              ? mergeMessages(state.messages || [], remoteData.messages)
-              : state.messages;
+      const finishAuth = () => {
+        if (disposed || transition !== transitionSequence) return;
+        applyAuthState(user, !needsLegacyRecoveryChoice);
+        if (needsLegacyRecoveryChoice && legacySummary) {
+          setLegacyWorkspaceRecovery({ uid: user!.uid, ...legacySummary });
+        } else {
+          setLegacyWorkspaceRecovery(null);
+        }
+        setWorkspaceTransitioning(false);
+      };
 
-            const mergedChatSessions = remoteData.chatSessions
-              ? mergeChatSessions(state.chatSessions || [], remoteData.chatSessions)
-              : (state.chatSessions || []);
-
-            const deletedSessionIds = new Set(
-              mergedChatSessions.filter(s => s.deleted).map(s => s.id)
-            );
-
-            // Strip messages belonging to deleted sessions to prevent zombie resurrects
-            const mergedMsgs = (rawMergedMsgs || []).filter(
-              m => !m.channelId || !deletedSessionIds.has(m.channelId)
-            );
-
-            const existingSessionIds = new Set(mergedChatSessions.map(s => s.id));
-            const missingSessions: ChatSession[] = (mergedMsgs || [])
-              .filter(m => m.channelId && !existingSessionIds.has(m.channelId) && !deletedSessionIds.has(m.channelId))
-              .map(m => {
-                existingSessionIds.add(m.channelId!);
-                return {
-                  id: m.channelId!,
-                  title: 'Chat ' + m.channelId!.slice(0, 8),
-                  created_at: m.created_at,
-                  updated_at: m.created_at,
-                  deleted: false,
-                };
-              });
-
-            const finalChatSessions = [...mergedChatSessions, ...missingSessions];
-            const activeSessions = getActiveChatSessions(finalChatSessions);
-            const currentActive = state.activeSessionId;
-            const nextActive = (activeSessions.length > 0 && (!currentActive || !activeSessions.some(s => s.id === currentActive)))
-              ? activeSessions[0].id
-              : (activeSessions.length === 0 ? 'general' : currentActive);
-
-            const sessionsUnchanged = (state.chatSessions || []).length === finalChatSessions.length &&
-              (state.chatSessions || []).every((s, i) =>
-                s.id === finalChatSessions[i].id &&
-                s.title === finalChatSessions[i].title &&
-                s.deleted === finalChatSessions[i].deleted &&
-                s.updated_at === finalChatSessions[i].updated_at
-              );
-
-            const messagesUnchanged = (state.messages || []).length === (mergedMsgs || []).length &&
-              (state.messages || []).every((m, i) =>
-                m.id === mergedMsgs[i].id &&
-                m.text === mergedMsgs[i].text &&
-                m.created_at === mergedMsgs[i].created_at
-              );
-
-            useStore.setState({
-              kernelEntities: nextKernelEntities,
-              entities: projectedEntities,
-              relationships: merged.relationships,
-              conflicts: [...(state.conflicts || []), ...newConflicts],
-              universalTags: remoteData.universalTags || state.universalTags,
-              messages: messagesUnchanged ? state.messages : mergedMsgs,
-              chatSessions: sessionsUnchanged ? state.chatSessions : finalChatSessions,
-              ...(nextActive !== currentActive ? { activeSessionId: nextActive } : {}),
-              ...(remoteData.settings ? { settings: mergeCloudSettings(state.settings, remoteData.settings) as typeof state.settings } : {}),
-              ...(remoteData.foodLogs?.length ? { foodLogs: remoteData.foodLogs } : {}),
-              ...(remoteData.subjects?.length ? { subjects: remoteData.subjects } : {}),
-              ...(remoteData.classSchedule?.length ? { classSchedule: remoteData.classSchedule } : {}),
-              ...(remoteData.holidays?.length ? { holidays: remoteData.holidays } : {}),
-              ...(remoteData.attendanceLogs?.length ? { attendanceLogs: remoteData.attendanceLogs } : {}),
-            });
-
-            // Only an explicit opt-in permits initial cloud reads or a seed
-            // upload. If this is a genuinely empty account, preserve the old
-            // local-first merge behavior and seed through the same gated queue.
-            if (remoteData.isInitialLoad && !useStore.getState().isDemoMode &&
-                (!remoteData.entities || remoteData.entities.length === 0) && merged.entities.length > 0) {
-              scheduleSync(() => ({
-                entities: merged.entities,
-                relationships: merged.relationships,
-                universalTags: remoteData.universalTags || state.universalTags,
-                settings: state.settings,
-              }));
-            }
-          },
-          hasWorkspaceCloudSyncConsent(user.uid),
-        );
-      } else {
-        cleanupSync();
+      if (targetIdentity === activeIdentity &&
+          useStore.getState().workspaceStorageIdentity === targetIdentity &&
+          useStore.getState().isHydrated) {
+        finishAuth();
+        return;
       }
+
+      cleanupSync();
+      setAuthResolved(false);
+      setLegacyWorkspaceRecovery(null);
+      setWorkspaceTransitioning(true);
+      void rehydrateWorkspaceForIdentity(targetIdentity, needsLegacyRecoveryChoice).then(finishAuth).catch(() => {
+        if (disposed || transition !== transitionSequence) return;
+        setWorkspaceTransitioning(false);
+        setAuthResolved(true);
+        addToast('This account workspace could not be opened safely. Your saved local data was left intact; reload to try again.', 'error');
+      });
+      })();
     });
     return () => {
+      disposed = true;
+      transitionSequence++;
       unsubscribe();
+      unsubscribeConsent();
       cleanupSync();
     };
   }, [setCurrentUser, loadFromCloud, addToast]);
 
-  // Consent changes are local, identity-scoped events. Revoke stops listeners
-  // and debounced uploads immediately; enabling triggers a gated initial read.
-  useEffect(() => subscribeToWorkspaceCloudSyncConsent(({ uid, enabled }) => {
-    if (useStore.getState().currentUser?.uid !== uid) return;
-    setSyncWorkspaceCloudSyncConsent(enabled);
-    useStore.setState({ syncError: null, syncStatus: enabled ? 'syncing' : 'idle' });
-  }), []);
-
   const onboardingIdentity = currentUser?.uid || 'guest';
   useEffect(() => {
-    if (!isHydrated || !authResolved) return;
+    if (!currentUser) return;
+    // Once a person has chosen an account journey, do not surprise them with
+    // the guest introduction when they later sign out to their local space.
+    skipOnboarding('guest');
+    setWelcomeDismissed(true);
+  }, [currentUser?.uid]);
+  useEffect(() => {
+    if (!isHydrated || !authResolved || workspaceTransitioning || showAuthModal) {
+      setShowOnboarding(false);
+      return;
+    }
     const deepLinked = Boolean(window.location.hash && !['#', '#dashboard'].includes(window.location.hash));
-    if (deepLinked || currentView !== 'dashboard') return;
-    setShowOnboarding(!hasCompletedOnboarding(onboardingIdentity));
-  }, [isHydrated, authResolved, onboardingIdentity, currentView]);
+    if (deepLinked || currentView !== 'dashboard') {
+      setShowOnboarding(false);
+      return;
+    }
+    // New guests get a product introduction first. Optional profile setup is
+    // available from that landing screen and is never required to explore.
+    setShowOnboarding(currentUser ? !hasCompletedOnboarding(onboardingIdentity) : false);
+  }, [isHydrated, authResolved, workspaceTransitioning, showAuthModal, onboardingIdentity, currentView]);
 
   // Auto-sync entities, relationships, food logs and attendance data to cloud when they change
   useEffect(() => {
@@ -763,10 +1120,22 @@ const App: React.FC = () => {
     let prevRelationships = useStore.getState().relationships;
     let prevTags = useStore.getState().universalTags;
     let prevSettings = useStore.getState().settings;
+    let prevBranches = useStore.getState().branches;
+    let prevWorkspaceSyncSignature = canonicalJson({
+      entities: prevEntities,
+      relationships: prevRelationships,
+      universalTags: prevTags,
+      settings: prevSettings,
+    });
 
     const unsub = useStore.subscribe((state) => {
       // Demo Mode Isolation: Never trigger auto-sync while exploring demo workspace
       if (!state.currentUser || state.isDemoMode) return;
+
+      if (state.branches !== prevBranches) {
+        prevBranches = state.branches;
+        void syncChatBranchesToCloud(state.branches);
+      }
 
       // Entities, relationships, tags, or settings changed -> auto-sync to Firestore
       if (
@@ -775,16 +1144,25 @@ const App: React.FC = () => {
         state.universalTags !== prevTags ||
         state.settings !== prevSettings
       ) {
-        prevEntities = state.entities;
-        prevRelationships = state.relationships;
-        prevTags = state.universalTags;
-        prevSettings = state.settings;
-        scheduleSync(() => ({
+        const nextWorkspaceSyncSignature = canonicalJson({
           entities: state.entities,
           relationships: state.relationships,
           universalTags: state.universalTags,
           settings: state.settings,
-        }));
+        });
+        prevEntities = state.entities;
+        prevRelationships = state.relationships;
+        prevTags = state.universalTags;
+        prevSettings = state.settings;
+        if (nextWorkspaceSyncSignature !== prevWorkspaceSyncSignature) {
+          prevWorkspaceSyncSignature = nextWorkspaceSyncSignature;
+          scheduleSync(() => ({
+            entities: state.entities,
+            relationships: state.relationships,
+            universalTags: state.universalTags,
+            settings: state.settings,
+          }));
+        }
       }
 
       // Food logs changed
@@ -858,16 +1236,9 @@ const App: React.FC = () => {
 
     const handleOnline = () => {
       setOnline(true);
-      // Trigger sync when coming back online
-      const state = useStore.getState();
-      if (state.currentUser && !state.isDemoMode) {
-        scheduleSync(() => ({
-          entities: state.entities,
-          relationships: state.relationships,
-          universalTags: state.universalTags,
-          settings: state.settings,
-        }));
-      }
+      // Resolve the server's current state before replaying the local outbox.
+      // Blindly uploading here can overwrite a newer edit from another device.
+      refreshWorkspaceFromCloud();
     };
 
     const handleOffline = () => setOnline(false);
@@ -954,19 +1325,6 @@ const App: React.FC = () => {
     }
   }, [pendingOrchestration, loading]);
 
-  if (!isHydrated) {
-    return (
-      <div className="flex items-center justify-center h-screen w-full bg-slate-950 text-slate-400">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
-          <p className="text-sm font-medium">Restoring your graph...</p>
-        </div>
-      </div>
-    );
-  }
-
-  const safeEntities = getActiveEntities(entities);
-
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       processFile(e.target.files[0]);
@@ -1031,6 +1389,11 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!isHydrated || !authResolved || workspaceTransitioning) {
+      useStore.getState().registerTurnExecutor(null);
+      return;
+    }
+
     const turnExecutor: TurnExecutor = async ({
       branchId,
       channelId,
@@ -1043,7 +1406,10 @@ const App: React.FC = () => {
       setLoading(true);
       const state = useStore.getState();
       const snapshot = state.getSnapshot();
-      const currentHistory = resolveBranchHistory(state.messages || [], userMessage.id, channelId);
+      const branchHistory = resolveBranchHistory(state.messages || [], userMessage.id, channelId);
+      const currentHistory = userMessage.turn_metadata?.context_recovery === 'recent'
+        ? branchHistory.slice(-12)
+        : branchHistory;
 
       let accumulatedText = '';
       let collectedMetrics: any = {};
@@ -1056,7 +1422,6 @@ const App: React.FC = () => {
           userMessage.attachment || undefined,
           {
             signal: signal || abortControllerRef.current?.signal,
-            onManagedAiLimit: (code) => setManagedAiLimit(code),
             onChunk: (chunk) => {
               accumulatedText += chunk;
               if (onChunk) onChunk(chunk);
@@ -1067,13 +1432,42 @@ const App: React.FC = () => {
               if (onMetrics) onMetrics(metrics);
               setLastTurnDiagnostics(collectedMetrics);
             },
-          }
+          },
+          { managedContextMode: userMessage.turn_metadata?.context_recovery === 'essentials' ? 'essentials' : 'full' },
         );
 
         const latestState = useStore.getState();
         const currentSession = (latestState.chatSessions || []).find(s => s.id === channelId);
         if (currentSession && currentSession.deleted) {
           console.warn(`[App] Session ${channelId} was deleted during turn. Discarding reply.`);
+          return;
+        }
+
+        if (toon.provider === 'unavailable' || toon.provider === 'managed-limited') {
+          // Keep the reason beside this exact submission as durable metadata,
+          // but never turn a rejection into assistant content or a later turn.
+          // Only explicit transport-uncertain paths (for example an abort or
+          // provider timeout after submission) retain the cost hold. A known
+          // unavailable provider with no classified outcome was not sent.
+          const failureOutcome = toon.failureOutcome || 'not_sent';
+          useStore.setState(current => ({
+            messages: current.messages.map(message =>
+              message.id === assistantMessageId
+                ? { ...message, text: accumulatedText, status: 'failed' as const, turn_metadata: { ...message.turn_metadata, response_source: 'unavailable' } }
+                : message.id === userMessage.id
+                  ? { ...message, status: failureOutcome === 'uncertain' ? 'interrupted' as const : 'failed' as const, turn_metadata: { ...message.turn_metadata, managed_failure: { code: toon.failureCode || 'MANAGED_AI_NOT_CONFIGURED', outcome: failureOutcome, recorded_at: new Date().toISOString() } } }
+                  : message
+            ),
+            branches: current.branches.map(branch => branch.id === branchId && branch.head_message_id === assistantMessageId
+              ? { ...branch, head_message_id: userMessage.id, updated_at: new Date().toISOString() }
+              : branch),
+          }));
+          const failedTurnState = useStore.getState();
+          if (!failedTurnState.isDemoMode) {
+            for (const failedMessage of failedTurnState.messages.filter(message => message.id === assistantMessageId || message.id === userMessage.id)) {
+              void syncMessage(failedMessage).catch(error => console.warn('[App] Failed-turn history sync failed:', error));
+            }
+          }
           return;
         }
 
@@ -1104,7 +1498,57 @@ const App: React.FC = () => {
     return () => {
       useStore.getState().registerTurnExecutor(null);
     };
-  }, [settings?.preferred_model, updateMessageText, updateMessageTurnMetadata, setPendingOps, setLastTurnDiagnostics]);
+  }, [settings?.preferred_model, updateMessageText, updateMessageTurnMetadata, setPendingOps, setLastTurnDiagnostics, isHydrated, authResolved, workspaceTransitioning]);
+
+  if (!isHydrated || workspaceTransitioning) {
+    return (
+      <div className="flex items-center justify-center h-screen w-full bg-slate-950 text-slate-400">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+          <p className="text-sm font-medium">Restoring your graph...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isFirstVisitGuest = authResolved && !currentUser && !welcomeDismissed &&
+    currentView === 'dashboard' && !hasCompletedOnboarding('guest') &&
+    (!window.location.hash || ['#', '#dashboard'].includes(window.location.hash));
+
+  if (isFirstVisitGuest) {
+    return (
+      <>
+        <WelcomeLanding
+          onContinueAsGuest={() => {
+            skipOnboarding('guest');
+            setShowOnboarding(false);
+            setWelcomeDismissed(true);
+          }}
+          onPersonalize={() => setShowOnboarding(true)}
+          onCreateAccount={() => { setAuthInitialMode('signup'); setShowAuthModal(true); }}
+          onSignIn={() => { setAuthInitialMode('signin'); setShowAuthModal(true); }}
+        />
+        {showOnboarding && (
+          <OnboardingFlow
+            identity="guest"
+            onClose={() => setShowOnboarding(false)}
+            onSignIn={() => { setShowOnboarding(false); setAuthInitialMode('signin'); setShowAuthModal(true); }}
+            onCreateAccount={() => { setShowOnboarding(false); setAuthInitialMode('signup'); setShowAuthModal(true); }}
+            onContinueInChat={() => { setInput(buildOnboardingChatDraft('guest')); setView('chat'); }}
+          />
+        )}
+        {showAuthModal && (
+          <AuthModal
+            initialMode={authInitialMode}
+            onClose={() => { setShowAuthModal(false); setAuthInitialMode('signin'); }}
+            onSuccess={() => { setShowAuthModal(false); setAuthInitialMode('signin'); }}
+          />
+        )}
+      </>
+    );
+  }
+
+  const safeEntities = getActiveEntities(entities);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -1179,8 +1623,8 @@ const App: React.FC = () => {
     const success = await executeConfirmedPlan(confirmedPlan);
     if (!success) return false;
     if (useStore.getState().pendingOps === proposal) clearPendingOps();
-    getLatestReviewDraft().then(d => {
-      if (d) deleteReviewDraft(d.id).catch(() => {});
+    getLatestReviewDraft(currentUser?.uid || 'legacy').then(d => {
+      if (d) deleteReviewDraft(d.id, currentUser?.uid || 'legacy').catch(() => {});
     }).catch(() => {});
     const originalMessage = useStore.getState().messages.find(message => message.id === proposal.originalMessageId);
     addMessage('assistant', 'Confirmed and applied: Successfully executed '+confirmedPlan.plan.validated_mutations.length+' action(s).', undefined, null, originalMessage?.channelId || activeSessionId || 'general');
@@ -1189,8 +1633,8 @@ const App: React.FC = () => {
 
   const handleCancelOps = () => {
     clearPendingOps();
-    getLatestReviewDraft().then(d => {
-      if (d) deleteReviewDraft(d.id).catch(() => {});
+    getLatestReviewDraft(currentUser?.uid || 'legacy').then(d => {
+      if (d) deleteReviewDraft(d.id, currentUser?.uid || 'legacy').catch(() => {});
     }).catch(() => {});
     const currentChannel = activeSessionId || 'general';
     addMessage(
@@ -1205,7 +1649,7 @@ const App: React.FC = () => {
   const renderMainContent = () => {
     switch (currentView) {
       case 'dashboard':
-        return <Dashboard onManagedAiLimit={setManagedAiLimit} />;
+        return <Dashboard onManagedAiLimit={setManagedAiLimit} onRequestSignIn={() => setShowAuthModal(true)} />;
       case 'chat':
         // Mobile: 'chat' view should show chat panel + graph
         if (!isChatOpen) setIsChatOpen(true);
@@ -1265,7 +1709,10 @@ const App: React.FC = () => {
       case 'attendance':
         return <Dashboard />;
       case 'settings':
-        return <SettingsView onShowOnboarding={() => setShowOnboarding(true)} />;
+        return <SettingsView
+          onShowOnboarding={() => setShowOnboarding(true)}
+          onRequestAuth={() => { setAuthInitialMode('signin'); setShowAuthModal(true); }}
+        />;
       case 'chat_graph':
       default:
         return (
@@ -1445,16 +1892,23 @@ const App: React.FC = () => {
 
       {/* Mobile Header Bar */}
       {isMobile && (
-        <div className="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-3 shrink-0 z-30">
+        <div
+          className="h-14 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-3 shrink-0 z-30"
+          onTouchStart={handleMobileHeaderTouchStart}
+          onTouchMove={handleMobileTouchMove}
+          onTouchEnd={handleMobileHeaderTouchEnd}
+          onTouchCancel={handleMobileTouchCancel}
+          style={{ touchAction: 'pan-y' }}
+        >
           {/* Left: If chat view, show Back button, else hamburger */}
           {currentView === 'chat' ? (
             <button
-              onClick={() => setView('dashboard')}
+              onClick={() => navigateFromMobileControl(lastNonChatViewRef.current)}
               className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 transition-colors flex items-center gap-1"
-              aria-label="Back to dashboard"
+              aria-label={`Back to ${lastNonChatViewRef.current === 'dashboard' ? 'Home' : lastNonChatViewRef.current === 'knowledge' ? 'Library' : lastNonChatViewRef.current}`}
             >
               <ChevronLeft size={20} />
-              <span className="text-xs font-medium">Home</span>
+              <span className="text-xs font-medium">{lastNonChatViewRef.current === 'dashboard' ? 'Home' : lastNonChatViewRef.current === 'knowledge' ? 'Library' : lastNonChatViewRef.current}</span>
             </button>
           ) : (
             <button
@@ -1484,7 +1938,7 @@ const App: React.FC = () => {
           {/* Right: Quick action */}
           {currentView !== 'chat' ? (
             <button
-              onClick={() => setView('chat')}
+              onClick={() => navigateFromMobileControl('chat')}
               className="p-2 hover:bg-slate-800 rounded-lg text-indigo-400 transition-colors"
               aria-label="Open chat"
               title="Open Chat"
@@ -1492,7 +1946,14 @@ const App: React.FC = () => {
               <MessageSquare size={19} />
             </button>
           ) : (
-            <div className="w-12" />
+            <button
+              onClick={openMobileSidebar}
+              className="p-2 hover:bg-slate-800 rounded-lg text-slate-400 transition-colors"
+              aria-label="Open navigation menu"
+              title="Open navigation menu"
+            >
+              <Menu size={22} />
+            </button>
           )}
         </div>
       )}
@@ -1501,8 +1962,21 @@ const App: React.FC = () => {
       {isMobile && isMobileSidebarOpen && (
         <>
           <div
-            className="fixed inset-0 bg-black/60 z-40 animate-fade-in transition-opacity duration-150"
-            onClick={() => setIsMobileSidebarOpen(false)}
+            data-testid="mobile-sidebar-backdrop"
+            className="fixed inset-0 bg-black/60 z-40 animate-fade-in"
+            onTouchStart={handleMobileSidebarTouchStart}
+            onTouchMove={handleMobileSidebarTouchMove}
+            onTouchEnd={handleMobileSidebarTouchEnd}
+            onTouchCancel={handleMobileSidebarTouchCancel}
+            onClick={event => {
+              if (suppressSidebarClickRef.current) {
+                event.preventDefault();
+                event.stopPropagation();
+                suppressSidebarClickRef.current = false;
+                return;
+              }
+              setIsMobileSidebarOpen(false);
+            }}
             style={{ opacity: Math.max(0, 1 - Math.abs(mobileSidebarDragX) / 280) }}
             aria-hidden="true"
           />
@@ -1519,13 +1993,23 @@ const App: React.FC = () => {
             onTouchCancel={handleMobileSidebarTouchCancel}
             style={{
               transform: `translate3d(${mobileSidebarDragX}px, 0, 0)`,
-              transition: mobileSidebarGestureRef.current ? 'none' : 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)',
+              transition: mobileSidebarGestureRef.current || mobileTouchStartRef.current?.sidebarDragActive ? 'none' : 'transform 180ms cubic-bezier(0.22, 1, 0.36, 1)',
               touchAction: 'pan-y',
             }}
             data-testid="mobile-sidebar-panel"
+            onClickCapture={event => {
+              if (!suppressSidebarClickRef.current) return;
+              event.preventDefault();
+              event.stopPropagation();
+              suppressSidebarClickRef.current = false;
+            }}
           >
             {/* Close Button Header */}
-            <div className="p-3 border-b border-slate-800 flex items-center justify-end shrink-0">
+            <div data-testid="mobile-sidebar-brand-header" className="h-12 px-3 border-b border-slate-800 flex items-center justify-between shrink-0">
+              <div className="flex min-w-0 items-center gap-2.5 text-ideapad-text">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700"><Sparkles size={16} /></span>
+                <span className="font-serif text-base font-bold">Flowmate</span>
+              </div>
               <button ref={mobileSidebarCloseRef} type="button" aria-label="Close navigation menu" onClick={() => setIsMobileSidebarOpen(false)} className="p-2 hover:bg-slate-800 rounded-lg text-slate-400">
                 <X size={20} />
               </button>
@@ -1534,20 +2018,36 @@ const App: React.FC = () => {
             <div className="flex-1 overflow-y-auto">
               <Sidebar
                 forceExpanded
+                hideBranding
                 onCreateClick={() => { setShowCreateModal(true); setIsMobileSidebarOpen(false); }}
                 onNavigate={() => setIsMobileSidebarOpen(false)}
               />
             </div>
             {/* Fixed Bottom Auth Section */}
             <div className={`w-full min-w-0 overflow-hidden p-4 border-t border-slate-800 shrink-0 ${isZenMode ? 'hidden' : ''}`}>
-              {currentUser ? (
-                <div className="flex w-full min-w-0 items-center gap-2 overflow-hidden text-xs text-slate-400">
-                  <UserCircle size={16} className="shrink-0" />
-                  <span className="block min-w-0 flex-1 truncate" title={currentUser.email || undefined}>{currentUser.email}</span>
+              {!authResolved ? (
+                <p role="status" aria-live="polite" className="w-full py-2.5 text-center text-sm text-slate-400">Checking account…</p>
+              ) : currentUser ? (
+                <div className="w-full min-w-0 space-y-2">
+                  <div className="flex min-w-0 items-center gap-2 overflow-hidden text-xs text-slate-400">
+                    <UserCircle size={16} className="shrink-0" />
+                    <span className="block min-w-0 flex-1 truncate" title={currentUser.email || undefined}>{currentUser.email || 'Signed in'}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setIsMobileSidebarOpen(false);
+                      const result = await signOut();
+                      if (result.error) addToast('Could not sign out. Please try again.', 'error');
+                    }}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-300 hover:border-red-500/50 hover:bg-red-950/30 hover:text-red-200"
+                  >
+                    <LogOut size={16} /> Sign out
+                  </button>
                 </div>
               ) : (
                 <button onClick={() => { setShowAuthModal(true); setIsMobileSidebarOpen(false); }} className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors">
-                  Sign in to sync
+                  Sign in or create account
                 </button>
               )}
             </div>
@@ -1560,9 +2060,11 @@ const App: React.FC = () => {
         <div className="flex w-56 min-w-0 flex-col h-full bg-slate-900 border-r border-slate-800 shrink-0 z-20">
           <Sidebar onCreateClick={() => setShowCreateModal(true)} />
           <div className={`w-full min-w-0 overflow-hidden p-4 border-t border-slate-800 bg-slate-900/80 ${isZenMode ? 'hidden' : ''}`}>
-            <WorkspaceStatus />
+            <WorkspaceStatus authResolved={authResolved} />
             <div className="mt-3 pt-3 border-t border-slate-800">
-              {currentUser ? (
+              {!authResolved ? (
+                <p role="status" aria-live="polite" className="w-full py-1.5 text-center text-xs text-slate-400">Checking account…</p>
+              ) : currentUser ? (
                 <div className="flex w-full min-w-0 items-center justify-between gap-2 overflow-hidden">
                   <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
                     <UserCircle size={14} className="text-slate-400 shrink-0" />
@@ -1592,10 +2094,10 @@ const App: React.FC = () => {
       {!isMobile && (
         <div data-layout="desktop" className="flex-1 flex flex-row h-full overflow-hidden">
           {/* Desktop Chat Panel - Full width when Chat view, otherwise side panel */}
-          {(currentView === 'chat' || (isChatOpen && !isZenMode)) && (
+          {(currentView === 'chat' || isChatOpen) && (
             <div
               ref={chatPaneRef}
-              className={`flex flex-col bg-slate-900 border-r border-slate-800 shrink-0 h-full relative ${currentView === 'chat' ? 'flex-1' : ''
+              className={`flex min-w-0 flex-col bg-slate-900 border-r border-slate-800 shrink-0 h-full relative ${currentView === 'chat' ? 'flex-1' : ''
                 }`}
               data-testid="desktop-chat-pane"
               style={currentView === 'chat' ? {} : { width: `${chatWidth}px`, minWidth: '300px', maxWidth: '600px' }}
@@ -1648,7 +2150,8 @@ const App: React.FC = () => {
                 {(() => {
                   const currentChannel = activeSessionId || 'general';
                   const currentBranch = (branches || []).find(b => b.id === activeBranchId && (b.conversation_id === currentChannel));
-                  const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel);
+                  const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel)
+                    .filter(message => !(message.role === 'assistant' && (message.status === 'failed' || message.status === 'interrupted') && message.turn_metadata?.response_source === 'unavailable' && !message.text.trim()));
                   
                   if (activeMsgs.length === 0) {
                     return (
@@ -1680,7 +2183,14 @@ const App: React.FC = () => {
                     );
                   }
 
-                  return activeMsgs.map((msg) => (
+                  return activeMsgs.map((msg) => {
+                    // A rejected/uncertain request is recorded on its user
+                    // message with a ManagedRequestNotice. Do not render the
+                    // empty assistant placeholder as a fake model reply (or
+                    // the generic "Attachment" fallback).
+                    if (msg.role === 'assistant' && (msg.status === 'failed' || msg.status === 'interrupted')
+                      && !msg.text.trim() && msg.turn_metadata?.response_source === 'unavailable') return null;
+                    return (
                     <div key={msg.id} data-message-id={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                       <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 self-start mt-0.5 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
                         {msg.role === 'user' ? <User size={14} /> : <Bot size={14} />}
@@ -1691,7 +2201,7 @@ const App: React.FC = () => {
                           ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20 rounded-tr-sm'
                           : 'bg-slate-800 border border-slate-700 rounded-tl-sm text-slate-200'
                           }`}>
-                          {msg.role === 'assistant' && msg.turn_metadata?.response_source && msg.turn_metadata.response_source !== 'gemini' && <p className="text-[10px] text-slate-400 mb-1">{msg.turn_metadata.response_source === 'unavailable' ? 'No AI response · unavailable' : 'Local rules · no AI request'}</p>}
+                          {msg.role === 'assistant' && msg.turn_metadata?.response_source && msg.turn_metadata.response_source !== 'gemini' && <p className="text-[10px] text-slate-400 mb-1">{msg.turn_metadata.response_source === 'unavailable' ? (msg.text.trim() ? 'Partial response · not included in future prompts' : 'No AI response · unavailable') : 'Local rules · no AI request'}</p>}
                           {msg.text ? <MarkdownText content={msg.text} /> : (isStreaming && msg.id === useStore.getState().streamingMessageId ? <span className="text-slate-400 italic">Thinking...</span> : <em className="text-slate-400">Attachment</em>)}
                           {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
                         </div>
@@ -1699,9 +2209,21 @@ const App: React.FC = () => {
                           <MessageVersionNav message={msg} />
                           <span className="text-[9px] text-slate-600">{new Date(msg.created_at).toLocaleTimeString()}</span>
                         </div>
+                        {msg.role === 'user' && msg.turn_metadata?.managed_failure && (
+                          <ManagedRequestNotice
+                            code={msg.turn_metadata.managed_failure.code}
+                            outcome={msg.turn_metadata.managed_failure.outcome}
+                            onNewChat={() => { useStore.getState().createChatSession(); setInput(''); setView('chat'); }}
+                            onRetryWithRecentContext={() => { void useStore.getState().forkAndSendMessage(msg.id, msg.text || (msg.attachment ? 'Analyze this attachment.' : ''), { contextRecovery: 'recent' }); }}
+                            onRetryWithEssentialContext={() => { void useStore.getState().forkAndSendMessage(msg.id, msg.text || (msg.attachment ? 'Analyze this attachment.' : ''), { contextRecovery: 'essentials' }); }}
+                            onSettings={() => setView('settings')}
+                            onSignIn={() => setShowAuthModal(true)}
+                          />
+                        )}
                       </div>
                     </div>
-                  ));
+                    );
+                  });
                 })()}
                 {loading && !isStreaming && (
                   <div className="flex gap-3">
@@ -1753,7 +2275,7 @@ const App: React.FC = () => {
 
           {/* Desktop Main Content - Hidden when in full-screen Chat view */}
           {currentView !== 'chat' && (
-            <main id="main-content" className="flex-1 overflow-auto relative" role="main" aria-label="Main content">
+            <main id="main-content" className="min-w-0 flex-1 overflow-auto relative" role="main" aria-label="Main content">
               <Suspense fallback={<LazyLoadFallback />}>
                 {renderMainContent()}
               </Suspense>
@@ -1777,32 +2299,52 @@ const App: React.FC = () => {
       {/* Mobile Layout: Full Content + Persistent Bottom Navigation */}
       {isMobile && (
         <div data-layout="mobile" className="flex-1 flex flex-col h-[calc(100dvh-3.5rem)] overflow-hidden relative">
-          {/* Destination peeks stay beneath the moving page so the gesture feels like a screen being pulled. */}
-          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView !== 'chat' && (
-            <div aria-hidden="true" className="absolute inset-y-0 left-0 z-0 w-64 overflow-hidden bg-slate-900 px-4 py-5 text-slate-300">
-              <div className="mb-6 flex items-center gap-3 font-semibold text-slate-100"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600/80"><Sparkles size={18} /></span>Flowmate</div>
-              <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Navigation</p>
-              <div className="space-y-2 text-sm">{['Home', 'Chat', 'Graph', 'Calendar', 'Library', 'Analytics', 'Settings'].map((label, index) => <div key={label} className={`rounded-lg px-3 py-2 ${index === 0 ? 'bg-slate-800 text-emerald-200' : ''}`}>{label}</div>)}</div>
-            </div>
-          )}
-          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView === 'chat' && mobileTouchStartRef.current?.startX > MOBILE_GESTURE_EDGE_PX && (
-            <div aria-hidden="true" className="absolute inset-y-0 left-0 z-0 flex w-64 flex-col items-center justify-center bg-ideapad-surface px-6 text-center text-ideapad-muted">
-              <LayoutDashboard size={26} className="mb-3 text-ideapad-mint" />
-              <p className="text-sm font-semibold text-ideapad-text">Back to {lastNonChatViewRef.current === 'dashboard' ? 'Home' : lastNonChatViewRef.current === 'knowledge' ? 'Library' : lastNonChatViewRef.current[0].toUpperCase() + lastNonChatViewRef.current.slice(1)}</p>
-              <p className="mt-1 text-xs">Release to return</p>
+          {/* Chat back-navigation reveals the previous page beneath the moving Chat screen. */}
+          {!isMobileSidebarOpen && mobileGestureOffset.x > 18 && currentView === 'chat' && (
+            <div aria-hidden="true" data-testid="return-navigation-preview" className="absolute inset-0 z-0 flex w-64 flex-col items-center justify-center bg-ideapad-base px-6 text-center text-ideapad-text">
+              <div className="flex self-start flex-col items-center justify-center" style={{ width: `${Math.max(84, Math.min(256, mobileGestureOffset.x))}px` }}>
+                <LayoutDashboard size={26} className="mb-3 text-ideapad-mint" />
+                {mobileGestureOffset.x < 136 ? (
+                  <p className="text-sm font-semibold">{getMobileReturnView() === 'dashboard' ? 'Home' : getMobileReturnView() === 'knowledge' ? 'Library' : getMobileReturnView()[0].toUpperCase() + getMobileReturnView().slice(1)}</p>
+                ) : (
+                  <>
+                    <p className="text-sm font-semibold">Back to {getMobileReturnView() === 'dashboard' ? 'Home' : getMobileReturnView() === 'knowledge' ? 'Library' : getMobileReturnView()[0].toUpperCase() + getMobileReturnView().slice(1)}</p>
+                    <p className="mt-1 text-xs text-emerald-100/70">Release to return</p>
+                  </>
+                )}
+              </div>
             </div>
           )}
           {mobileGestureOffset.x < -18 && currentView !== 'chat' && (
-            <div aria-hidden="true" className="absolute inset-y-0 left-full z-0 w-full overflow-hidden bg-slate-900 px-6 py-5 text-slate-300">
-              <div className="-mx-6 -mt-5 mb-5 flex h-14 items-center justify-center border-b border-slate-800 bg-slate-900 font-semibold text-slate-100">Chat</div>
-              <div className="flex h-[70%] flex-col items-center justify-center text-center">
-                <MessageSquare size={28} className="mb-3 text-emerald-300" />
+            <div aria-hidden="true" data-testid="chat-navigation-preview" className="absolute inset-y-0 left-full z-0 flex w-full flex-col overflow-hidden border-l border-slate-700/70 bg-slate-900 px-6 py-5 text-slate-300 shadow-2xl" style={{ transform: `translate3d(${mobileGestureOffset.x}px, 0, 0)` }}>
+              <div className="flex flex-1 flex-col items-center justify-center text-center">
+                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-400/20 bg-emerald-400/10 text-emerald-300"><MessageSquare size={24} /></div>
                 <p className="font-medium text-slate-100">Go to Chat</p>
-                <p className="mt-1 text-xs text-slate-400">Release to open</p>
+                <p className="mt-1 text-xs text-slate-400">Release to open your conversation</p>
               </div>
-              <div className="rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm text-slate-500">Message…</div>
+              <div className="shrink-0 rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm text-slate-500">Message…</div>
             </div>
           )}
+          {mobileGestureOffset.y > 32 || isMobileRefreshing ? (
+            <div
+              data-testid="mobile-refresh-indicator"
+              role="status"
+              aria-live="polite"
+              aria-label={isMobileRefreshing ? 'Refreshing workspace' : mobileGestureOffset.y >= Math.min(88, mobileGestureThreshold(window.innerWidth) * 0.72) ? 'Release to refresh' : 'Pull to refresh'}
+              data-refresh-state={isMobileRefreshing ? 'refreshing' : mobileGestureOffset.y >= Math.min(88, mobileGestureThreshold(window.innerWidth) * 0.72) ? 'armed' : 'pulling'}
+              className="pointer-events-none absolute left-1/2 z-50 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border border-emerald-300/30 bg-ideapad-surface text-ideapad-mint shadow-lg transition-[transform,opacity] duration-150"
+              style={{
+                top: `${Math.max(0, (mobileGestureOffset.y - 32) / 2)}px`,
+                opacity: isMobileRefreshing ? 1 : Math.min(1, mobileGestureOffset.y / 34),
+              }}
+            >
+              <RefreshCw
+                size={16}
+                aria-hidden="true"
+                className={`transition-transform duration-150 ${isMobileRefreshing ? 'animate-spin' : mobileGestureOffset.y >= Math.min(88, mobileGestureThreshold(window.innerWidth) * 0.72) ? 'rotate-180' : 'opacity-75'}`}
+              />
+            </div>
+          ) : null}
           {/* Main content or full screen chat */}
           <div
             className="relative z-10 flex-1 flex flex-col overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom))] bg-slate-950"
@@ -1823,13 +2365,6 @@ const App: React.FC = () => {
             }}
             data-testid="mobile-gesture-surface"
           >
-            {mobileGestureOffset.y > 18 || isMobileRefreshing ? (
-              <div className="absolute top-1 left-1/2 z-40 -translate-x-1/2 rounded-full border border-slate-700 bg-slate-900/95 px-3 py-1.5 text-[11px] text-slate-300 shadow-lg pointer-events-none">
-                {isMobileRefreshing ? (
-                  <span className="flex items-center gap-2"><RefreshCw size={12} className="animate-spin" />Refreshing</span>
-                ) : mobileGestureOffset.y >= 42 ? 'Release to refresh' : 'Pull to refresh'}
-              </div>
-            ) : null}
             {currentView === 'chat' ? (
               <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900">
                 <ChatSessionBar />
@@ -1866,7 +2401,8 @@ const App: React.FC = () => {
                   {(() => {
                     const currentChannel = activeSessionId || 'general';
                     const currentBranch = (branches || []).find(b => b.id === activeBranchId && (b.conversation_id === currentChannel));
-                    const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel);
+                    const activeMsgs = resolveBranchHistory(messages || [], currentBranch?.head_message_id, currentChannel)
+                      .filter(message => !(message.role === 'assistant' && (message.status === 'failed' || message.status === 'interrupted') && message.turn_metadata?.response_source === 'unavailable' && !message.text.trim()));
 
                     if (activeMsgs.length === 0) {
                       return (
@@ -1898,7 +2434,12 @@ const App: React.FC = () => {
                       );
                     }
 
-                    return activeMsgs.map((msg) => (
+                    return activeMsgs.map((msg) => {
+                      // Keep rejection guidance with the original user
+                      // submission; never show an empty assistant "reply".
+                      if (msg.role === 'assistant' && (msg.status === 'failed' || msg.status === 'interrupted')
+                        && !msg.text.trim() && msg.turn_metadata?.response_source === 'unavailable') return null;
+                      return (
                       <div key={msg.id} data-message-id={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                         <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-slate-700'}`}>
                           {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
@@ -1906,7 +2447,7 @@ const App: React.FC = () => {
                         <div className={`flex flex-col max-w-[80%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                           {renderAttachmentPreview(msg)}
                           <div className={`px-3 py-2 rounded-xl text-sm ${msg.role === 'user' ? 'bg-indigo-600/10 text-indigo-100 border border-indigo-500/20' : 'bg-slate-800 border border-slate-700 text-slate-200'}`}>
-                            {msg.role === 'assistant' && msg.turn_metadata?.response_source && msg.turn_metadata.response_source !== 'gemini' && <p className="text-[10px] text-slate-400 mb-1">{msg.turn_metadata.response_source === 'unavailable' ? 'No AI response · unavailable' : 'Local rules · no AI request'}</p>}
+                            {msg.role === 'assistant' && msg.turn_metadata?.response_source && msg.turn_metadata.response_source !== 'gemini' && <p className="text-[10px] text-slate-400 mb-1">{msg.turn_metadata.response_source === 'unavailable' ? (msg.text.trim() ? 'Partial response · not included in future prompts' : 'No AI response · unavailable') : 'Local rules · no AI request'}</p>}
                           {msg.text ? <MarkdownText content={msg.text} /> : (isStreaming && msg.id === useStore.getState().streamingMessageId ? <span className="text-slate-400 italic">Thinking...</span> : <em className="text-slate-400">Attachment</em>)}
                             {msg.ops_preview && msg.ops_preview.length > 0 && renderOpsSummary(msg.ops_preview)}
                           </div>
@@ -1914,9 +2455,21 @@ const App: React.FC = () => {
                             <MessageVersionNav message={msg} />
                             <span className="text-[9px] text-slate-600">{new Date(msg.created_at).toLocaleTimeString()}</span>
                           </div>
+                          {msg.role === 'user' && msg.turn_metadata?.managed_failure && (
+                            <ManagedRequestNotice
+                              code={msg.turn_metadata.managed_failure.code}
+                              outcome={msg.turn_metadata.managed_failure.outcome}
+                              onNewChat={() => { useStore.getState().createChatSession(); setInput(''); setView('chat'); }}
+                              onRetryWithRecentContext={() => { void useStore.getState().forkAndSendMessage(msg.id, msg.text || (msg.attachment ? 'Analyze this attachment.' : ''), { contextRecovery: 'recent' }); }}
+                              onRetryWithEssentialContext={() => { void useStore.getState().forkAndSendMessage(msg.id, msg.text || (msg.attachment ? 'Analyze this attachment.' : ''), { contextRecovery: 'essentials' }); }}
+                              onSettings={() => setView('settings')}
+                              onSignIn={() => setShowAuthModal(true)}
+                            />
+                          )}
                         </div>
                       </div>
-                    ));
+                      );
+                    });
                   })()}
                   {loading && !isStreaming && (
                     <div className="flex gap-3">
@@ -1977,19 +2530,19 @@ const App: React.FC = () => {
           </div>
 
           <nav className="fixed bottom-0 left-0 right-0 z-30 grid h-[calc(4rem+env(safe-area-inset-bottom))] grid-cols-5 items-center border-t border-ideapad-border bg-ideapad-surface/95 px-1 pb-[env(safe-area-inset-bottom)] shadow-2xl backdrop-blur-xl" aria-label="Mobile Navigation" data-testid="mobile-bottom-navigation">
-            <button onClick={() => setView('chat')} aria-current={currentView === 'chat' ? 'page' : undefined} aria-label="Open Chat" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'chat' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
+            <button onClick={() => navigateFromMobileControl('chat')} aria-current={currentView === 'chat' ? 'page' : undefined} aria-label="Open Chat" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'chat' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
               <MessageSquare size={19} className={currentView === 'chat' ? 'stroke-[2.5]' : ''} /><span>Chat</span>
             </button>
-            <button onClick={() => setView('knowledge')} aria-current={currentView === 'knowledge' ? 'page' : undefined} aria-label="Open Library" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'knowledge' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
+            <button onClick={() => navigateFromMobileControl('knowledge')} aria-current={currentView === 'knowledge' ? 'page' : undefined} aria-label="Open Library" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'knowledge' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
               <Library size={19} className={currentView === 'knowledge' ? 'stroke-[2.5]' : ''} /><span>Library</span>
             </button>
-            <button onClick={() => setView('dashboard')} aria-current={currentView === 'dashboard' ? 'page' : undefined} aria-label="Open Home" className={`-mt-2 flex h-14 flex-col items-center justify-center gap-0.5 rounded-2xl text-[10px] font-semibold transition-transform active:scale-95 ${currentView === 'dashboard' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
+            <button onClick={() => navigateFromMobileControl('dashboard')} aria-current={currentView === 'dashboard' ? 'page' : undefined} aria-label="Open Home" className={`-mt-2 flex h-14 flex-col items-center justify-center gap-0.5 rounded-2xl text-[10px] font-semibold transition-transform active:scale-95 ${currentView === 'dashboard' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
               <span className={`flex h-10 w-10 items-center justify-center rounded-2xl ${currentView === 'dashboard' ? 'bg-ideapad-surface-variant' : ''}`}><LayoutDashboard size={21} className={currentView === 'dashboard' ? 'stroke-[2.5]' : ''} /></span><span>Home</span>
             </button>
-            <button onClick={() => setView('calendar')} aria-current={currentView === 'calendar' ? 'page' : undefined} aria-label="Open Calendar" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'calendar' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
+            <button onClick={() => navigateFromMobileControl('calendar')} aria-current={currentView === 'calendar' ? 'page' : undefined} aria-label="Open Calendar" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'calendar' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
               <Calendar size={19} className={currentView === 'calendar' ? 'stroke-[2.5]' : ''} /><span>Calendar</span>
             </button>
-            <button onClick={() => setView('settings')} aria-current={currentView === 'settings' ? 'page' : undefined} aria-label="Open Settings" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'settings' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
+            <button onClick={() => navigateFromMobileControl('settings')} aria-current={currentView === 'settings' ? 'page' : undefined} aria-label="Open Settings" className={`flex h-full flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-medium transition-colors active:scale-95 ${currentView === 'settings' ? 'text-ideapad-mint' : 'text-ideapad-muted hover:text-ideapad-text'}`}>
               <Settings size={19} className={currentView === 'settings' ? 'stroke-[2.5]' : ''} /><span>Settings</span>
             </button>
           </nav>
@@ -2020,16 +2573,45 @@ const App: React.FC = () => {
 
       {showAuthModal && (
         <AuthModal
-          onClose={() => setShowAuthModal(false)}
-          onSuccess={() => setShowAuthModal(false)}
+          initialMode={authInitialMode}
+          onClose={() => { setShowAuthModal(false); setAuthInitialMode('signin'); }}
+          onSuccess={() => { setShowAuthModal(false); setAuthInitialMode('signin'); }}
         />
+      )}
+
+      {legacyWorkspaceRecovery && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/75 p-4" onMouseDown={event => {
+          if (event.target === event.currentTarget) event.preventDefault();
+        }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="legacy-workspace-title" className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">Saved on this browser</p>
+            <h2 id="legacy-workspace-title" className="mt-2 text-xl font-semibold text-slate-100">Choose what to do with your local workspace</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-300">
+              This browser has {legacyWorkspaceRecovery.entities} saved items, {legacyWorkspaceRecovery.relationships} links, {legacyWorkspaceRecovery.messages} chat messages, {legacyWorkspaceRecovery.chatSessions} conversations, and {legacyWorkspaceRecovery.otherItems} other saved items. {legacyWorkspaceRecovery.preferencesChanged ? 'It also has changed preferences.' : ''} Signing in did not upload or merge them.
+            </p>
+            <p className="mt-3 text-sm leading-6 text-slate-400">
+              You can keep this data separate and continue with the account workspace, or copy it into this account on this browser. The original local copy is preserved. Copying does not change your sync choice; if workspace sync is already enabled here, the account copy will reconcile with its cloud workspace.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button type="button" onClick={async () => {
+                const result = await signOut();
+                if (result.error) addToast('Could not return to the local workspace. Please try again.', 'error');
+              }} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Return to local workspace</button>
+              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800">Keep separate</button>
+              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(true)} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">Use local workspace</button>
+            </div>
+          </section>
+        </div>
       )}
 
       {showOnboarding && (
         <OnboardingFlow
+          key={onboardingIdentity}
           identity={onboardingIdentity}
+          authenticated={!!currentUser}
           onClose={() => setShowOnboarding(false)}
           onSignIn={() => { setShowOnboarding(false); setShowAuthModal(true); }}
+          onCreateAccount={() => { setAuthInitialMode('signup'); setShowOnboarding(false); setShowAuthModal(true); }}
           onContinueInChat={() => { setInput(buildOnboardingChatDraft(onboardingIdentity)); setView('chat'); }}
         />
       )}
@@ -2039,17 +2621,15 @@ const App: React.FC = () => {
           <section ref={managedAiDialogRef} role="dialog" aria-modal="true" aria-labelledby="managed-ai-limit-title" className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">Gemini access</p>
             <h2 id="managed-ai-limit-title" className="mt-2 text-xl font-semibold text-slate-100">
-              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' ? 'Your guest AI turns are used' : 'Your included AI turns are used'}
+              {getManagedAiLimitCopy(managedAiLimit).title}
             </h2>
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED'
-                ? 'You have used your 10 free guest AI turns. Your conversation and local workspace are still here. Sign in for 50 lifetime included turns, or add your own Gemini API key.'
-                : 'Your account has used its 50 lifetime included AI turns. Your conversation and workspace are still here. Add your own Gemini API key to continue.'}
+              {getManagedAiLimitCopy(managedAiLimit).description}
             </p>
             <div className="mt-6 flex flex-wrap justify-end gap-3">
               <button type="button" onClick={() => setManagedAiLimit(null)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Later</button>
-              {managedAiLimit === 'GUEST_TURN_ALLOWANCE_EXHAUSTED' && <button type="button" onClick={() => { setManagedAiLimit(null); setShowAuthModal(true); }} className="rounded-lg border border-emerald-700 px-4 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-950">Sign in for 50 turns</button>}
-              <button type="button" onClick={() => { setManagedAiLimit(null); setView('settings'); }} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">Add your Gemini key</button>
+              {getManagedAiLimitCopy(managedAiLimit).signInLabel && <button type="button" onClick={() => { setManagedAiLimit(null); setShowAuthModal(true); }} className="rounded-lg border border-emerald-700 px-4 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-950">{getManagedAiLimitCopy(managedAiLimit).signInLabel}</button>}
+              <button type="button" onClick={() => { setManagedAiLimit(null); setView('settings'); }} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">Use my Gemini key</button>
             </div>
           </section>
         </div>
@@ -2058,6 +2638,21 @@ const App: React.FC = () => {
       <CommandPalette onSendToChat={text => { const draft = useStore.getState().getUnsentDraft(useStore.getState().activeBranchId); setInput(draft ? draft + '\n' + text : text); setView('chat'); requestAnimationFrame(() => chatInputRef.current?.focus()); }} />
       <FocusTimer />
       <DebugConsole onOpenGraphFixer={() => setShowGraphFixingModal(true)} />
+      {syncConflicts.length > 0 && (() => {
+        const conflict = syncConflicts[0];
+        return (
+          <section role="alert" aria-labelledby="sync-conflict-title" className="fixed z-[85] bottom-20 right-4 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-amber-500/40 bg-slate-900 p-4 shadow-2xl">
+            <h2 id="sync-conflict-title" className="text-sm font-semibold text-amber-200">Two devices changed the same item</h2>
+            <p className="mt-1 text-sm leading-5 text-slate-200">{conflict.message} Your offline version is saved on this device. Choose which version to keep.</p>
+            <p className="mt-2 text-xs text-slate-400">Changed fields: {conflict.conflicting_fields.join(', ') || 'item details'}</p>
+            {syncConflicts.length > 1 && <p className="mt-1 text-xs text-slate-400">{syncConflicts.length - 1} more conflict{syncConflicts.length === 2 ? '' : 's'} need review.</p>}
+            <div className="mt-3 flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => resolveSyncConflict(conflict.id, 'keep_remote')} className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-medium text-slate-200 hover:bg-slate-800">Use cloud version</button>
+              <button type="button" onClick={() => resolveSyncConflict(conflict.id, 'keep_local')} className="rounded-lg bg-amber-300 px-3 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-200">Keep this device’s version</button>
+            </div>
+          </section>
+        );
+      })()}
       <ToastNotification />
       {import.meta.env.DEV && <DeveloperModeDrawer />}
     </div>

@@ -13,9 +13,10 @@ import {
 interface AuthModalProps {
     onClose: () => void;
     onSuccess: () => void;
+    initialMode?: 'signin' | 'signup';
 }
 
-const AuthModal: React.FC<AuthModalProps> = ({ onClose, onSuccess }) => {
+const AuthModal: React.FC<AuthModalProps> = ({ onClose, onSuccess, initialMode = 'signin' }) => {
     const dialogRef = useRef<HTMLDivElement>(null);
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
@@ -35,7 +36,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ onClose, onSuccess }) => {
         };
     }, []);
     useFocusTrap(dialogRef, true);
-    const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+    const [mode, setMode] = useState<'signin' | 'signup'>(initialMode);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);

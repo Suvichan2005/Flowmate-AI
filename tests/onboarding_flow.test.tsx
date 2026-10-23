@@ -8,7 +8,7 @@ describe('adaptive first-run onboarding', () => {
   beforeEach(() => localStorage.clear());
   it('offers an existing-account path without requiring sign-in for guests', () => {
     const signIn = vi.fn();
-    render(<OnboardingFlow identity="guest" onClose={vi.fn()} onSignIn={signIn} onContinueInChat={vi.fn()} />);
+    render(<OnboardingFlow identity="guest" onClose={vi.fn()} onSignIn={signIn} onCreateAccount={vi.fn()} onContinueInChat={vi.fn()} />);
     expect(screen.getByRole('dialog', { name: /make flowmate yours/i })).toBeInTheDocument();
     expect(screen.getByText(/workspace cloud sync starts off/i)).toBeInTheDocument();
     expect(screen.getByText(/not end-to-end encrypted/i)).toBeInTheDocument();
@@ -16,9 +16,24 @@ describe('adaptive first-run onboarding', () => {
     expect(signIn).toHaveBeenCalledOnce();
   });
 
+  it('offers account creation separately and saves the guest draft before changing identity', () => {
+    const createAccount = vi.fn();
+    render(<OnboardingFlow identity="guest" onClose={vi.fn()} onSignIn={vi.fn()} onCreateAccount={createAccount} onContinueInChat={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /create an account/i }));
+    expect(createAccount).toHaveBeenCalledOnce();
+    expect(readOnboardingDraft('guest')).not.toBeNull();
+  });
+
+  it('does not offer guest or sign-in choices after authentication resolves', () => {
+    render(<OnboardingFlow identity="synthetic-account" authenticated onClose={vi.fn()} onSignIn={vi.fn()} onCreateAccount={vi.fn()} onContinueInChat={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /personalize flowmate/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /continue as a guest/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /already have an account/i })).not.toBeInTheDocument();
+  });
+
   it('asks a role-specific follow-up and allows a natural chat continuation', () => {
     const continueInChat = vi.fn();
-    render(<OnboardingFlow identity="guest" onClose={vi.fn()} onSignIn={vi.fn()} onContinueInChat={continueInChat} />);
+    render(<OnboardingFlow identity="guest" onClose={vi.fn()} onSignIn={vi.fn()} onCreateAccount={vi.fn()} onContinueInChat={continueInChat} />);
     fireEvent.click(screen.getByRole('button', { name: /continue as a guest/i }));
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Student' }));
@@ -51,7 +66,7 @@ describe('adaptive first-run onboarding', () => {
 
   it('keeps a dismissed in-progress profile resumable without marking setup complete', () => {
     const close = vi.fn();
-    render(<OnboardingFlow identity="guest" onClose={close} onSignIn={vi.fn()} onContinueInChat={vi.fn()} />);
+    render(<OnboardingFlow identity="guest" onClose={close} onSignIn={vi.fn()} onCreateAccount={vi.fn()} onContinueInChat={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /continue as a guest/i }));
     fireEvent.change(screen.getByLabelText(/what should flowmate call you/i), { target: { value: 'Sam' } });
     fireEvent.click(screen.getByRole('button', { name: /close onboarding/i }));
@@ -61,9 +76,26 @@ describe('adaptive first-run onboarding', () => {
     expect(hasCompletedOnboarding('guest')).toBe(false);
   });
 
+  it('loads only the new identity draft when auth changes during onboarding', () => {
+    const onClose = vi.fn();
+    const renderForIdentity = (identity: string) => (
+      <OnboardingFlow key={identity} identity={identity} onClose={onClose} onSignIn={vi.fn()} onCreateAccount={vi.fn()} onContinueInChat={vi.fn()} />
+    );
+    const view = render(renderForIdentity('guest'));
+    fireEvent.click(screen.getByRole('button', { name: /continue as a guest/i }));
+    fireEvent.change(screen.getByLabelText(/what should flowmate call you/i), { target: { value: 'Guest draft name' } });
+
+    view.rerender(renderForIdentity('synthetic-account-b'));
+
+    fireEvent.click(screen.getByRole('button', { name: /continue as a guest/i }));
+    expect(screen.getByLabelText(/what should flowmate call you/i)).toHaveValue('');
+    expect(readOnboardingDraft('guest')?.preferredName).toBe('Guest draft name');
+    expect(readOnboardingDraft('synthetic-account-b')?.preferredName).toBe('');
+  });
+
   it('requires only role and current goal before continuing setup naturally in chat', () => {
     const continueInChat = vi.fn();
-    render(<OnboardingFlow identity="guest" onClose={vi.fn()} onSignIn={vi.fn()} onContinueInChat={continueInChat} />);
+    render(<OnboardingFlow identity="guest" onClose={vi.fn()} onSignIn={vi.fn()} onCreateAccount={vi.fn()} onContinueInChat={continueInChat} />);
     fireEvent.click(screen.getByRole('button', { name: /continue as a guest/i }));
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Student' }));

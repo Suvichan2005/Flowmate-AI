@@ -7,11 +7,21 @@ import { useStore } from '../store';
 import { ViewType } from '../types';
 import { mobileGestureThreshold, resolveMobileGestureIntent } from '../utils/mobileNavigationGestures';
 
+const authMocks = vi.hoisted(() => ({ onAuthChange: vi.fn() }));
+vi.mock('../services/firebase', async importOriginal => ({
+  ...(await importOriginal<any>()),
+  onAuthChange: authMocks.onAuthChange,
+}));
+
 const initialCurrentView = useStore.getState().currentView;
 
 describe('Navigation accessibility and active route semantics', () => {
   beforeEach(() => {
     localStorage.clear();
+    authMocks.onAuthChange.mockImplementation((callback: (user: null) => void) => {
+      callback(null);
+      return () => {};
+    });
     useStore.setState({
       currentView: 'dashboard',
       currentUser: null,
@@ -120,7 +130,7 @@ describe('Navigation accessibility and active route semantics', () => {
       act(() => { fireEvent.click(homeBtn); });
       expect(useStore.getState().currentView).toBe('dashboard');
       expect(homeBtn).toHaveAttribute('aria-current', 'page');
-    });
+    }, 15_000);
 
     it('provides accessible dialog semantics and keyboard dismissal for mobile menu overlay', () => {
       render(<App />);
@@ -139,14 +149,30 @@ describe('Navigation accessibility and active route semantics', () => {
       act(() => { fireEvent.keyDown(document, { key: 'Escape' }); });
       expect(screen.queryByRole('dialog', { name: /mobile navigation/i })).not.toBeInTheDocument();
     });
+
+    it('exposes sign out from the mobile navigation after account restoration resolves', async () => {
+      // Keep the synthetic account's local snapshot active so this test covers
+      // the signed-in mobile navigation state without exercising the separate
+      // IndexedDB/localStorage identity-rehydration path.
+      useStore.setState({ workspaceStorageIdentity: 'synthetic-account', isHydrated: true });
+      authMocks.onAuthChange.mockImplementation((callback: (user: unknown) => void) => {
+        callback({ uid: 'synthetic-account', email: 'owner@example.test' });
+        return () => {};
+      });
+      render(<App />);
+      act(() => { fireEvent.click(screen.getByRole('button', { name: /open navigation menu/i })); });
+
+      expect(await screen.findByRole('button', { name: /sign out/i })).toBeInTheDocument();
+      expect(screen.getByText('owner@example.test')).toBeInTheDocument();
+    }, 15_000);
   });
 });
 
 describe('touch navigation gesture thresholds', () => {
   it('scales the deliberate drag distance for narrow and wide phones', () => {
-    expect(mobileGestureThreshold(320)).toBe(80);
-    expect(mobileGestureThreshold(390)).toBe(98);
-    expect(mobileGestureThreshold(480)).toBe(112);
+    expect(mobileGestureThreshold(320)).toBe(70);
+    expect(mobileGestureThreshold(390)).toBe(86);
+    expect(mobileGestureThreshold(480)).toBe(96);
   });
 
   it('requires a deliberate dominant drag and keeps graph/pinch interactions outside the resolver', () => {

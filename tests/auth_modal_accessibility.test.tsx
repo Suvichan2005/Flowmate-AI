@@ -34,6 +34,14 @@ describe('AuthModal accessibility & keyboard interaction', () => {
         expect(closeBtn).toHaveAttribute('type', 'button');
     });
 
+    it('opens directly in account-creation mode when requested', () => {
+        authMocks.isFirebaseConfigured.mockReturnValue(true);
+        render(<AuthModal onClose={vi.fn()} onSuccess={vi.fn()} initialMode="signup" />);
+
+        expect(screen.getByRole('dialog', { name: 'Create Account' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /sign up/i })).toBeInTheDocument();
+    });
+
     it('dismisses modal on Escape key press', () => {
         const onClose = vi.fn();
         const onSuccess = vi.fn();

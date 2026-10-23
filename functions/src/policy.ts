@@ -67,14 +67,19 @@ export const SUPPORTED_MANAGED_MODELS: ManagedModelPolicy[] = [
 ] as const;
 
 export type ManagedModelId = typeof SUPPORTED_MANAGED_MODELS[number]['id'];
-// Calendar and account allowances are deliberately separate from model-call billing.
-export const GUEST_CHAT_TURN_LIMIT = 10;
-export const ACCOUNT_CHAT_TURN_LIMIT = 50;
+// Successful chat turns use a monthly allowance; briefings use a daily one.
+// Model context/output limits, atomic application-side monetary reservations,
+// per-identity rate limits and single-flight reservations are the guardrails;
+// reported token totals are informational rather than an additional allowance.
+export const GUEST_CHAT_TURN_LIMIT = 30;
+export const ACCOUNT_CHAT_TURN_LIMIT = 150;
 export const GUEST_DAILY_BRIEFING_LIMIT = 3;
 export const ACCOUNT_DAILY_BRIEFING_LIMIT = 5;
 // Model-call records are telemetry only. Monetary safeguards are provider-side;
 // usage reporting must not become an application quota.
 export const RATE_LIMIT_PER_MINUTE = 20;
+// A user turn may include tool continuations, but never an unbounded model loop.
+export const MAX_GENERATIONS_PER_TURN = 6;
 export const RESERVATION_TTL_MS = 10 * 60 * 1000;
 // Keep the owner-approved Gen 2 request bound and let the lease expire shortly
 // after a timed-out request can no longer settle its ledger reservation.
@@ -84,7 +89,7 @@ export const MANAGED_FUNCTION_TIMEOUT_SECONDS = 60;
 const ALLOWED_TOOLS = new Set([
   'query_entities', 'query_relationships', 'reflect_schemas', 'query_commitment',
   'read_calendar', 'search_entities', 'lookup_food_history', 'get_productivity_stats',
-  'lookup_goals', 'lookup_habits', 'lookup_travel_route', 'search_memory',
+  'lookup_goals', 'lookup_habits', 'search_memory',
   'get_relevant_context', 'propose_memory_update', 'apply_changes',
 ]);
 
@@ -160,6 +165,30 @@ export function authorizeManagedModel(modelId: string, reasoning: ReasoningLevel
   if (!privileged && (!ORDINARY_MODEL_IDS.has(modelId) || !['low', 'medium'].includes(reasoning))) {
     throw new RequestFailure('MODEL_NOT_ALLOWED_FOR_ACCOUNT', 403);
   }
+}
+
+/**
+ * The Gemini Developer API's countTokens endpoint accepts a full
+ * generateContentRequest envelope. The @google/genai SDK's countTokens
+ * config.systemInstruction/tools adapters are Vertex-only and throw for the
+ * Gemini API, so keep the exact model inputs in the REST request envelope.
+ */
+export function buildCountTokensRequest(
+  modelId: string,
+  contents: unknown[],
+  config: Record<string, unknown>,
+): { generateContentRequest: Record<string, unknown> } {
+  const generateContentRequest: Record<string, unknown> = {
+    model: `models/${modelId}`,
+    contents,
+  };
+  if (typeof config.systemInstruction === 'string' && config.systemInstruction.length > 0) {
+    generateContentRequest.systemInstruction = { parts: [{ text: config.systemInstruction }] };
+  }
+  if (Array.isArray(config.tools) && config.tools.length > 0) {
+    generateContentRequest.tools = config.tools;
+  }
+  return { generateContentRequest };
 }
 
 /** Server-controlled reasoning is derived from verified identity and model policy. */

@@ -9,26 +9,14 @@
 
 import {
   PlatformPort,
-  LocationPort,
   NotificationPort,
   HapticsPort,
   PlatformCapabilities,
   PlatformPermissionState,
-  PlatformLocationReading,
   PlatformNotificationPayload,
   HapticImpactStyle,
   HapticNotificationType,
 } from './ports';
-
-export class NullLocationAdapter implements LocationPort {
-  async checkPermission(): Promise<PlatformPermissionState> {
-    return 'unsupported';
-  }
-
-  async getCurrentPosition(): Promise<PlatformLocationReading | null> {
-    return null;
-  }
-}
 
 export class NullNotificationAdapter implements NotificationPort {
   async checkPermission(): Promise<PlatformPermissionState> {
@@ -67,13 +55,11 @@ export class NullHapticsAdapter implements HapticsPort {
 }
 
 export class NullPlatformAdapter implements PlatformPort {
-  readonly location: LocationPort = new NullLocationAdapter();
   readonly notifications: NotificationPort = new NullNotificationAdapter();
   readonly haptics: HapticsPort = new NullHapticsAdapter();
 
   getCapabilities(): PlatformCapabilities {
     return {
-      hasGeolocation: false,
       hasNotifications: false,
       hasHaptics: false,
       hasAudioInput: false,

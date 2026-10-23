@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getFirebaseAppCheckToken, getManagedAiUser, isFirebaseConfigured } from '../services/firebase';
-import { generateManagedContent, getManagedAiEndpoint, hasManagedAiIdentity, ManagedAiError } from '../services/ai/managedClient';
+import { generateManagedContent, getManagedAiEndpoint, getManagedLiveRelayEndpoint, hasManagedAiIdentity, ManagedAiError } from '../services/ai/managedClient';
 
 const mocked = vi.hoisted(() => ({ user: null as { emailVerified: boolean; getIdToken: (forceRefresh?: boolean) => Promise<string> } | null }));
 
@@ -20,6 +20,7 @@ describe('managed AI browser client', () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     mocked.user = null;
+    mockedManagedUser.mockReset();
     mockedManagedUser.mockImplementation(async () => mocked.user as never);
     mockedFirebaseConfigured.mockReturnValue(true);
     mockedAppCheck.mockResolvedValue(null);
@@ -27,6 +28,7 @@ describe('managed AI browser client', () => {
 
   it('requires Firebase identity before sending a request', async () => {
     vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_MANAGED_AI_ENDPOINT', 'https://asia-south1-flowmate-ai.cloudfunctions.net/managedGemini');
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     await expect(generateManagedContent([], {}, 'turn_0000000000000001', 'call_00000000000001'))
@@ -40,6 +42,22 @@ describe('managed AI browser client', () => {
     vi.stubEnv('PROD', false);
     mocked.user = { emailVerified: true, getIdToken: vi.fn().mockResolvedValue('unit-test-id-token') };
     expect(hasManagedAiIdentity()).toBe(false);
+  });
+
+  it('blocks text and Live provider endpoints in demo-emulator mode even when env files contain production URLs', () => {
+    vi.stubEnv('VITE_USE_FIREBASE_EMULATORS', 'true');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'demo-flowmate-sync');
+    vi.stubEnv('VITE_MANAGED_AI_ENDPOINT', 'https://asia-south1-flowmate-ai.cloudfunctions.net/managedGemini');
+    vi.stubEnv('VITE_MANAGED_LIVE_RELAY_ENDPOINT', 'https://managed-live-relay-preview.example.run.app');
+    vi.stubEnv('PROD', false);
+    mocked.user = { emailVerified: true, getIdToken: vi.fn().mockResolvedValue('demo-test-id-token') };
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(getManagedAiEndpoint()).toBe('');
+    expect(getManagedLiveRelayEndpoint()).toBe('');
+    expect(hasManagedAiIdentity()).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('derives the managed endpoint from project and region in production', () => {
@@ -61,6 +79,21 @@ describe('managed AI browser client', () => {
     expect(hasManagedAiIdentity()).toBe(false);
     await expect(generateManagedContent([], {}, 'turn_0000000000000001', 'call_00000000000001'))
       .rejects.toMatchObject({ code: 'MANAGED_AI_NOT_CONFIGURED' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('classifies an absent emulator endpoint before touching Auth or marking a request uncertain', async () => {
+    mockedManagedUser.mockClear();
+    vi.stubEnv('VITE_USE_FIREBASE_EMULATORS', 'true');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'demo-flowmate-sync');
+    vi.stubEnv('VITE_MANAGED_AI_ENDPOINT', 'https://asia-south1-flowmate-ai.cloudfunctions.net/managedGemini');
+    mockedManagedUser.mockRejectedValueOnce(new Error('synthetic Auth initialization failure'));
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(generateManagedContent([], {}, 'turn_0000000000000001', 'call_00000000000001'))
+      .rejects.toMatchObject({ code: 'MANAGED_AI_NOT_CONFIGURED', status: 503 });
+    expect(mockedManagedUser).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -77,6 +77,19 @@ describe('Action Review Draft Continuity & Current-State Revalidation', () => {
     expect(await getReviewDraft(draft.id)).toBeNull();
   });
 
+  it('keeps recoverable proposals scoped to the account that created them', async () => {
+    const uidA = `draft-owner-a-${Date.now()}`;
+    const uidB = `draft-owner-b-${Date.now()}`;
+    const draft = await saveReviewDraft('manual_edit', 'Account A proposal', [], {}, undefined, uidA);
+
+    expect(await getLatestReviewDraft(uidB)).toBeNull();
+    expect((await getLatestReviewDraft(uidA))?.id).toBe(draft.id);
+
+    await deleteReviewDraft(draft.id, uidA);
+    await clearAllReviewDrafts(uidA);
+    await clearAllReviewDrafts(uidB);
+  });
+
   it('successfully validates clean drafts when kernel state is unchanged', async () => {
     const kernelEntities: Record<string, KernelEntity> = {
       'tsk-201': createMockKernelEntity('tsk-201', 'Write Architecture Spec', 1)

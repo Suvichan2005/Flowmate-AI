@@ -16,7 +16,8 @@ test('usage metadata admits only bounded numeric token counters', () => {
     promptTokenCount: 120,
     candidatesTokenCount: 37,
     totalTokenCount: 157,
-    thoughtsTokenCount: '8',
+    thoughtsTokenCount: 8,
+    cachedContentTokenCount: '12',
     prompt: 'private prompt text',
     response: 'private answer text',
     apiKey: 'never persist or log this',
@@ -28,4 +29,5 @@ test('usage metadata admits only bounded numeric token counters', () => {
     totalTokenCount: 157,
     thoughtsTokenCount: 8,
   });
+  assert.deepEqual(sanitizeUsageMetadata({ promptTokenCount: null, candidatesTokenCount: '5' }), {});
 });

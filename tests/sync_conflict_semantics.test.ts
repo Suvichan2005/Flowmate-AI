@@ -17,12 +17,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   reconcileEntity,
   reconcileEntityCollection,
+  retainCanonicalReference,
+  canonicalJson,
   IdempotencyTracker,
   PendingMutationQueue,
   PendingMutation,
 } from '../services/sync';
 import { Entity as KernelEntity, AttributeValue } from '../services/kernel/types';
-import { mergeData, mergeMessages, mergeChatSessions } from '../services/firestoreSync';
+import { mergeData, mergeMessages, mergeChatSessions, filterMessagesBySessionState, isDefaultWelcomeMessage } from '../services/firestoreSync';
 import { EntityKind, EntityStatus, Message, ChatSession } from '../types';
 
 function createMockKernelEntity(
@@ -69,6 +71,31 @@ function createMockKernelEntity(
 }
 
 describe('P1-09 Synchronization & Conflict Semantics', () => {
+  it('preserves workspace references for materially identical remote snapshots', () => {
+    const current = { settings: { theme: 'dark' }, tags: ['one', 'two'] };
+    const equivalent = { tags: ['one', 'two'], settings: { theme: 'dark' } };
+    const changed = { settings: { theme: 'light' }, tags: ['one', 'two'] };
+
+    expect(retainCanonicalReference(current, equivalent)).toBe(current);
+    expect(retainCanonicalReference(current, changed)).toBe(changed);
+  });
+
+  it('treats late failed-turn metadata as a real message update', () => {
+    const initial: Message = {
+      id: 'message-1', role: 'user', text: 'A saved request', created_at: '2026-10-23T16:00:00.000Z',
+      channelId: 'general', status: 'in_flight',
+    };
+    const settled: Message = {
+      ...initial,
+      status: 'failed',
+      turn_metadata: {
+        managed_failure: { code: 'MANAGED_AI_NOT_CONFIGURED', outcome: 'not_sent' },
+      },
+    };
+
+    expect(canonicalJson([initial])).not.toBe(canonicalJson([settled]));
+  });
+
   let tracker: IdempotencyTracker;
 
   beforeEach(() => {
@@ -107,11 +134,18 @@ describe('P1-09 Synchronization & Conflict Semantics', () => {
   // Scenario C: Safe Attribute-Level Merge for Independent Non-Overlapping Edits
   // --------------------------------------------------------------------------
   it('Scenario C: performs safe attribute merge when distinct non-overlapping fields change', () => {
+    const baseline = createMockKernelEntity('task-1', 1, 'Shared Task Title', {
+      priority: 0,
+      progress_percent: 0,
+      notes: 'Initial notes',
+    });
     const local = createMockKernelEntity('task-1', 2, 'Shared Task Title', {
       priority: 1,
+      progress_percent: 0,
       notes: 'Initial notes',
     });
     const remote = createMockKernelEntity('task-1', 2, 'Shared Task Title', {
+      priority: 0,
       progress_percent: 75,
       notes: 'Initial notes',
     });
@@ -122,6 +156,7 @@ describe('P1-09 Synchronization & Conflict Semantics', () => {
       base_revision: 1,
       op_type: 'upsert_entity',
       entity: local,
+      base_entity: baseline,
       created_at: '2026-10-08T12:00:00.000Z',
       status: 'pending',
       retry_count: 0,
@@ -372,6 +407,34 @@ describe('P1-09 Synchronization & Conflict Semantics', () => {
     expect(result.resolvedEntity.title).toBe('Remote Conflicting Title');
   });
 
+  it('Scenario L2: detects a same-revision remote edit against the captured offline base', () => {
+    const baseline = createMockKernelEntity('task-cross-device', 2, 'Original title', {}, {
+      updated_at: '2026-10-20T18:40:00.000Z',
+    });
+    const local = createMockKernelEntity('task-cross-device', 3, 'Offline device title', {}, {
+      updated_at: '2026-10-20T18:51:00.000Z',
+    });
+    const remote = createMockKernelEntity('task-cross-device', 2, 'Online device title', {}, {
+      updated_at: '2026-10-20T18:52:00.000Z',
+    });
+    const pending: PendingMutation = {
+      mutation_id: 'mut-cross-device',
+      entity_id: 'task-cross-device',
+      base_revision: 2,
+      base_entity: baseline,
+      op_type: 'upsert_entity',
+      entity: local,
+      created_at: '2026-10-20T18:51:00.000Z',
+      status: 'pending',
+      retry_count: 0,
+    };
+
+    const result = reconcileEntity(local, remote, pending);
+    expect(result.action).toBe('conflict_detected');
+    expect(result.conflict?.conflicting_fields).toContain('title');
+    expect(result.resolvedEntity.title).toBe('Online device title');
+  });
+
   // --------------------------------------------------------------------------
   // Scenario M: Chat Messages Append-Only Union & Zombie Session Suppression
   // --------------------------------------------------------------------------
@@ -439,6 +502,65 @@ describe('P1-09 Synchronization & Conflict Semantics', () => {
     expect(merged[0].updated_at).toBe('2026-10-08T12:00:00.000Z');
   });
 
+  it('prefers restored cloud General Chat metadata over a fresh local placeholder', () => {
+    const local = {
+      id: 'general', title: 'General Chat', created_at: '2026-10-24T00:00:00.000Z',
+      updated_at: '2026-10-24T00:00:00.000Z',
+    };
+    const remote = {
+      id: 'general', title: 'General Chat', created_at: '2026-10-20T00:00:00.000Z',
+      updated_at: '2026-10-20T00:00:00.000Z', active_branch_id: 'b_main_general',
+    };
+    expect(mergeChatSessions([local], [remote])[0]).toEqual(remote);
+  });
+
+  it('identifies only the synthetic welcome prompt as non-user chat history', () => {
+    expect(isDefaultWelcomeMessage({
+      id: 'init-1', role: 'assistant', text: 'Welcome to Flowmate. What would you like to talk through or work on?',
+      created_at: '2026-10-24T00:00:00.000Z', channelId: 'general',
+    })).toBe(true);
+    expect(isDefaultWelcomeMessage({
+      id: 'init-1', role: 'assistant', text: 'Welcome to Flowmate. What would you like to talk through or work on?',
+      created_at: '2026-10-24T00:00:00.000Z', channelId: 'general', status: 'completed',
+    })).toBe(false);
+  });
+
+  it('propagates the active conversation branch when its selection timestamp is newer', () => {
+    const remote = { id: 'session-branch', title: 'Chat', created_at: '2026-10-01T00:00:00.000Z', updated_at: '2026-10-01T00:00:00.000Z', active_branch_id: 'main' };
+    const local = { ...remote, updated_at: '2026-10-02T00:00:00.000Z', active_branch_id: 'fork' };
+    expect(mergeChatSessions([local], [remote])[0].active_branch_id).toBe('fork');
+  });
+
+  it('session tombstones and clear markers suppress stale copies without hiding later messages', () => {
+    const staleLocal: ChatSession = {
+      id: 'session-clear', title: 'Old title', created_at: '2026-10-08T10:00:00.000Z',
+      updated_at: '2026-10-08T13:00:00.000Z',
+    };
+    const cloudClear: ChatSession = {
+      id: 'session-clear', title: 'Current title', created_at: '2026-10-08T10:00:00.000Z',
+      updated_at: '2026-10-08T12:00:00.000Z', messages_cleared_at: '2026-10-08T11:00:00.000Z',
+    };
+    const mergedSession = mergeChatSessions([staleLocal], [cloudClear]);
+    const messages: Message[] = [
+      { id: 'before-clear', role: 'user', text: 'Old', created_at: '2026-10-08T10:30:00.000Z', channelId: 'session-clear' },
+      { id: 'after-clear', role: 'user', text: 'New', created_at: '2026-10-08T11:30:00.000Z', channelId: 'session-clear' },
+    ];
+
+    expect(mergedSession[0].messages_cleared_at).toBe(cloudClear.messages_cleared_at);
+    expect(filterMessagesBySessionState(messages, mergedSession).map(message => message.id)).toEqual(['after-clear']);
+    const newerLocalTitle = { ...staleLocal, title: 'Renamed later', updated_at: '2026-10-08T14:00:00.000Z', messages_cleared_at: cloudClear.messages_cleared_at };
+    expect(mergeChatSessions([newerLocalTitle], [staleLocal])[0].messages_cleared_at).toBe(cloudClear.messages_cleared_at);
+
+    const olderDelete = { ...staleLocal, deleted: true, deleted_at: '2026-10-08T11:00:00.000Z', updated_at: '2026-10-08T11:00:00.000Z' };
+    expect(mergeChatSessions([staleLocal], [olderDelete])[0].deleted).toBe(true);
+    expect(filterMessagesBySessionState(messages, [olderDelete])).toEqual([]);
+
+    const undatedLegacyMessage: Message = {
+      id: 'undated-legacy', role: 'user', text: 'Old record with no valid timestamp', created_at: 'invalid', channelId: 'session-clear',
+    };
+    expect(filterMessagesBySessionState([undatedLegacyMessage], mergedSession)).toEqual([]);
+  });
+
   // --------------------------------------------------------------------------
   // Scenario O: Collection Reconciler Integration
   // --------------------------------------------------------------------------
@@ -496,5 +618,36 @@ describe('P1-09 Synchronization & Conflict Semantics', () => {
     expect(conflicts).toHaveLength(0);
     // Queue should now be empty because it was marked committed!
     expect(queue.size()).toBe(0);
+  });
+
+  it('keeps the offline outbox while a previously detected conflict awaits the user', () => {
+    const queue = new PendingMutationQueue();
+    queue.clear();
+    const baseline = createMockKernelEntity('task-conflict-held', 1, 'Original');
+    const offline = createMockKernelEntity('task-conflict-held', 2, 'Offline choice');
+    const cloud = createMockKernelEntity('task-conflict-held', 2, 'Cloud choice');
+    queue.enqueue('mut_conflict_held', offline.id, 1, 'upsert_entity', offline, new Date().toISOString(), baseline);
+
+    const first = reconcileEntityCollection({ [offline.id]: offline }, [cloud], queue);
+    expect(first.conflicts).toHaveLength(1);
+    expect(queue.size()).toBe(1);
+
+    const repeatedWithoutUiGuard = reconcileEntityCollection(first.nextKernelEntities, [cloud], queue);
+    expect(repeatedWithoutUiGuard.nextKernelEntities[offline.id].title).toBe('Cloud choice');
+    expect(queue.getByEntityId(offline.id)?.entity.title).toBe('Offline choice');
+
+    // A repeat snapshot sees the remote baseline in the store, but must not
+    // infer that it acknowledges the offline choice while the conflict dialog
+    // is still awaiting an explicit user decision.
+    const repeated = reconcileEntityCollection(
+      first.nextKernelEntities,
+      [cloud],
+      queue,
+      new Date().toISOString(),
+      new Set([offline.id]),
+    );
+    expect(repeated.conflicts).toHaveLength(0);
+    expect(repeated.nextKernelEntities[offline.id].title).toBe('Cloud choice');
+    expect(queue.getByEntityId(offline.id)?.entity.title).toBe('Offline choice');
   });
 });

@@ -23,6 +23,12 @@ import type {
 
 const STORAGE_KEY = 'flowmate_action_review_drafts';
 
+function storageKeyForIdentity(identity = 'legacy'): string {
+  return identity === 'legacy'
+    ? STORAGE_KEY
+    : `${STORAGE_KEY}:identity:${encodeURIComponent(identity)}`;
+}
+
 // In-memory fallback for headless/Node test environments
 let memoryStorage: Record<string, string> = {};
 
@@ -33,18 +39,19 @@ function getRawStorage(): Record<string, string> | Storage {
   return memoryStorage;
 }
 
-function readDraftsMap(): Record<string, ReviewDraft> {
+function readDraftsMap(identity = 'legacy'): Record<string, ReviewDraft> {
+  const key = storageKeyForIdentity(identity);
   try {
     let raw: string | null = null;
     if (typeof localStorage !== 'undefined') {
       try {
-        raw = localStorage.getItem(STORAGE_KEY);
+        raw = localStorage.getItem(key);
       } catch {
         raw = null;
       }
     }
-    if (!raw && memoryStorage[STORAGE_KEY]) {
-      raw = memoryStorage[STORAGE_KEY];
+    if (!raw && memoryStorage[key]) {
+      raw = memoryStorage[key];
     }
 
     if (!raw) return {};
@@ -54,13 +61,14 @@ function readDraftsMap(): Record<string, ReviewDraft> {
   }
 }
 
-function writeDraftsMap(map: Record<string, ReviewDraft>): void {
+function writeDraftsMap(map: Record<string, ReviewDraft>, identity = 'legacy'): void {
   try {
     const serialized = JSON.stringify(map);
-    memoryStorage[STORAGE_KEY] = serialized;
+    const key = storageKeyForIdentity(identity);
+    memoryStorage[key] = serialized;
     if (typeof localStorage !== 'undefined') {
       try {
-        localStorage.setItem(STORAGE_KEY, serialized);
+        localStorage.setItem(key, serialized);
       } catch {
         // Ignore quota/access errors
       }
@@ -147,7 +155,8 @@ export async function saveReviewDraft(
   rawInput: string,
   ops: ToonOperation[],
   kernelEntities: KernelEntitiesMap,
-  metadata?: ReviewDraft['metadata']
+  metadata?: ReviewDraft['metadata'],
+  identity = 'legacy'
 ): Promise<ReviewDraft> {
   const draftId = generateDraftId();
   const targetSnapshots = captureEntitySnapshots(ops, kernelEntities);
@@ -162,9 +171,9 @@ export async function saveReviewDraft(
     metadata
   };
 
-  const map = readDraftsMap();
+  const map = readDraftsMap(identity);
   map[draft.id] = draft;
-  writeDraftsMap(map);
+  writeDraftsMap(map, identity);
 
   return draft;
 }
@@ -172,16 +181,16 @@ export async function saveReviewDraft(
 /**
  * Retrieves a specific review draft by ID.
  */
-export async function getReviewDraft(id: string): Promise<ReviewDraft | null> {
-  const map = readDraftsMap();
+export async function getReviewDraft(id: string, identity = 'legacy'): Promise<ReviewDraft | null> {
+  const map = readDraftsMap(identity);
   return map[id] || null;
 }
 
 /**
  * Lists all pending review drafts ordered newest first.
  */
-export async function listReviewDrafts(): Promise<ReviewDraft[]> {
-  const map = readDraftsMap();
+export async function listReviewDrafts(identity = 'legacy'): Promise<ReviewDraft[]> {
+  const map = readDraftsMap(identity);
   return Object.values(map).sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
@@ -190,30 +199,31 @@ export async function listReviewDrafts(): Promise<ReviewDraft[]> {
 /**
  * Gets the most recent unconfirmed review draft.
  */
-export async function getLatestReviewDraft(): Promise<ReviewDraft | null> {
-  const drafts = await listReviewDrafts();
+export async function getLatestReviewDraft(identity = 'legacy'): Promise<ReviewDraft | null> {
+  const drafts = await listReviewDrafts(identity);
   return drafts.length > 0 ? drafts[0] : null;
 }
 
 /**
  * Deletes a confirmed or cancelled review draft.
  */
-export async function deleteReviewDraft(id: string): Promise<void> {
-  const map = readDraftsMap();
+export async function deleteReviewDraft(id: string, identity = 'legacy'): Promise<void> {
+  const map = readDraftsMap(identity);
   if (map[id]) {
     delete map[id];
-    writeDraftsMap(map);
+    writeDraftsMap(map, identity);
   }
 }
 
 /**
  * Clears all stored drafts.
  */
-export async function clearAllReviewDrafts(): Promise<void> {
-  memoryStorage = {};
+export async function clearAllReviewDrafts(identity = 'legacy'): Promise<void> {
+  const key = storageKeyForIdentity(identity);
+  delete memoryStorage[key];
   if (typeof localStorage !== 'undefined') {
     try {
-      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(key);
     } catch {
       // Ignore
     }

@@ -9,10 +9,11 @@ import { defineBoolean, defineString, defineSecret } from 'firebase-functions/pa
 import { onRequest } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions';
 import type { Request, Response } from 'express';
-import { ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, ARGON_MODEL, DEFAULT_MODEL, GUEST_CHAT_TURN_LIMIT, GUEST_DAILY_BRIEFING_LIMIT, MANAGED_FUNCTION_TIMEOUT_SECONDS, SUPPORTED_MANAGED_MODELS, RequestFailure, authorizeManagedModel, dayKey, isCompletedUserTurn, managedGenerationConfig, monthKey, sanitizeManagedCandidates, validateGenerationBody } from './policy.js';
-import { briefingLedgerRefs, failTurn, finishBriefing, finishTurn, isManagedAiEnabledForIdentity, recordGenerationUsage, reserveBriefing, reserveBriefingGenerationCall, reserveGenerationCall, reserveTurn, sanitizeUsageMetadata, turnLedgerRefs } from './ledger.js';
+import { ACCOUNT_CHAT_TURN_LIMIT, ACCOUNT_DAILY_BRIEFING_LIMIT, ARGON_MODEL, DEFAULT_MODEL, GUEST_CHAT_TURN_LIMIT, GUEST_DAILY_BRIEFING_LIMIT, MANAGED_FUNCTION_TIMEOUT_SECONDS, SUPPORTED_MANAGED_MODELS, RequestFailure, authorizeManagedModel, buildCountTokensRequest, dayKey, isCompletedUserTurn, managedGenerationConfig, monthKey, sanitizeManagedCandidates, validateGenerationBody } from './policy.js';
+import { briefingLedgerRefs, failTurn, finishBriefing, finishTurn, isManagedAiEnabledForIdentity, markCostExposureUncertain, recordGenerationUsage, reserveBriefing, reserveBriefingGenerationCall, reserveCostExposure, reserveGenerationCall, reserveTurn, sanitizeUsageMetadata, settleCostExposure, turnLedgerRefs } from './ledger.js';
 import { handleManagedAiAdmin } from './admin.js';
 import { generateArgonStateless } from './argon.js';
+import { actualTextGenerationCost, estimateTextGenerationCost } from './cost.js';
 
 if (getApps().length === 0) initializeApp();
 const db = getFirestore();
@@ -71,6 +72,15 @@ export const managedGemini = onRequest({
     res.status(405).json({ error: { code: 'METHOD_NOT_ALLOWED' } }); return;
   }
 
+  // The old endpoint minted provider tokens for browser-owned sockets. A client
+  // could end the Firestore lease while keeping Gemini connected, so it must not
+  // remain an alternate path around the server-owned relay's hard session cap.
+  if (req.path === '/live-session' || req.path === '/live-session/end') {
+    res.set('Cache-Control', 'no-store');
+    res.status(410).json({ error: { code: 'LIVE_RELAY_REQUIRED' } });
+    return;
+  }
+
   let uid: string;
   let email: string | undefined;
   let emailVerified = false;
@@ -109,23 +119,42 @@ export const managedGemini = onRequest({
       const access = await db.doc(`managedAiAllowlist/${uid}`).get();
       const privileged = allowance === 'account' && Boolean(emailLower) && access.get('status') === 'active'
         && access.get('uid') === uid && access.get('emailLower') === emailLower;
-      const month = monthKey(new Date());
-      const today = dayKey(new Date());
+      const now = new Date();
+      const month = monthKey(now);
+      const day = dayKey(now);
       const uidHash = createHash('sha256').update(uid).digest('hex');
-      const [identityUsage, briefingUsage, modelUsage, sharedModelUsage] = await Promise.all([
-        db.doc(`${privileged ? 'managedAiPrivilegedUsers' : allowance === 'guest' ? 'managedAiGuests' : 'managedAiUsers'}/${uid}`).get(),
-        db.doc(`managedAiBriefings/${today}_${uidHash}`).get(),
-        db.doc(`${privileged ? 'managedAiPrivilegedUserMonthly' : 'managedAiUserMonthly'}/${month}_${uidHash}`).get(),
-        db.doc(`managedAiMonthly/${month}`).get(),
+      const personalMonth = db.doc(`${privileged ? 'managedAiPrivilegedUserMonthly' : 'managedAiUserMonthly'}/${month}_${uidHash}`);
+      const personalDay = db.doc(`${privileged ? 'managedAiPrivilegedUserDaily' : 'managedAiUserDaily'}/${day}_${uidHash}`);
+      const personalCost = db.doc(`managedAiCostUserMonthly/${month}_${uidHash}`);
+      const budgetPolicy = db.doc('system/managedAiBudgetPolicy');
+      const [monthlyUsage, dailyUsage, personalCostUsage, costPolicy] = await Promise.all([
+        personalMonth.get(), personalDay.get(), personalCost.get(), budgetPolicy.get(),
       ]);
+      const [year, monthNumber] = month.split('-').map(Number);
+      // monthKey is Asia/Kolkata; represent the next month boundary as an exact UTC instant.
+      const resetAt = new Date(Date.UTC(year, monthNumber, 1) - 330 * 60_000).toISOString();
+      const [dayYear, dayMonth, dayNumber] = day.split('-').map(Number);
+      const dailyResetAt = new Date(Date.UTC(dayYear, dayMonth - 1, dayNumber + 1) - 330 * 60_000).toISOString();
       res.set('Cache-Control', 'no-store');
       res.status(200).json({
         tier: privileged ? 'privileged' : allowance,
-        chat: { successfulTurns: Number(identityUsage.get('successfulTurns') || 0), lifetimeLimit: privileged ? null : allowance === 'guest' ? GUEST_CHAT_TURN_LIMIT : ACCOUNT_CHAT_TURN_LIMIT },
-        briefings: { successfulToday: Number(briefingUsage.get('successful') || 0), dailyLimit: privileged ? null : allowance === 'guest' ? GUEST_DAILY_BRIEFING_LIMIT : ACCOUNT_DAILY_BRIEFING_LIMIT, date: today },
-        modelCalls: {
-          thisMonth: Number((privileged ? modelUsage : sharedModelUsage).get('callsReserved') || 0),
-          applicationLimit: null,
+        chat: { successfulTurns: Number(monthlyUsage.get('successfulTurns') || 0), monthlyLimit: privileged ? null : allowance === 'guest' ? GUEST_CHAT_TURN_LIMIT : ACCOUNT_CHAT_TURN_LIMIT, month, resetAt },
+        briefings: { successfulToday: Number(dailyUsage.get('successfulBriefings') || 0), dailyLimit: privileged ? null : allowance === 'guest' ? GUEST_DAILY_BRIEFING_LIMIT : ACCOUNT_DAILY_BRIEFING_LIMIT, day, resetAt: dailyResetAt },
+        cost: {
+          currency: 'USD', month,
+          estimatedSettledMicroUsd: Number(personalCostUsage.get('settledMicroUsd') || 0),
+          reservedMicroUsd: Number(personalCostUsage.get('reservedMicroUsd') || 0),
+          monthlyLimitMicroUsd: costPolicy.get('enabled') === true && Number.isSafeInteger(costPolicy.get('userMonthlyLimitMicroUsd'))
+            ? Number(costPolicy.get('userMonthlyLimitMicroUsd')) : null,
+          maxTurnExposureMicroUsd: costPolicy.get('enabled') === true && Number.isSafeInteger(costPolicy.get('maxTurnExposureMicroUsd'))
+            ? Number(costPolicy.get('maxTurnExposureMicroUsd')) : null,
+        },
+        tokens: {
+          inputThisMonth: Number(monthlyUsage.get('inputTokens') || 0),
+          outputThisMonth: Number(monthlyUsage.get('outputTokens') || 0),
+          thinkingThisMonth: Number(monthlyUsage.get('thinkingTokens') || 0),
+          totalThisMonth: Number(monthlyUsage.get('totalTokens') || 0),
+          usageCallsThisMonth: Number(monthlyUsage.get('usageCallsReported') || 0),
           month,
         },
       });
@@ -232,8 +261,8 @@ export const managedGemini = onRequest({
         config: {
           uses: 1,
           newSessionExpireTime: new Date(now + 60_000).toISOString(),
-          // Provider audio-only sessions have a 15-minute maximum. This is a
-          // provider session bound, not an application allowance or turn quota.
+          // Gemini rejects further messages after this token expiry and may
+          // close earlier. This time bound is not a monetary usage cap.
           expireTime: new Date(now + 15 * 60_000).toISOString(),
           liveConnectConstraints: { model: `models/${model}`, config: liveConfig },
           // The Live API locks all session configuration fields by default for
@@ -244,6 +273,15 @@ export const managedGemini = onRequest({
       });
       if (!token.name) throw new RequestFailure('LIVE_TOKEN_UNAVAILABLE', 503);
       await sessionRef.set({ status: 'active', tokenGrantedAt: Timestamp.now() }, { merge: true });
+      logger.info('Managed Live token granted', {
+        requestId: sessionId,
+        identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+        tier: privileged ? 'privileged' : allowance,
+        model,
+        tokenUses: 1,
+        sessionMessageExpiryMinutes: 15,
+        outcome: 'success',
+      });
       res.set('Cache-Control', 'no-store');
       res.status(200).json({
         token: token.name,
@@ -261,7 +299,12 @@ export const managedGemini = onRequest({
           });
         } catch { /* fail closed; the 15-minute provider-session lease expires */ }
       }
-      if (!(error instanceof RequestFailure)) logger.warn('Managed Live token request failed', { code: 'LIVE_TOKEN_UNAVAILABLE' });
+      logger.warn('Managed Live token request denied', {
+        requestId: sessionId,
+        identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+        tier: allowance,
+        denialCategory: error instanceof RequestFailure ? error.code : 'LIVE_TOKEN_UNAVAILABLE',
+      });
       sendError(res, error instanceof RequestFailure ? error : new RequestFailure('LIVE_TOKEN_UNAVAILABLE', 503));
     }
     return;
@@ -274,11 +317,18 @@ export const managedGemini = onRequest({
       if (Object.keys(body).length !== 1 || typeof body.sessionId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.sessionId)) {
         throw new RequestFailure('INVALID_REQUEST', 400);
       }
-      await db.runTransaction(async transaction => {
+      const ended = await db.runTransaction(async transaction => {
         const current = await transaction.get(db.doc(`managedAiLiveSessions/${uid}`));
         if (current.get('sessionId') === body.sessionId && current.get('status') !== 'ended') {
           transaction.set(db.doc(`managedAiLiveSessions/${uid}`), { status: 'ended', endedAt: Timestamp.now(), expiresAtMs: Date.now() }, { merge: true });
+          return true;
         }
+        return false;
+      });
+      if (ended) logger.info('Managed Live session end received', {
+        requestId: body.sessionId,
+        identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+        outcome: 'user_end_received',
       });
       res.set('Cache-Control', 'no-store');
       res.status(200).json({ ended: true });
@@ -342,6 +392,7 @@ export const managedGemini = onRequest({
   let turnReserved = false;
   let briefingReserved = false;
   let callReserved = false;
+  let costReserved = false;
 
   try {
     if (input.purpose === 'chat') {
@@ -374,19 +425,36 @@ export const managedGemini = onRequest({
     if (requestedOutputTokens !== undefined && Number(requestedOutputTokens) > modelInfo.outputTokenLimit) {
       throw new RequestFailure('OUTPUT_TOKEN_LIMIT', 413);
     }
-    let count: Awaited<ReturnType<typeof ai.models.countTokens>>;
+    let count: { totalTokens?: unknown };
     try {
-      count = await ai.models.countTokens({
-        model: modelId,
-        contents: input.contents as Content[],
-        config: {
-          systemInstruction: String(input.config.systemInstruction || ''),
-          ...(Array.isArray(input.config.tools) ? { tools: input.config.tools as Tool[] } : {}),
-        },
+      const countResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelId)}:countTokens`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY.value() },
+        body: JSON.stringify(buildCountTokensRequest(modelId, input.contents, input.config)),
+        signal: AbortSignal.timeout(15_000),
       });
-    } catch {
+      const countPayload = await countResponse.json() as {
+        totalTokens?: unknown;
+        error?: { code?: unknown; status?: unknown };
+      };
+      if (!countResponse.ok) {
+        const providerCode = typeof countPayload.error?.status === 'string'
+          && /^[A-Z][A-Z0-9_]{0,63}$/.test(countPayload.error.status)
+          ? countPayload.error.status : undefined;
+        logger.warn('Managed input token count unavailable', {
+          code: 'MODEL_CATALOG_UNAVAILABLE', providerStatus: countResponse.status, providerCode,
+        });
+        throw new RequestFailure('MODEL_CATALOG_UNAVAILABLE', 503);
+      }
+      count = countPayload;
+    } catch (error) {
+      if (error instanceof RequestFailure) throw error;
       // Do not send a request whose model-specific context size could not be
-      // verified. In particular, Argon uses one shared input/output window.
+      // verified. Log only an error class, never prompts, tool arguments or keys.
+      const providerErrorName = error && typeof error === 'object' && 'name' in error
+        && typeof error.name === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(error.name)
+        ? error.name : undefined;
+      logger.warn('Managed input token count unavailable', { code: 'MODEL_CATALOG_UNAVAILABLE', providerErrorName });
       throw new RequestFailure('MODEL_CATALOG_UNAVAILABLE', 503);
     }
     const inputTokens = Number(count.totalTokens);
@@ -398,19 +466,23 @@ export const managedGemini = onRequest({
       ? inputTokens + requestedOutput > modelInfo.inputTokenLimit
       : inputTokens > modelInfo.inputTokenLimit) throw new RequestFailure('MODEL_CONTEXT_LIMIT', 413);
 
+    const generationConfig = { ...input.config, maxOutputTokens: requestedOutput };
+    const estimate = estimateTextGenerationCost(modelId as Parameters<typeof estimateTextGenerationCost>[0], inputTokens, requestedOutput, new Date(currentTime));
     if (input.purpose === 'chat') await reserveGenerationCall(db, refs as ReturnType<typeof turnLedgerRefs>);
     else await reserveBriefingGenerationCall(db, refs as ReturnType<typeof briefingLedgerRefs>);
     callReserved = true;
+    await reserveCostExposure(db, refs, estimate, new Date(currentTime));
+    costReserved = true;
 
     const response = policyModel.interactionsApi
       ? await generateArgonStateless({
         apiKey: GEMINI_API_KEY.value(), contents: input.contents,
-        config: input.config, reasoningLevel,
+        config: generationConfig, reasoningLevel,
       })
       : await ai.models.generateContent({
         model: modelId,
         contents: input.contents as Content[],
-        config: managedGenerationConfig(input.config, reasoningLevel),
+        config: managedGenerationConfig(generationConfig, reasoningLevel),
       });
     const payload = {
       text: response.text || '',
@@ -423,20 +495,38 @@ export const managedGemini = onRequest({
     if (input.purpose === 'briefing' && !payload.text.trim()) throw new RequestFailure('GENERATION_FAILED', 502);
     const complete = input.purpose === 'briefing' || isCompletedUserTurn(payload);
     logger.info('Managed AI generation completed', {
+      requestId: input.callId,
+      identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+      tier: refs.isPrivileged ? 'privileged' : allowance,
+      purpose: input.purpose,
+      outcome: 'success',
+      durationMs: Date.now() - currentTime,
       model: modelId,
       reasoningLevel,
+      pricingVersion: estimate.pricingVersion,
+      estimatedCostMicroUsd: estimate.estimatedMicroUsd,
       usage: sanitizeUsageMetadata(payload.usageMetadata as Record<string, unknown> | null),
-      responseTextLength: payload.text.length,
       candidateCount: payload.candidates.length,
       functionCallCount: payload.functionCalls.length,
       completedUserTurn: complete,
     });
     try { await recordGenerationUsage(refs, modelId, reasoningLevel, payload.usageMetadata as Record<string, unknown> | null); }
     catch { logger.warn('Managed AI usage metadata could not be persisted', { model: modelId, reasoningLevel }); }
+    const actual = actualTextGenerationCost(modelId as Parameters<typeof actualTextGenerationCost>[0], payload.usageMetadata as Record<string, unknown> | null, new Date(currentTime));
+    if (actual) {
+      try { await settleCostExposure(refs, actual.actualMicroUsd, actual.pricingVersion); costReserved = false; }
+      catch { logger.error('Managed AI cost settlement failed; reservation retained', { requestId: input.callId, code: 'COST_SETTLEMENT_UNAVAILABLE' }); }
+    } else if (costReserved) {
+      await markCostExposureUncertain(refs);
+    }
     if (input.purpose === 'chat') await finishTurn(db, refs as ReturnType<typeof turnLedgerRefs>, complete);
     else await finishBriefing(db, refs as ReturnType<typeof briefingLedgerRefs>, complete);
     res.status(200).json(payload);
   } catch (error) {
+    if (costReserved) {
+      try { await markCostExposureUncertain(refs); }
+      catch { logger.error('Managed AI uncertain-cost reservation could not be marked', { requestId: input.callId, code: 'COST_SETTLEMENT_UNAVAILABLE' }); }
+    }
     if (briefingReserved) {
       try { await finishBriefing(db, refs as ReturnType<typeof briefingLedgerRefs>, false); }
       catch { /* reservation expiry and server-only ledger fail closed */ }
@@ -444,7 +534,27 @@ export const managedGemini = onRequest({
       try { await failTurn(db, refs as ReturnType<typeof turnLedgerRefs>, callReserved); }
       catch { /* fail closed: monthly generation reservations are never refunded */ }
     }
-    if (!(error instanceof RequestFailure)) logger.error('Managed AI generation failed', { code: 'GENERATION_FAILED' });
+    if (error instanceof RequestFailure) logger.warn('Managed AI request denied', {
+      requestId: input.callId,
+      identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+      tier: refs.isPrivileged ? 'privileged' : allowance,
+      purpose: input.purpose,
+      model: input.purpose === 'briefing' ? DEFAULT_MODEL : input.model,
+      denialCategory: error.code,
+      durationMs: Date.now() - currentTime,
+      costReservationStatus: costReserved ? 'uncertain' : 'none',
+    });
+    if (!(error instanceof RequestFailure)) logger.error('Managed AI generation failed', {
+      requestId: input.callId,
+      identityRef: createHash('sha256').update(uid).digest('hex').slice(0, 20),
+      tier: refs.isPrivileged ? 'privileged' : allowance,
+      purpose: input.purpose,
+      model: input.purpose === 'briefing' ? DEFAULT_MODEL : input.model,
+      outcome: 'uncertain',
+      durationMs: Date.now() - currentTime,
+      costReservationStatus: costReserved ? 'retained' : 'none',
+      code: 'GENERATION_FAILED',
+    });
     sendError(res, error instanceof RequestFailure ? error : new RequestFailure('GENERATION_FAILED', 502));
   }
 });

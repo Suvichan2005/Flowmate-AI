@@ -25,10 +25,15 @@ import {
     createUserWithEmailAndPassword,
     signInWithPopup,
     signInWithRedirect,
+    reauthenticateWithPopup,
+    reauthenticateWithRedirect,
+    linkWithPopup,
+    linkWithRedirect,
     getRedirectResult,
     GoogleAuthProvider,
     signOut as firebaseSignOut,
     onAuthStateChanged,
+    connectAuthEmulator,
     sendEmailVerification,
     reload,
     User
@@ -38,10 +43,12 @@ import {
     initializeFirestore,
     persistentLocalCache,
     persistentMultipleTabManager,
+    connectFirestoreEmulator,
     Firestore
 } from 'firebase/firestore';
 import type { Auth } from 'firebase/auth';
 import { resolveFirebaseAuthDomain } from './firebaseAuthDomain';
+import { resolveFirebaseEmulatorMode } from './firebaseEmulatorConfig';
 
 // Validate required environment variables
 const validateEnvVar = (name: string, value: string | undefined): string => {
@@ -73,12 +80,28 @@ const hasValidConfig = !!(
     firebaseConfig.appId
 );
 
+const emulatorModeRequested = import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true';
+const useFirebaseEmulators = resolveFirebaseEmulatorMode({
+    requested: emulatorModeRequested,
+    syncDemoRequested: import.meta.env.VITE_SYNC_DEMO_MODE === 'true',
+    isDevelopmentBuild: import.meta.env.DEV,
+    protocol: typeof window !== 'undefined' ? window.location.protocol : '',
+    hostname: typeof window !== 'undefined' ? window.location.hostname : '',
+    projectId: firebaseConfig.projectId,
+});
+
+if (useFirebaseEmulators && !hasValidConfig) {
+    throw new Error('Firebase emulator mode requires complete Firebase client configuration.');
+}
+
 // Initialize Firebase only if config is valid
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let managedAiGuestAuth: Auth | null = null;
+let managedAiGuestSignIn: Promise<User | null> | null = null;
 let db: Firestore | null = null;
 let googleProvider: GoogleAuthProvider | null = null;
+let googleCalendarProvider: GoogleAuthProvider | null = null;
 let appCheck: AppCheck | null = null;
 
 if (hasValidConfig) {
@@ -88,9 +111,14 @@ if (hasValidConfig) {
         app = getApps()[0];
     }
 
-    // Initialize App Check before accessing Firebase services when configured.
+    // The emulator path is opt-in, development-only, and hard-pinned to the
+    // loopback endpoints declared in firebase.json. It must never silently
+    // redirect a deployed or non-local build away from production services.
+    // Initialize App Check before accessing production Firebase services.
+    // Local emulators do not require production App Check and must not cause
+    // reCAPTCHA exchanges during isolated synchronization acceptance.
     const appCheckSiteKey = import.meta.env.VITE_FIREBASE_APPCHECK_SITE_KEY;
-    if (appCheckSiteKey && typeof window !== 'undefined') {
+    if (!useFirebaseEmulators && appCheckSiteKey && typeof window !== 'undefined') {
         try {
             appCheck = initializeAppCheck(app, {
                 provider: new ReCaptchaEnterpriseProvider(appCheckSiteKey),
@@ -112,6 +140,11 @@ if (hasValidConfig) {
         // the intended cross-reload Auth persistence explicit.
         auth = getAuth(app);
     }
+    if (useFirebaseEmulators && auth) {
+        // Fail closed on emulator setup problems. Never let an explicit test
+        // run silently fall through to the configured production project.
+        connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+    }
     try {
         db = initializeFirestore(app, {
             localCache: persistentLocalCache({
@@ -123,12 +156,16 @@ if (hasValidConfig) {
         db = getFirestore(app);
         console.log('[Firebase] Using existing Firestore instance:', e);
     }
+    if (useFirebaseEmulators && db) {
+        connectFirestoreEmulator(db, '127.0.0.1', 18080);
+    }
 
-    // Auth providers
+    // Basic sign-in asks only for Firebase identity. Calendar access is a
+    // separate, user-initiated permission requested from the Calendar flow.
     googleProvider = new GoogleAuthProvider();
-    // Request Google Calendar access scope
-    googleProvider.addScope('https://www.googleapis.com/auth/calendar');
-    googleProvider.addScope('https://www.googleapis.com/auth/calendar.events');
+    googleCalendarProvider = new GoogleAuthProvider();
+    googleCalendarProvider.addScope('https://www.googleapis.com/auth/calendar');
+    googleCalendarProvider.addScope('https://www.googleapis.com/auth/calendar.events');
 
 } else {
     console.warn('[Firebase] Configuration incomplete - Firebase features disabled');
@@ -182,11 +219,16 @@ export const getManagedAiUser = async (): Promise<User | null> => {
         return null;
     }
     if (guestAuth.currentUser) return guestAuth.currentUser;
-    try {
-        return (await signInAnonymously(guestAuth)).user;
-    } catch {
-        return null;
+    // Model catalogue, usage and generation requests can all initialize the
+    // guest identity at once. Share one sign-in operation so a fresh visitor
+    // cannot receive multiple anonymous UIDs and multiply the per-UID allowance.
+    if (!managedAiGuestSignIn) {
+        managedAiGuestSignIn = signInAnonymously(guestAuth)
+            .then(({ user }) => user)
+            .catch(() => null)
+            .finally(() => { managedAiGuestSignIn = null; });
     }
+    return managedAiGuestSignIn;
 };
 
 /** Returns a short-lived App Check token when this app has been configured. */
@@ -196,39 +238,60 @@ export const getFirebaseAppCheckToken = async (): Promise<string | null> => {
     catch { return null; }
 };
 
-// Store the access token for Calendar API (with localStorage persistence + expiry)
-const GOOGLE_TOKEN_KEY = 'flowmate_google_calendar_token';
-const GOOGLE_TOKEN_EXPIRY_KEY = 'flowmate_google_calendar_token_expiry';
-let googleAccessToken: string | null = localStorage.getItem(GOOGLE_TOKEN_KEY);
-let googleTokenExpiresAt: number = Number(localStorage.getItem(GOOGLE_TOKEN_EXPIRY_KEY)) || 0;
+// Calendar OAuth access tokens are short lived and must never persist across
+// account changes or remain readable to scripts through origin-wide storage.
+let googleAccessToken: string | null = null;
+let googleTokenOwnerUid: string | null = null;
+let googleTokenExpiresAt = 0;
+const GOOGLE_CALENDAR_REDIRECT_KEY = 'flowmate.google-calendar-auth-redirect.v1';
+if (typeof localStorage !== 'undefined') {
+    try {
+        localStorage.removeItem('flowmate_google_calendar_token');
+        localStorage.removeItem('flowmate_google_calendar_token_expiry');
+    } catch { /* The in-memory token path remains available when storage is blocked. */ }
+}
 
 /** Returns the stored token only if NOT expired (with 5-min buffer). */
 export const getGoogleAccessToken = (): string | null => {
-    if (googleAccessToken && Date.now() < googleTokenExpiresAt - 5 * 60 * 1000) {
+    if (googleAccessToken && googleTokenOwnerUid && auth?.currentUser?.uid === googleTokenOwnerUid
+        && Date.now() < googleTokenExpiresAt - 5 * 60 * 1000) {
         return googleAccessToken;
     }
-    // Token expired or missing — caller should refreshGoogleCalendarToken()
+    if (googleTokenOwnerUid !== auth?.currentUser?.uid || Date.now() >= googleTokenExpiresAt - 5 * 60 * 1000) {
+        setGoogleAccessToken(null);
+    }
     return null;
 };
 
 export const setGoogleAccessToken = (token: string | null) => {
     googleAccessToken = token;
-    if (token) {
-        // Google OAuth tokens expire after ~1 hour
+    googleTokenOwnerUid = token ? auth?.currentUser?.uid || null : null;
+    if (token && googleTokenOwnerUid) {
         googleTokenExpiresAt = Date.now() + 3600 * 1000;
-        localStorage.setItem(GOOGLE_TOKEN_KEY, token);
-        localStorage.setItem(GOOGLE_TOKEN_EXPIRY_KEY, String(googleTokenExpiresAt));
     } else {
+        googleAccessToken = null;
         googleTokenExpiresAt = 0;
-        localStorage.removeItem(GOOGLE_TOKEN_KEY);
-        localStorage.removeItem(GOOGLE_TOKEN_EXPIRY_KEY);
     }
 };
 
 // Re-authenticate to get fresh Google Calendar token
 export const refreshGoogleCalendarToken = async (): Promise<string | null> => {
+    if (!auth || !googleCalendarProvider) return null;
     try {
-        const result = await signInWithPopup(auth, googleProvider);
+        const user = auth.currentUser;
+        const hasGoogleProvider = !!user?.providerData.some(provider => provider.providerId === 'google.com');
+        if (isMobileGoogleAuthContext()) {
+            sessionStorage.setItem(GOOGLE_CALENDAR_REDIRECT_KEY, '1');
+            if (user && hasGoogleProvider) await reauthenticateWithRedirect(user, googleCalendarProvider);
+            else if (user) await linkWithRedirect(user, googleCalendarProvider);
+            else await signInWithRedirect(auth, googleCalendarProvider);
+            return null;
+        }
+        const result = user
+            ? hasGoogleProvider
+                ? await reauthenticateWithPopup(user, googleCalendarProvider)
+                : await linkWithPopup(user, googleCalendarProvider)
+            : await signInWithPopup(auth, googleCalendarProvider);
         const credential = GoogleAuthProvider.credentialFromResult(result);
         if (credential?.accessToken) {
             setGoogleAccessToken(credential.accessToken);
@@ -306,14 +369,7 @@ export const signInWithGoogle = async () => {
         }
         const result = await signInWithPopup(auth, googleProvider);
 
-        // Extract OAuth access token for Google Calendar API
-        const credential = GoogleAuthProvider.credentialFromResult(result);
-        if (credential?.accessToken) {
-            setGoogleAccessToken(credential.accessToken);
-            console.log('[Firebase] Google Calendar access token obtained');
-        }
-
-        return { user: result.user, error: null, accessToken: googleAccessToken, redirecting: false };
+        return { user: result.user, error: null, accessToken: null, redirecting: false };
     } catch (error: any) {
         // A blocked desktop popup can still use the redirect flow. Avoid
         // silently retrying on cancellation or provider/configuration errors.
@@ -343,9 +399,18 @@ export const completeGoogleRedirectSignIn = async () => {
         const result = await getRedirectResult(auth);
         if (!result) return { user: null, error: null, accessToken: null };
 
-        const credential = GoogleAuthProvider.credentialFromResult(result);
-        if (credential?.accessToken) setGoogleAccessToken(credential.accessToken);
-        return { user: result.user, error: null, accessToken: googleAccessToken };
+        let accessToken: string | null = null;
+        try {
+            if (sessionStorage.getItem(GOOGLE_CALENDAR_REDIRECT_KEY) === '1') {
+                sessionStorage.removeItem(GOOGLE_CALENDAR_REDIRECT_KEY);
+                const credential = GoogleAuthProvider.credentialFromResult(result);
+                if (credential?.accessToken) {
+                    setGoogleAccessToken(credential.accessToken);
+                    accessToken = credential.accessToken;
+                }
+            }
+        } catch { /* Session storage can be unavailable in privacy-restricted browsers. */ }
+        return { user: result.user, error: null, accessToken };
     } catch (error: any) {
         return { user: null, error: error?.message || 'Google sign-in could not be completed.', accessToken: null };
     }
@@ -368,7 +433,10 @@ export const onAuthChange = (callback: (user: User | null) => void) => {
         callback(null);
         return () => { }; // Return empty unsubscribe
     }
-    return onAuthStateChanged(auth, callback);
+    return onAuthStateChanged(auth, user => {
+        if (googleTokenOwnerUid && googleTokenOwnerUid !== (user?.uid || null)) setGoogleAccessToken(null);
+        callback(user);
+    });
 };
 
 // Check if Firebase is properly configured

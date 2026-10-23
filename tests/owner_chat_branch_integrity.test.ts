@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useStore } from '../store';
 import { resolveBranchHistory } from '../utils/conversationGraph';
+import type { Message } from '../types';
 
 describe('Owner chat branch integrity', () => {
   beforeEach(() => {
@@ -64,6 +65,29 @@ describe('Owner chat branch integrity', () => {
     expect(resolveBranchHistory(useStore.getState().messages, null, useStore.getState().activeSessionId)).toEqual([]);
     expect(resolveBranchHistory(useStore.getState().messages, 'missing', useStore.getState().activeSessionId)).toEqual([]);
     expect(resolveBranchHistory(useStore.getState().messages, undefined, useStore.getState().activeSessionId).map(m => m.id)).toEqual([message]);
+  });
+  it('switches same-branch message versions to the selected persisted path', () => {
+    const state = useStore.getState();
+    const channelId = state.activeSessionId;
+    const branchId = state.activeBranchId;
+    const messages: Message[] = [
+      { id: 'root', role: 'assistant', text: 'Welcome', channelId, branch_id: branchId, created_at: '2026-01-01T00:00:00.000Z', status: 'completed' },
+      { id: 'version-old', role: 'user', text: 'Older device message', channelId, branch_id: branchId, parent_id: 'root', created_at: '2026-01-01T00:01:00.000Z', status: 'failed' },
+      { id: 'failed-placeholder', role: 'assistant', text: '', channelId, branch_id: branchId, parent_id: 'version-old', created_at: '2026-01-01T00:01:01.000Z', status: 'failed', turn_metadata: { response_source: 'unavailable' } },
+      { id: 'version-new', role: 'user', text: 'Newer device message', channelId, branch_id: branchId, parent_id: 'root', created_at: '2026-01-01T00:02:00.000Z', status: 'failed' },
+    ];
+    useStore.setState({
+      messages,
+      branches: state.branches.map(branch => branch.id === branchId ? { ...branch, head_message_id: 'version-new' } : branch),
+    });
+
+    useStore.getState().switchSiblingVersion('version-old');
+
+    const updated = useStore.getState();
+    expect(updated.activeBranchId).toBe(branchId);
+    expect(updated.branches.find(branch => branch.id === branchId)?.head_message_id).toBe('version-old');
+    expect(resolveBranchHistory(updated.messages, 'version-old', channelId).map(message => message.id))
+      .toEqual(['root', 'version-old']);
   });
   it('rejects foreign/deleted branch activation', () => {
     const active = useStore.getState().activeBranchId;

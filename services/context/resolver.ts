@@ -5,10 +5,10 @@
  * context for both text AI (orchestrator) and voice AI (Gemini Live).
  *
  * Internal Context Classes:
- * 1. User Profile: Stable identity facts, timezone, home base, communication preferences
+ * 1. User Profile: Stable identity facts, timezone, communication preferences
  * 2. Persistent Memory: Durable knowledge with decay ranking and privacy filters
  * 3. Situational State: Temporally-bounded conditions with natural expiration
- * 4. Live Context: Ephemeral device/session readings governed by P1-03 privacy
+ * 4. Session Context: Current time and bounded, privacy-filtered workspace context
  * 5. Domain Entities & Capabilities: Canonical entities + P1-06 commitment/streak projections
  * 6. External Observations: Connected signals with provenance
  *
@@ -24,13 +24,7 @@ import {
   parseCommitmentTarget,
   parseEvidenceItems,
 } from '../kernel';
-import { privacyManager } from './privacy';
-import { liveContext } from './liveContext';
-import {
-  isLocationRelevantQuery,
-  formatLiveLocationForContext,
-  buildTimeContext,
-} from '../ai/context';
+import { buildTimeContext } from '../ai/context';
 import {
   PersistentMemoryItem,
   SituationalStateItem,
@@ -48,8 +42,7 @@ export interface ContextResolverOptions {
   userMessage?: string;
   source?: 'text_chat' | 'voice_session' | 'background_agent';
   budgetConfig?: Partial<ContextBudgetConfig>;
-  forceFreshLocation?: boolean;
-  skipLocationAcquisition?: boolean;
+  includeCustomInstructions?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,11 +250,8 @@ export class ContextResolver {
     // 1. User Profile Context
     const timezone = settings.timezone || 'Asia/Kolkata';
     const stablePreferences: string[] = [];
-    if (settings.custom_instructions) {
+    if (options.includeCustomInstructions !== false && settings.custom_instructions) {
       stablePreferences.push(settings.custom_instructions);
-    }
-    if (settings.home_location) {
-      stablePreferences.push(`Home location: ${settings.home_location}`);
     }
 
     const userProfile: UserProfileContext = {
@@ -270,7 +260,6 @@ export class ContextResolver {
       nickname: settings.nickname || undefined,
       email: currentUser?.email || undefined,
       timezone,
-      home_location: settings.home_location || undefined,
       stable_preferences: stablePreferences,
     };
 
@@ -283,44 +272,7 @@ export class ContextResolver {
       timezone,
     };
 
-    // 3. Live Context (Device Location) with Privacy Gate
-    let liveLocationContext: string | null = null;
-    const isLocationSensitive = isLocationRelevantQuery(userMessage);
-
-    if (!options.skipLocationAcquisition && isLocationSensitive) {
-      const privacyDecision = privacyManager.checkPermission(
-        'device_location',
-        'read',
-        settings.privacy_preferences
-      );
-
-      if (privacyDecision.permitted) {
-        try {
-          const reading = await liveContext.acquireLocation({
-            forceFresh: options.forceFreshLocation ?? true,
-            maxAgeMs: 60000,
-            reason: 'Context enrichment for current turn',
-          });
-          if (reading) {
-            const placeName = await liveContext.reverseGeocode(reading.lat, reading.lon);
-            liveLocationContext = formatLiveLocationForContext(reading, placeName);
-            privacyManager.recordAccess(
-              'device_location',
-              'read',
-              'Context enrichment for current turn',
-              settings.privacy_preferences
-            );
-          }
-        } catch {
-          // Fall back gracefully
-          liveLocationContext = null;
-        }
-      } else {
-        liveLocationContext = 'Device location access is currently disabled by privacy policy.';
-      }
-    }
-
-    // 4. Situational State Extraction (temporal bounded, natural expiration)
+    // 3. Situational State Extraction (temporal bounded, natural expiration)
     const nowMs = new Date(currentTimestamp.iso).getTime();
     const allEntities = Object.values(kernelEntities);
 
@@ -455,7 +407,6 @@ export class ContextResolver {
     let serializedPromptSection = this.formatForTextTurn({
       userProfile,
       currentTimestamp,
-      liveLocationContext,
       situationalContext: boundedSituational,
       relevantMemories: boundedMemories,
       conflictedMemories: contradictionResults,
@@ -470,7 +421,6 @@ export class ContextResolver {
     return {
       userProfile,
       currentTimestamp,
-      liveLocationContext,
       situationalContext: boundedSituational,
       relevantMemories: boundedMemories,
       conflictedMemories: contradictionResults,
@@ -496,7 +446,6 @@ export class ContextResolver {
     if (resolved.userProfile.name) profileParts.push(`Name: ${resolved.userProfile.name}`);
     if (resolved.userProfile.nickname) profileParts.push(`Nickname: ${resolved.userProfile.nickname}`);
     profileParts.push(`Timezone: ${resolved.userProfile.timezone}`);
-    if (resolved.userProfile.home_location) profileParts.push(`Home: ${resolved.userProfile.home_location}`);
     if (resolved.userProfile.stable_preferences.length > 0) {
       profileParts.push(`Preferences: ${resolved.userProfile.stable_preferences.join('; ')}`);
     }
@@ -507,9 +456,6 @@ export class ContextResolver {
       `Local: ${resolved.currentTimestamp.localFormatted} (${resolved.currentTimestamp.timeOfDay})`,
       `ISO: ${resolved.currentTimestamp.iso}`,
     ];
-    if (resolved.liveLocationContext) {
-      timeParts.push(resolved.liveLocationContext);
-    }
     sections.push(`[CURRENT TIME & SITUATION]\n${timeParts.join(' | ')}`);
 
     // [Situational State]
@@ -578,9 +524,6 @@ export class ContextResolver {
       lines.push(`- User: ${resolved.userProfile.name}`);
     }
 
-    if (resolved.liveLocationContext) {
-      lines.push(`- Location: ${resolved.liveLocationContext}`);
-    }
 
     if (resolved.situationalContext.length > 0) {
       lines.push(`- Current Situation: ${resolved.situationalContext.map((s) => `${s.topic} (${s.details})`).join('; ')}`);

@@ -104,6 +104,23 @@ describe('Stage 1 Audit: Explicit Legacy Migration Engine', () => {
     expect(kernelEntity.attributes.subtasks).toBeDefined();
   });
 
+  it('preserves Firestore tombstone and projected kernel revision metadata', () => {
+    const updatedAt = '2026-10-21T03:08:00.000Z';
+    const kernelEntity = upgradeLegacyEntityToKernel({
+      id: 'deleted_sync_task',
+      kind: 'TASK',
+      title: 'Deleted on another device',
+      status: 'ACTIVE',
+      created_at: '2026-10-21T03:00:00.000Z',
+      updated_at: updatedAt,
+      metadata: { _schema_id: 'system/task', _version: 7, deleted: true },
+    });
+
+    expect(kernelEntity.version).toBe(7);
+    expect(kernelEntity.lifecycle.status).toBe('deleted');
+    expect(kernelEntity.lifecycle.deleted_at).toBe(updatedAt);
+  });
+
   it('upgrades legacy food log entry into system/meal_log', () => {
     const legacyFood = {
       id: 'meal_301',

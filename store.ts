@@ -4,8 +4,8 @@ import { asyncStorage } from './services/storage';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleCalendarAdapter } from './services/googleSync';
 import { generateBriefing } from './services/ai';
-import { mergeData, mergeMessages, mergeCloudSettings } from './services/firestoreSync';
-import { scheduleSync, syncMessage, syncFoodLogsToCloud, syncAttendanceToCloud, syncChatSessionsToCloud, deleteChannelMessagesFromCloud, setDemoModeSyncBlock, syncWorkspaceNow, loadInitialData, isWorkspaceCloudSyncActiveFor } from './services/syncManager';
+import { mergeData, mergeMessages, mergeChatSessions, filterMessagesBySessionState, mergeCloudSettings, stripRemovedLocationSettings } from './services/firestoreSync';
+import { scheduleSync, setSyncEntityConflictBlocked, syncMessage, syncFoodLogsToCloud, syncAttendanceToCloud, syncChatSessionsToCloud, deleteChannelMessagesFromCloud, setDemoModeSyncBlock, syncWorkspaceNow, loadInitialData, isWorkspaceCloudSyncActiveFor } from './services/syncManager';
 import { AuthenticatedIdentity, getPlatform } from './services/platform';
 import { validatePersistedState, validateOperations } from './utils/validation';
 import {
@@ -119,12 +119,16 @@ export interface FlowmateState {
 
     // Auth State
     currentUser: AuthenticatedIdentity | null;
+    /** Identity owning the locally hydrated persistence snapshot. */
+    workspaceStorageIdentity: string;
     isCloudSyncEnabled: boolean;
 
     // Sync State (P1-09)
     syncStatus: 'idle' | 'syncing' | 'error';
     lastSyncedAt: string | null;
     syncError: string | null;
+    syncReadSource: 'unknown' | 'cache' | 'server';
+    syncHasPendingWrites: boolean;
     conflicts: ConflictDescriptor[];
 
     // Offline Support
@@ -258,7 +262,7 @@ export interface FlowmateState {
     forkAndSendMessage: (
         messageId: string,
         newText: string,
-        options?: { submissionId?: string; simulatedFailure?: boolean }
+        options?: { submissionId?: string; simulatedFailure?: boolean; contextRecovery?: 'recent' | 'essentials'; removeAttachment?: boolean }
     ) => Promise<{ branchId: string; userMessageId: string; assistantMessageId?: string; queueItemId?: string } | null>;
     retryQueuedUserMessage: (userMessageId: string) => Promise<boolean>;
     registerTurnExecutor: (executor: TurnExecutor | null) => void;
@@ -367,18 +371,8 @@ export const useStore = create<FlowmateState>()(
                     quick_streaks: true,        // Enabled
                 },
                 productivity_calc_method: 'LOGGED_TIME',
-                home_location: undefined,
-                travel_preferences: {
-                    station_buffer_minutes: 45,
-                    airport_buffer_minutes: 120,
-                    default_transit_mode: 'driving'
-                },
                 privacy_preferences: {
                     capabilities: {
-                        device_location: {
-                            read: 'ask',
-                            mutation: 'deny',
-                        },
                     },
                     audit_logging_enabled: true,
                 }
@@ -403,12 +397,15 @@ export const useStore = create<FlowmateState>()(
 
             // Auth State
             currentUser: null,
+            workspaceStorageIdentity: 'legacy',
             isCloudSyncEnabled: false,
 
             // Sync State (P1-09)
             syncStatus: 'idle' as const,
             lastSyncedAt: null,
             syncError: null,
+            syncReadSource: 'unknown' as const,
+            syncHasPendingWrites: false,
             conflicts: [],
 
             // Offline Support
@@ -669,7 +666,7 @@ export const useStore = create<FlowmateState>()(
             },
 
             loadFromCloud: async () => {
-                const { currentUser, isDemoMode, kernelEntities, relationships, messages, addDebugLog, addToast } = get();
+                const { currentUser, isDemoMode, addDebugLog, addToast } = get();
                 if (isDemoMode) {
                     addToast('Please exit Demo Mode before loading personal cloud data', 'info');
                     return;
@@ -682,22 +679,39 @@ export const useStore = create<FlowmateState>()(
 
                 try {
                     const data = await loadInitialData();
+                    // Cloud reads are asynchronous. Never merge a result into a
+                    // different signed-in account, after consent revocation,
+                    // or into a workspace that changed while the read was in
+                    // flight. Use the latest same-account state below.
+                    const current = get();
+                    if (
+                        current.currentUser?.uid !== currentUser.uid ||
+                        current.isDemoMode ||
+                        !isWorkspaceCloudSyncActiveFor(currentUser.uid)
+                    ) return;
                     if (data) {
                         // Reconcile entities into canonical kernelEntities using deterministic P1-09 engine
                         const { nextKernelEntities, conflicts: newConflicts } = reconcileEntityCollection(
-                            kernelEntities,
+                            current.kernelEntities,
                             data.entities || [],
-                            globalPendingMutationQueue
+                            globalPendingMutationQueue,
+                            new Date().toISOString(),
+                            new Set((current.conflicts || []).map(conflict => conflict.entity_id))
                         );
+                        newConflicts.forEach(conflict => setSyncEntityConflictBlocked(conflict.entity_id, true));
                         const projectedEntities = projectKernelEntitiesToLegacy(nextKernelEntities);
 
                         // Merge relationships (newer wins)
                         const merged = mergeData(
-                            { entities: projectedEntities as Entity[], relationships },
+                            { entities: projectedEntities as Entity[], relationships: current.relationships },
                             { entities: data.entities, relationships: data.relationships }
                         );
                         // Merge messages (additive union by ID)
-                        const mergedMsgs = mergeMessages(messages || [], data.messages || []);
+                        const mergedSessions = mergeChatSessions(current.chatSessions || [], data.chatSessions || []);
+                        const mergedMsgs = filterMessagesBySessionState(
+                            mergeMessages(current.messages || [], data.messages || []),
+                            mergedSessions,
+                        );
 
                         set({
                             kernelEntities: nextKernelEntities,
@@ -705,7 +719,13 @@ export const useStore = create<FlowmateState>()(
                             relationships: merged.relationships,
                             universalTags: data.universalTags,
                             messages: mergedMsgs,
-                            conflicts: [...(get().conflicts || []), ...newConflicts],
+                            chatSessions: mergedSessions,
+                            conflicts: [
+                                ...(get().conflicts || []).filter(existing =>
+                                    !newConflicts.some(incoming => incoming.entity_id === existing.entity_id && incoming.conflict_type === existing.conflict_type)
+                                ),
+                                ...newConflicts,
+                            ],
                             settings: mergeCloudSettings(get().settings, data.settings || {}) as UserSettings,
                             foodLogs: data.foodLogs?.length ? data.foodLogs : get().foodLogs,
                             subjects: data.subjects?.length ? data.subjects : get().subjects,
@@ -721,7 +741,7 @@ export const useStore = create<FlowmateState>()(
                         });
                         addToast('Synced with cloud', 'success');
                     } else {
-                        addToast('No cloud workspace was available; local data was left unchanged.', 'info');
+                        addToast('Could not load the cloud workspace. Your local data was left unchanged.', 'error');
                     }
                 } catch {
                     console.error('Cloud load failed');
@@ -736,13 +756,19 @@ export const useStore = create<FlowmateState>()(
 
                 const entityId = conflict.entity_id;
                 const existing = state.kernelEntities[entityId];
+                const pendingMutation = globalPendingMutationQueue.getByEntityId(entityId);
 
                 if (resolution === 'keep_local' && existing) {
+                    // Reconciliation keeps the remote entity as the safe canonical
+                    // baseline while a conflict is unresolved. Recover the user's
+                    // submitted offline version from the durable queue here; using
+                    // `existing` alone silently discarded that version.
+                    const chosenLocal = pendingMutation?.entity || existing;
                     const updated: KernelEntity = {
-                        ...existing,
+                        ...chosenLocal,
                         version: Math.max(conflict.local_revision, conflict.remote_revision) + 1,
                         lifecycle: {
-                            ...existing.lifecycle,
+                            ...chosenLocal.lifecycle,
                             updated_at: new Date().toISOString(),
                         },
                     };
@@ -753,6 +779,17 @@ export const useStore = create<FlowmateState>()(
                         entities: projected,
                         conflicts: (state.conflicts || []).filter(c => c.id !== conflictId),
                     });
+                    if (pendingMutation) globalPendingMutationQueue.remove(pendingMutation.mutation_id);
+                    globalPendingMutationQueue.enqueue(
+                        `mut_${uuidv4()}`,
+                        entityId,
+                        existing.version,
+                        updated.lifecycle.status === 'deleted' ? 'soft_delete_entity' : 'upsert_entity',
+                        updated,
+                        new Date().toISOString(),
+                        existing,
+                    );
+                    setSyncEntityConflictBlocked(entityId, false);
                     if (!get().isDemoMode) {
                         scheduleSync(() => ({
                             entities: projected,
@@ -762,6 +799,10 @@ export const useStore = create<FlowmateState>()(
                         }));
                     }
                 } else {
+                    // Choosing the remote version is an explicit discard of the
+                    // queued local mutation, so it must not replay later.
+                    if (pendingMutation) globalPendingMutationQueue.markCommitted(pendingMutation.mutation_id);
+                    setSyncEntityConflictBlocked(entityId, false);
                     set({
                         conflicts: (state.conflicts || []).filter(c => c.id !== conflictId),
                     });
@@ -878,6 +919,7 @@ export const useStore = create<FlowmateState>()(
 
                         for (const m of mutations) {
                             if (m.type === 'set_entity') {
+                                const baseEntity = nextKernelEntities[m.entity.id];
                                 nextKernelEntities[m.entity.id] = m.entity;
                                 globalIdempotencyTracker.record(`${m.entity.id}_${m.entity.version}`);
                                 if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -887,7 +929,8 @@ export const useStore = create<FlowmateState>()(
                                         Math.max(0, m.entity.version - 1),
                                         'upsert_entity',
                                         m.entity,
-                                        now
+                                        now,
+                                        baseEntity
                                     );
                                 }
                             } else if (m.type === 'soft_delete_entity') {
@@ -916,7 +959,8 @@ export const useStore = create<FlowmateState>()(
                                             existing.version || 1,
                                             'soft_delete_entity',
                                             deletedEntity,
-                                            now
+                                            now,
+                                            existing
                                         );
                                     }
                                 }
@@ -1011,7 +1055,7 @@ export const useStore = create<FlowmateState>()(
             },
 
             updateSettings: (newSettings) => set((state) => ({
-                settings: { ...state.settings, ...newSettings }
+                settings: stripRemovedLocationSettings({ ...state.settings, ...newSettings } as UserSettings & Record<string, unknown>) as UserSettings,
             })),
 
             addDebugLog: (type, summary, details) => {
@@ -1252,11 +1296,18 @@ export const useStore = create<FlowmateState>()(
                 const available = (state.branches || []).filter(b => b.conversation_id === id && !b.deleted_at);
                 const remembered = id === state.activeSessionId ? state.activeBranchId : session.active_branch_id;
                 const sessionBranch = available.find(b => b.id === remembered) || available[0];
+                const sessionUpdatedAt = new Date().toISOString();
+                const updatedSessions = state.chatSessions.map(s => s.id === state.activeSessionId
+                    ? { ...s, active_branch_id: state.activeBranchId, updated_at: sessionUpdatedAt }
+                    : s);
                 set({
                     activeSessionId: id,
-                    chatSessions: state.chatSessions.map(s => s.id === state.activeSessionId ? { ...s, active_branch_id: state.activeBranchId } : s),
+                    chatSessions: updatedSessions,
                     activeBranchId: sessionBranch?.id || `b_main_${id}`
                 });
+                if (!get().isDemoMode) syncChatSessionsToCloud(updatedSessions).catch(err =>
+                    console.warn('[Store] Chat session branch selection sync failed:', err)
+                );
             },
 
             toggleDeveloperMode: () => set(state => ({ developerModeEnabled: !state.developerModeEnabled })),
@@ -1333,8 +1384,15 @@ export const useStore = create<FlowmateState>()(
                 const state = get();
                 const branch = state.branches.find(b => b.id === branchId && !b.deleted_at);
                 if (!branch || !state.chatSessions.some(s => s.id === branch.conversation_id && isChatSessionActive(s))) return;
+                const sessionUpdatedAt = new Date().toISOString();
+                const updatedSessions = state.chatSessions.map(s => s.id === branch.conversation_id
+                    ? { ...s, active_branch_id: branchId, updated_at: sessionUpdatedAt }
+                    : s);
                 set({ activeBranchId: branchId, activeSessionId: branch.conversation_id,
-                    chatSessions: state.chatSessions.map(s => s.id === branch.conversation_id ? { ...s, active_branch_id: branchId } : s) });
+                    chatSessions: updatedSessions });
+                if (!get().isDemoMode) syncChatSessionsToCloud(updatedSessions).catch(err =>
+                    console.warn('[Store] Chat branch selection sync failed:', err)
+                );
             },
 
             renameBranch: (branchId: string, newName: string) => {
@@ -1364,7 +1422,8 @@ export const useStore = create<FlowmateState>()(
             restoreBranch: (branchId: string) => {
                 const branch = get().branches.find(b => b.id === branchId && b.deleted_at);
                 if (!branch || !get().chatSessions.some(s => s.id === branch.conversation_id && isChatSessionActive(s))) return;
-                set(state => ({ branches: state.branches.map(b => b.id === branchId ? { ...b, deleted_at: null, updated_at: new Date().toISOString() } : b) }));
+                const restoredAt = new Date().toISOString();
+                set(state => ({ branches: state.branches.map(b => b.id === branchId ? { ...b, deleted_at: null, restored_at: restoredAt, updated_at: restoredAt } : b) }));
                 get().setActiveBranchId(branchId);
             },
 
@@ -1424,19 +1483,42 @@ export const useStore = create<FlowmateState>()(
 
                 const effectiveChannelId = target.channelId || state.activeSessionId || 'general';
 
-                let matchingBranch = (state.branches || []).find(b => b.id === target.branch_id);
+                let matchingBranch = (state.branches || []).find(b => b.id === target.branch_id && !b.deleted_at);
                 if (!matchingBranch) {
                     matchingBranch = (state.branches || []).find(b => {
-                        if (b.conversation_id !== effectiveChannelId) return false;
+                        if (b.conversation_id !== effectiveChannelId || b.deleted_at) return false;
                         const hist = resolveBranchHistory(state.messages || [], b.head_message_id, effectiveChannelId);
                         return hist.some(m => m.id === targetMessageId);
                     });
                 }
 
                 if (matchingBranch) {
-                    set({ activeBranchId: matchingBranch.id });
+                    const leaf = findLeafMessage(state.messages || [], targetMessageId, matchingBranch.id);
+                    const updatedAt = new Date().toISOString();
+                    const updatedBranches = (state.branches || []).map(branch => branch.id === matchingBranch!.id
+                        ? { ...branch, head_message_id: leaf.id, updated_at: updatedAt }
+                        : branch);
+                    const sessionBranchChanged = (state.chatSessions || []).some(session =>
+                        session.id === effectiveChannelId && session.active_branch_id !== matchingBranch!.id);
+                    const updatedSessions = sessionBranchChanged
+                        ? (state.chatSessions || []).map(session =>
+                            session.id === effectiveChannelId
+                                ? { ...session, active_branch_id: matchingBranch!.id, updated_at: updatedAt }
+                                : session)
+                        : state.chatSessions;
+                    set({
+                        activeBranchId: matchingBranch.id,
+                        activeSessionId: effectiveChannelId,
+                        branches: updatedBranches,
+                        chatSessions: updatedSessions,
+                    });
+                    if (updatedSessions !== state.chatSessions && !get().isDemoMode) {
+                        syncChatSessionsToCloud(updatedSessions).catch(err =>
+                            console.warn('[Store] Chat session version switch sync failed:', err)
+                        );
+                    }
                 } else {
-                    const leaf = findLeafMessage(state.messages || [], targetMessageId);
+                    const leaf = findLeafMessage(state.messages || [], targetMessageId, target.branch_id);
                     const newBranchId = `b_${uuidv4().slice(0, 8)}`;
                     const newBranch: ConversationBranch = {
                         id: newBranchId,
@@ -1553,7 +1635,7 @@ export const useStore = create<FlowmateState>()(
                 return newBranchId;
             },
 
-            forkAndSendMessage: async (messageId: string, newText: string, options?: { submissionId?: string; simulatedFailure?: boolean }) => {
+            forkAndSendMessage: async (messageId: string, newText: string, options?: { submissionId?: string; simulatedFailure?: boolean; contextRecovery?: 'recent' | 'essentials'; removeAttachment?: boolean }) => {
                 const state = get();
                 const trimmed = newText.trim();
                 if (!trimmed) return null;
@@ -1589,6 +1671,8 @@ export const useStore = create<FlowmateState>()(
                             parent_id: parentId,
                             branch_id: newBranchId,
                             channelId: effectiveChannelId,
+                            attachment: options?.removeAttachment ? null : original.attachment || null,
+                            ...(options?.contextRecovery ? { turn_metadata: { context_recovery: options.contextRecovery } } : {}),
                             status: options?.simulatedFailure ? 'failed' : 'queued',
                             created_at: new Date().toISOString()
                         };
@@ -1863,13 +1947,23 @@ export const useStore = create<FlowmateState>()(
 
                     // Complete turn
                     set(state => {
+                        const assistantFailed = (state.messages || []).some(m => m.id === assistantMsgId && m.status === 'failed');
                         const updatedQueue = (state.branchQueues[branchId] || []).map(q =>
-                            q.id === nextItem.id ? { ...q, status: 'completed' as const } : q
+                            q.id === nextItem.id ? {
+                                ...q,
+                                status: assistantFailed ? 'failed' as const : 'completed' as const,
+                                ...(assistantFailed ? { error: 'Managed AI did not return a response. Your message is saved; retry when ready.' } : {}),
+                            } : q
                         );
                         return {
-                            messages: (state.messages || []).map(m =>
-                                m.id === assistantMsgId || m.id === nextItem.user_message.id ? { ...m, status: 'completed' as const } : m
-                            ),
+                            messages: (state.messages || []).map(m => {
+                                if (m.id === assistantMsgId && m.status === 'failed') return m;
+                                if (m.id === nextItem.user_message.id && m.status === 'interrupted') return m;
+                                if (m.id === assistantMsgId || m.id === nextItem.user_message.id) {
+                                    return { ...m, status: assistantFailed ? 'failed' as const : 'completed' as const };
+                                }
+                                return m;
+                            }),
                             branchQueues: {
                                 ...state.branchQueues,
                                 [branchId]: updatedQueue
@@ -2004,10 +2098,26 @@ export const useStore = create<FlowmateState>()(
             },
 
             clearChatSession: (id: string) => {
-                set((state) => ({
-                    messages: (state.messages || []).filter(m => (m.channelId || 'general') !== id)
-                }));
+                const state = get();
+                const clearedAt = new Date().toISOString();
+                const existing = state.chatSessions || [];
+                const found = existing.some(session => session.id === id);
+                const updatedSessions = found
+                    ? existing.map(session => session.id === id
+                        ? { ...session, messages_cleared_at: clearedAt, updated_at: clearedAt }
+                        : session)
+                    : [...existing, {
+                        id, title: id === 'general' ? 'General Chat' : `Chat ${id.slice(0, 8)}`,
+                        created_at: clearedAt, updated_at: clearedAt, messages_cleared_at: clearedAt,
+                    }];
+                set({
+                    chatSessions: updatedSessions,
+                    messages: (state.messages || []).filter(m => (m.channelId || 'general') !== id),
+                });
                 if (!get().isDemoMode) {
+                    syncChatSessionsToCloud(updatedSessions).catch(err =>
+                        console.warn('[Store] Chat session clear marker sync failed:', err)
+                    );
                     deleteChannelMessagesFromCloud(id).catch(err =>
                         console.warn('[Store] Cloud messages deletion failed for channel:', id, err)
                     );
@@ -2188,6 +2298,7 @@ export const useStore = create<FlowmateState>()(
 
             applyOperations: (ops) => {
                 const { addDebugLog, addToast, triggerConfetti } = get();
+                const baselineKernelEntities = get().kernelEntities;
 
                 // Validate and filter operations before applying
                 const { validOps, invalidOps } = validateOperations(ops);
@@ -3282,6 +3393,38 @@ export const useStore = create<FlowmateState>()(
                     };
                 });
 
+                // UI CRUD edits pass through applyOperations rather than the AI
+                // plan adapter. Preserve every changed entity in the durable
+                // identity-scoped outbox while offline, including creates and
+                // tombstones, so reconnect reconciliation can compare against
+                // the exact server version the edit started from.
+                if (typeof navigator !== 'undefined' && !navigator.onLine) {
+                    const updatedKernelEntities = get().kernelEntities;
+                    const entityIds = new Set([
+                        ...Object.keys(baselineKernelEntities || {}),
+                        ...Object.keys(updatedKernelEntities || {}),
+                    ]);
+                    for (const entityId of entityIds) {
+                        const before = baselineKernelEntities?.[entityId];
+                        const after = updatedKernelEntities?.[entityId];
+                        if (!after || before === after) continue;
+                        const opType = after.lifecycle.status === 'deleted'
+                            ? 'soft_delete_entity'
+                            : before?.lifecycle.status === 'deleted'
+                                ? 'restore_entity'
+                                : 'upsert_entity';
+                        globalPendingMutationQueue.enqueue(
+                            `mut_${uuidv4()}`,
+                            entityId,
+                            Math.max(0, after.version - 1),
+                            opType,
+                            after,
+                            after.lifecycle.updated_at || new Date().toISOString(),
+                            before,
+                        );
+                    }
+                }
+
                 if (!get().isDemoMode) {
                     get().processSyncQueue();
                 }
@@ -3353,6 +3496,7 @@ export const useStore = create<FlowmateState>()(
 
                 return {
                     isDemoMode: state.isDemoMode,
+                    workspaceStorageIdentity: state.workspaceStorageIdentity,
                     kernelEntities,
                     schemas: state.schemas,
                     auditLogs: state.auditLogs,
@@ -3367,13 +3511,14 @@ export const useStore = create<FlowmateState>()(
                     branchQueues,
                     developerModeEnabled: state.developerModeEnabled,
                     unsentDrafts: state.isDemoMode && state.personalSnapshot ? state.personalSnapshot.unsentDrafts || {} : state.unsentDrafts,
-                    settings: state.settings,
+                    settings: stripRemovedLocationSettings(state.settings as UserSettings & Record<string, unknown>) as UserSettings,
                     foodLogs: state.foodLogs,
                     subjects: state.subjects,
                     classSchedule: state.classSchedule,
                     holidays: state.holidays,
                     attendanceLogs: state.attendanceLogs,
                     syncQueue,
+                    conflicts: state.conflicts,
                     debugLogs: state.debugLogs,
                     dailyBriefing: state.dailyBriefing,
                 };
@@ -3545,6 +3690,10 @@ export const useStore = create<FlowmateState>()(
             merge: (persistedState: unknown, currentState: FlowmateState) => {
                 if (currentState.isDemoMode) return currentState;
                 const persisted = (persistedState as Partial<FlowmateState>) || {};
+                if (persisted.workspaceStorageIdentity &&
+                    persisted.workspaceStorageIdentity !== currentState.workspaceStorageIdentity) {
+                    return currentState;
+                }
                 const persistedKernel = persisted.kernelEntities || {};
 
                 // Deterministic reconciliation between current in-memory kernelEntities and persisted kernelEntities
@@ -3610,7 +3759,8 @@ export const useStore = create<FlowmateState>()(
                     history: [], historyPointer: -1,
                     developerModeEnabled: persisted.developerModeEnabled ?? currentState.developerModeEnabled ?? false,
                     unsentDrafts: persisted.unsentDrafts || currentState.unsentDrafts || {},
-                    messages: cleanMessages
+                    messages: cleanMessages,
+                    settings: stripRemovedLocationSettings((persisted.settings || currentState.settings) as UserSettings & Record<string, unknown>) as UserSettings
                 };
             },
             onRehydrateStorage: () => (state) => {

@@ -96,7 +96,6 @@ export interface UserProfileContext {
   nickname?: string;
   email?: string;
   timezone: string;
-  home_location?: string;
   stable_preferences: string[];
 }
 
@@ -123,7 +122,6 @@ export interface ResolvedContext {
     timeOfDay: string;
     timezone: string;
   };
-  liveLocationContext: string | null;
   situationalContext: SituationalStateItem[];
   relevantMemories: PersistentMemoryItem[];
   conflictedMemories: Array<{

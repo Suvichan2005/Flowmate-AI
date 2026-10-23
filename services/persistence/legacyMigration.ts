@@ -80,7 +80,7 @@ export function mapLegacyKindToSchemaId(kind: unknown): string {
 function normalizeStatus(status: unknown): string {
   if (typeof status !== 'string') return 'active';
   const s = status.toLowerCase();
-  if (s === 'in_progress' || s === 'completed' || s === 'archived' || s === 'canceled' || s === 'pending') {
+  if (s === 'in_progress' || s === 'completed' || s === 'archived' || s === 'canceled' || s === 'pending' || s === 'deleted') {
     return s;
   }
   return 'active';
@@ -273,10 +273,19 @@ export function upgradeLegacyEntityToKernel(doc: Record<string, unknown>): Entit
 
   const createdAt = typeof doc.created_at === 'string' ? doc.created_at : now;
   const updatedAt = typeof doc.updated_at === 'string' ? doc.updated_at : now;
-  const deletedAt = typeof doc.deleted_at === 'string' ? doc.deleted_at : null;
+  const metadataDeletedAt = isRecord(doc.metadata) && typeof doc.metadata.deleted_at === 'string'
+    ? doc.metadata.deleted_at
+    : null;
+  const isDeleted = doc.deleted === true || (isRecord(doc.metadata) && doc.metadata.deleted === true);
+  const deletedAt = typeof doc.deleted_at === 'string'
+    ? doc.deleted_at
+    : metadataDeletedAt || (isDeleted ? updatedAt : null);
+  const rawVersion = typeof doc.version === 'number'
+    ? doc.version
+    : (isRecord(doc.metadata) && typeof doc.metadata._version === 'number' ? doc.metadata._version : 1);
 
   const lifecycle: EntityLifecycle = {
-    status: normalizeStatus(doc.status),
+    status: isDeleted ? 'deleted' : normalizeStatus(doc.status),
     created_at: createdAt,
     updated_at: updatedAt,
     deleted_at: deletedAt,
@@ -323,7 +332,7 @@ export function upgradeLegacyEntityToKernel(doc: Record<string, unknown>): Entit
   const entity: Entity = {
     id,
     schema_id: schemaId,
-    version: 1,
+    version: Number.isSafeInteger(rawVersion) && rawVersion > 0 ? rawVersion : 1,
     title,
     attributes,
     lifecycle,

@@ -33,19 +33,17 @@ import {
 } from "./prompts";
 import {
   buildEntityContext,
-  buildContextPrompt,
   buildFoodContext,
   buildHistory,
   summarizeOlderMessages,
-  isLocationRelevantQuery,
-  formatLiveLocationForContext,
 } from "./context";
-import { liveContext, privacyManager, contextResolver } from "../context";
+import { contextResolver } from "../context";
 import { auth } from "../firebase";
 import { generateManagedContent, ManagedAiError, type ReasoningLevel } from "./managedClient";
 import { generateArgonByokContent } from './argon';
 import { getManagedAiUser } from '../firebase';
 import { v4 as uuidv4 } from "uuid";
+import { formatManagedAiResetAt, getManagedAiLimitCopy } from './managedAiLimitCopy';
 import { getOptedInOnboardingContext } from '../onboardingProfile';
 
 // These legacy tools directly mutate local state. Managed AI receives only
@@ -63,7 +61,6 @@ const MANAGED_AI_TOOL_NAMES = new Set(MANAGED_AI_TOOLS.flatMap(tool => tool.func
 
 export interface OrchestrationCallbacks {
   onChunk?: (chunk: string) => void;
-  onManagedAiLimit?: (code: 'GUEST_TURN_ALLOWANCE_EXHAUSTED' | 'TURN_ALLOWANCE_EXHAUSTED') => void;
   onThinking?: (thinkingText: string) => void;
   onToolCall?: (tool: { name: string; latency_ms: number; success: boolean }) => void;
   onMetrics?: (metrics: {
@@ -76,12 +73,18 @@ export interface OrchestrationCallbacks {
   signal?: AbortSignal;
 }
 
+export interface OrchestrationRequestOptions {
+  /** Explicit retry mode that compacts only Flowmate-generated workspace context. */
+  managedContextMode?: 'full' | 'essentials';
+}
+
 export const orchestrateMessage = async (
   history: Message[],
   userMessage: string,
   snapshot: { entities: Entity[]; relationships: Relationship[] },
   attachmentDataUrl?: string | null,
   callbacks?: OrchestrationCallbacks,
+  requestOptions?: OrchestrationRequestOptions,
 ): Promise<ToonResponse> => {
   const { addDebugLog, settings, universalTags } = useStore.getState();
   const modelName = settings?.preferred_model || DEFAULT_MODEL;
@@ -92,7 +95,6 @@ export const orchestrateMessage = async (
   const useManagedAi = !hasAiApiKey() && hasManagedAiIdentity();
   if (!hasAiApiKey() && !useManagedAi) {
     const unavailableMessage = 'Gemini is not configured, so Flowmate did not generate an AI response. Your message is saved in this conversation. Configure an authorized provider in Settings to use AI assistance; your local workspace remains available.';
-    callbacks?.onChunk?.(unavailableMessage);
     return {
       ops: [],
       assistant: {
@@ -101,6 +103,8 @@ export const orchestrateMessage = async (
         follow_up: ['Open Settings'],
       },
       provider: 'unavailable',
+      failureCode: 'MANAGED_AI_NOT_CONFIGURED',
+      failureOutcome: 'not_sent',
     };
   }
 
@@ -128,17 +132,26 @@ export const orchestrateMessage = async (
   }
 
   // --- P1-07 Unified Context & Memory Resolution ---
+  const essentialManagedContext = useManagedAi && requestOptions?.managedContextMode === 'essentials';
   const resolvedContext = await contextResolver.resolveContext({
     userMessage,
     source: 'text_chat',
+    ...(essentialManagedContext ? {
+      includeCustomInstructions: false,
+      budgetConfig: {
+        maxMemoryItems: 2,
+        maxSituationalItems: 1,
+        maxEntityItems: 2,
+        maxContextTokensApprox: 300,
+        maxTotalChars: 1_200,
+      },
+    } : {}),
   });
 
-  const entityContext = buildEntityContext(
-    snapshot.entities,
-    snapshot.relationships,
-    userMessage,
-  );
-  const tagList = (universalTags || [])
+  const entityContext = essentialManagedContext
+    ? { entities: [], relationships: [] }
+    : buildEntityContext(snapshot.entities, snapshot.relationships, userMessage);
+  const tagList = essentialManagedContext ? '' : (universalTags || [])
     .slice(0, 20)
     .map(t => `${t.title} (${t.kind[0]})`)
     .join(', ');
@@ -147,10 +160,10 @@ export const orchestrateMessage = async (
     resolvedContext.serializedPromptSection,
     `[Graph] ${JSON.stringify(entityContext)}`,
     tagList ? `[Tags] ${tagList}` : '',
-    getOptedInOnboardingContext(useStore.getState().currentUser?.uid || 'guest'),
+    essentialManagedContext ? '' : getOptedInOnboardingContext(useStore.getState().currentUser?.uid || 'guest'),
   ];
 
-  if (featureToggles.food_tracking) {
+  if (!essentialManagedContext && featureToggles.food_tracking) {
     const food = buildFoodContext();
     if (food.summary) promptSections.push(`[Food] ${food.summary}`);
     if (food.recentMeals) promptSections.push(`[Recent meals] ${food.recentMeals}`);
@@ -158,9 +171,13 @@ export const orchestrateMessage = async (
 
   const contextPrompt = promptSections.filter(Boolean).join('\n\n');
 
-  // --- Conversation History (with rolling summary) ---
-  const conversationSummary = summarizeOlderMessages(history);
-  const contents = buildHistory(history, conversationSummary, attachmentDataUrl);
+  // Managed AI must count and authorize the full transcript the user chose to
+  // continue with. If it exceeds the model or cost boundary, the user can
+  // explicitly fork with recent context; do not silently summarize or trim it.
+  const conversationSummary = useManagedAi ? null : summarizeOlderMessages(history);
+  const contents = buildHistory(history, conversationSummary, attachmentDataUrl, {
+    includeFullHistory: useManagedAi,
+  });
 
   // Attach context to the latest user message or append one
   let lastUserEntry: Content | null = null;
@@ -489,21 +506,20 @@ export const orchestrateMessage = async (
       return {
         ops: [],
         assistant: {
-          message: accumulatedStreamingText || 'Generation stopped.',
+          message: accumulatedStreamingText || 'The result could not be confirmed.',
           tone: 'neutral',
           follow_up: [],
         },
+        provider: 'unavailable',
+        failureCode: 'GENERATION_FAILED',
+        failureOutcome: 'uncertain',
       };
     }
 
     const managedLimitCodes = ['GUEST_TURN_ALLOWANCE_EXHAUSTED', 'TURN_ALLOWANCE_EXHAUSTED'] as const;
     if (error instanceof ManagedAiError && managedLimitCodes.includes(error.code as (typeof managedLimitCodes)[number])) {
-      const message = error.code === 'GUEST_TURN_ALLOWANCE_EXHAUSTED'
-        ? 'You have used your 10 complimentary guest AI turns. Sign in for 50 lifetime included turns or add your own Gemini API key in Settings.'
-        : 'Your 50 lifetime included Flowmate AI turns have been used. Add your own Gemini API key in Settings to continue with AI.';
-      callbacks?.onManagedAiLimit?.(error.code as (typeof managedLimitCodes)[number]);
-      callbacks?.onChunk?.(message);
-      return { ops: [], assistant: { message, tone: 'neutral', follow_up: ['Open Gemini settings'] }, provider: 'managed-limited' };
+      const message = getManagedAiLimitCopy(error.code as (typeof managedLimitCodes)[number]).description;
+      return { ops: [], assistant: { message, tone: 'neutral', follow_up: ['Open Gemini settings'] }, provider: 'managed-limited', failureCode: error.code, failureOutcome: 'not_sent' };
     }
 
     if (error instanceof ManagedAiError) {
@@ -512,7 +528,14 @@ export const orchestrateMessage = async (
         APP_CHECK_REQUIRED: 'Flowmate could not verify this app for managed AI. Your message is saved; try again later or use your own Gemini key in Settings.',
         RATE_LIMITED: 'Managed AI is receiving requests too quickly. Wait a moment and try again; your message is saved.',
         MODEL_CONTEXT_LIMIT: 'This request exceeds the selected model’s current context capacity. Choose a model with a larger context or shorten the conversation; your message is saved.',
-        OUTPUT_TOKEN_LIMIT: 'The requested response length exceeds this model’s documented output capacity. Your message is saved.',
+        OUTPUT_TOKEN_LIMIT: 'The selected response length exceeds this model’s maximum. No request was sent; choose a length within the model limit or use your own Gemini key.',
+        TURN_GENERATION_LIMIT: 'This turn reached its safe multi-step limit. Start a new chat turn to continue; your message is saved.',
+        REQUEST_COST_ENVELOPE_EXHAUSTED: 'This request exceeds Flowmate’s $0.50 managed safety limit. Nothing was sent; reduce the material you include or choose your own Gemini key in Settings. Starting a new turn will not change this request limit.',
+        TURN_COST_ENVELOPE_EXHAUSTED: 'This turn has used its $0.50 managed safety limit across its model/tool steps. Your message is saved; start a new turn or choose your own Gemini key in Settings.',
+        USER_MANAGED_BUDGET_EXHAUSTED: `Your managed AI monthly allowance is used. It resets ${formatManagedAiResetAt('month')}; your message is saved, and your own Gemini key remains available.`,
+        MANAGED_AI_BUDGET_TEMPORARILY_UNAVAILABLE: `Flowmate’s managed AI service is temporarily at its monthly safety limit. It resets ${formatManagedAiResetAt('month')}; your message is saved.`,
+        MANAGED_AI_BUDGET_UNAVAILABLE: 'Flowmate’s managed AI spending protection is temporarily unavailable. Your message is saved; please try again later or use your own Gemini key.',
+        PRICING_POLICY_UNAVAILABLE: 'Flowmate could not verify current model pricing, so it did not send this managed request. Your message is saved; please try again later or use your own Gemini key.',
         MODEL_NOT_ALLOWED_FOR_ACCOUNT: 'That model or reasoning level needs a privileged account or your own key. Choose an available option in the model control; your message is saved.',
         MODEL_UNAVAILABLE: 'The selected model is not currently available for this provider. Choose another validated model; your message is saved.',
         MODEL_TOOL_CALLING_UNAVAILABLE: 'The selected model cannot perform Flowmate tool-assisted requests. Choose a model with function calling; your message is saved.',
@@ -524,10 +547,14 @@ export const orchestrateMessage = async (
         MODEL_CATALOG_UNAVAILABLE: 'Flowmate could not confirm which models this provider currently supports. No alternate model was selected; your message is saved.',
         MODEL_INPUT_UNSUPPORTED: 'The selected model rejected this input format. No alternate model was selected; your message is saved.',
         PROVIDER_RATE_LIMITED: 'The selected model is temporarily rate-limited by Google. No alternate model was selected; your message is saved.',
+        GENERATION_FAILED: 'Gemini did not return a confirmed result. It may have received the request, so Flowmate is keeping its safety hold until usage can be reconciled. Your message is saved; check the conversation before retrying to avoid duplicate work.',
       };
       const message = managedErrors[error.code] || 'Flowmate could not reach Gemini. No local AI fallback was used; your message is saved. Please retry later or add your own Gemini key in Settings.';
-      callbacks?.onChunk?.(message);
-      return { ops: [], assistant: { message, tone: 'error', follow_up: [] }, provider: 'unavailable' };
+      return {
+        ops: [], assistant: { message, tone: 'error', follow_up: [] }, provider: 'unavailable',
+        failureCode: error.code,
+        failureOutcome: error.code === 'GENERATION_FAILED' ? 'uncertain' : 'not_sent',
+      };
     }
     console.error('Orchestrator failed:', error);
 
@@ -541,6 +568,9 @@ export const orchestrateMessage = async (
     return {
       ops: [],
       assistant: { message: errorMsg, tone: 'error', follow_up: [] },
+      provider: 'unavailable',
+      failureCode: 'GENERATION_FAILED',
+      failureOutcome: 'uncertain',
     };
   }
 };
@@ -616,7 +646,7 @@ export const generateBriefing = async (
     const response = await withRetry(
       () => generateManagedContent(
         [{ role: 'user', parts: [{ text: prompt }] }],
-        { temperature: 0.7 },
+        { temperature: 0.7, maxOutputTokens: 512 },
         turnId,
         callId,
         undefined,

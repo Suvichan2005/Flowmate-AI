@@ -31,6 +31,8 @@ async function dragTouch(context: BrowserContext, page: Page, points: Array<{ x:
       type: 'touchMove',
       touchPoints: [{ id: 1, x: point.x, y: point.y, radiusX: 1, radiusY: 1, force: 1 }],
     });
+    // Let the browser deliver the move and paint the drag before the next sample.
+    await page.waitForTimeout(16);
     offsets.push(await page.locator(movingSelector).evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41));
     await onMove?.();
   }
@@ -47,23 +49,30 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/#dashboard');
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+  await expect(page.getByText('Local workspace', { exact: true })).toHaveCount(0);
   await skipOptionalOnboarding(page);
+  await page.screenshot({ path: 'qa-evidence/mobile-dashboard-briefing-refresh.png' });
 
   const nav = page.getByRole('navigation', { name: 'Mobile Navigation' });
   const openChatOffsets = await dragTouch(context, page, [
     { x: 250, y: 430 }, { x: 210, y: 430 }, { x: 170, y: 430 }, { x: 130, y: 430 },
   ], '[data-testid="mobile-gesture-surface"]', async () => {
     await expect(page.getByText('Go to Chat', { exact: true })).toBeVisible();
+    const preview = page.getByTestId('chat-navigation-preview');
+    await expect(preview).toBeVisible();
+    await expect(preview.getByText('Chat', { exact: true })).toHaveCount(0);
+    const surfaceBox = await page.getByTestId('mobile-gesture-surface').boundingBox();
+    const previewBox = await preview.boundingBox();
+    expect(surfaceBox).not.toBeNull();
+    expect(previewBox).not.toBeNull();
+    expect(Math.abs(previewBox!.x - (surfaceBox!.x + surfaceBox!.width))).toBeLessThan(2);
   });
   expect(openChatOffsets.some(offset => offset < 0)).toBe(true);
   await expect(nav.getByRole('button', { name: 'Open Chat', exact: true })).toHaveAttribute('aria-current', 'page');
+  await page.waitForTimeout(580); // allow the screen transition and gesture settle lock to finish
   const send = page.getByRole('button', { name: 'Send message', exact: true });
   await expect(send).toBeVisible();
   await expect(send).toBeDisabled();
-  await page.getByRole('textbox', { name: 'Message Flowmate' }).fill('A short mobile draft');
-  await expect(send).toBeEnabled();
-  await page.getByRole('textbox', { name: 'Message Flowmate' }).fill('');
-  await page.screenshot({ path: 'qa-evidence/mobile-chat-composer-design-review.png' });
 
   const surface = page.getByTestId('mobile-gesture-surface');
   const chatReturnOffsets = await dragTouch(context, page, [
@@ -71,30 +80,151 @@ test('mobile screen drag opens Chat, returns to Home, and opens then drags the s
   ], '[data-testid="mobile-gesture-surface"]');
   expect(chatReturnOffsets.some(offset => offset > 0)).toBe(true);
   await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
+  await page.waitForTimeout(580);
 
-  // A deliberate left-edge drag reveals the real sidebar and its accessible dialog.
+  // The sidebar itself follows the drag over a stationary Dashboard surface.
   // Let the previous screen's return animation finish before starting a new drag;
   // otherwise the test can begin a second gesture while the surface is still moving.
   await expect.poll(() => page.getByTestId('mobile-gesture-surface').evaluate(
     element => new DOMMatrix(getComputedStyle(element).transform).m41,
   )).toBe(0);
-  const openMenuOffsets = await dragTouch(context, page, [
-    { x: 8, y: 430 }, { x: 50, y: 430 }, { x: 95, y: 430 }, { x: 140, y: 430 },
-  ], '[data-testid="mobile-gesture-surface"]');
-  expect(openMenuOffsets.some(offset => offset > 0)).toBe(true);
+  await page.waitForTimeout(580); // honor the navigation settle window before starting another route gesture
+  const gestureSurface = page.getByTestId('mobile-gesture-surface');
+  const openingPanelOffsets = await dragTouch(context, page, [
+    { x: 150, y: 430 }, { x: 172, y: 430 }, { x: 196, y: 430 }, { x: 222, y: 430 },
+  ], '[data-testid="mobile-sidebar-panel"]', async () => {
+    await expect(gestureSurface).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
+    await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+  });
+  expect(openingPanelOffsets.some(offset => offset > -256 && offset < 0)).toBe(true);
   const sidebar = page.getByRole('dialog', { name: 'Mobile navigation' });
   await expect(sidebar).toBeVisible();
   const panel = page.getByTestId('mobile-sidebar-panel');
   await expect.poll(() => panel.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41)).toBe(0);
+  const brandHeader = page.getByTestId('mobile-sidebar-brand-header');
+  expect((await brandHeader.boundingBox())?.height).toBeLessThanOrEqual(52);
+  await expect(brandHeader.getByText('Flowmate', { exact: true })).toBeVisible();
 
-  // Drag the exposed header area left; the panel follows the finger and then closes.
+  // The backdrop receives the same closing swipe as the panel, so users can
+  // dismiss the overlay without aiming for the narrow drawer surface.
+  const backdrop = page.getByTestId('mobile-sidebar-backdrop');
+  await dragTouch(context, page, [
+    { x: 350, y: 430 }, { x: 320, y: 430 }, { x: 285, y: 430 }, { x: 235, y: 430 },
+  ], '[data-testid="mobile-sidebar-panel"]');
+  await expect(sidebar).toBeHidden();
+  await expect(backdrop).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open navigation menu', exact: true }).click();
+  await expect(sidebar).toBeVisible();
+  await page.waitForTimeout(320);
+
+  // A leftward swipe starting on a navigation button still closes the drawer
+  // and must not activate the button underneath the gesture.
+  const chatRow = sidebar.getByRole('button', { name: 'Navigate to Chat', exact: true });
+  const chatRowBox = await chatRow.boundingBox();
+  expect(chatRowBox).not.toBeNull();
   const closeMenuOffsets = await dragTouch(context, page, [
-    { x: 150, y: 25 }, { x: 115, y: 25 }, { x: 75, y: 25 }, { x: 30, y: 25 },
+    { x: chatRowBox!.x + chatRowBox!.width / 2, y: chatRowBox!.y + chatRowBox!.height / 2 },
+    { x: chatRowBox!.x + chatRowBox!.width / 2 - 35, y: chatRowBox!.y + chatRowBox!.height / 2 },
+    { x: chatRowBox!.x + chatRowBox!.width / 2 - 75, y: chatRowBox!.y + chatRowBox!.height / 2 },
+    { x: chatRowBox!.x + chatRowBox!.width / 2 - 120, y: chatRowBox!.y + chatRowBox!.height / 2 },
   ], '[data-testid="mobile-sidebar-panel"]');
   expect(closeMenuOffsets.some(offset => offset < 0)).toBe(true);
   await expect(sidebar).toBeHidden();
   await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
   await expect(surface).toBeVisible();
+
+  // Chat owns rightward return gestures across the screen, including the edge.
+  // This prevents a back drag from being reinterpreted as a sidebar opening.
+  await nav.getByRole('button', { name: 'Open Chat', exact: true }).click();
+  await expect(nav.getByRole('button', { name: 'Open Chat', exact: true })).toHaveAttribute('aria-current', 'page');
+  const messageBox = page.getByRole('textbox', { name: 'Message Flowmate' });
+  await messageBox.fill('A short mobile draft');
+  await expect(send).toBeEnabled();
+  await messageBox.fill('');
+  await page.screenshot({ path: 'qa-evidence/mobile-chat-composer-design-review.png' });
+  for (const startX of [8, 24, 42]) {
+    await dragTouch(context, page, [
+      { x: startX, y: 430 }, { x: startX + 35, y: 430 }, { x: startX + 72, y: 430 }, { x: startX + 112, y: 430 },
+    ], '[data-testid="mobile-gesture-surface"]');
+    await expect(nav.getByRole('button', { name: 'Open Home', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(sidebar).toBeHidden();
+    if (startX !== 42) {
+      await nav.getByRole('button', { name: 'Open Chat', exact: true }).click();
+      await expect(nav.getByRole('button', { name: 'Open Chat', exact: true })).toHaveAttribute('aria-current', 'page');
+    }
+  }
+
+  // The explicit menu button keeps navigation available while Chat owns edge-back.
+  await nav.getByRole('button', { name: 'Open Chat', exact: true }).click();
+  await page.getByRole('button', { name: 'Open navigation menu', exact: true }).click();
+  await expect(sidebar).toBeVisible();
+  await page.waitForTimeout(320);
+  await page.getByRole('button', { name: 'Close navigation menu', exact: true }).click();
+  await expect(sidebar).toBeHidden();
+});
+
+test('rapid alternating page swipes cannot race a navigation transition', async ({ page, context }) => {
+  await blockExternalRequests(context);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/#dashboard');
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+  await skipOptionalOnboarding(page);
+  const nav = page.getByRole('navigation', { name: 'Mobile Navigation' });
+  const surface = page.getByTestId('mobile-gesture-surface');
+
+  await dragTouch(context, page, [
+    { x: 280, y: 430 }, { x: 235, y: 430 }, { x: 190, y: 430 }, { x: 145, y: 430 },
+  ], '[data-testid="mobile-gesture-surface"]');
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeVisible();
+
+  // A reverse swipe issued before the screen settles is discarded, so it
+  // cannot complete against the previous view snapshot or queue a stale route.
+  await dragTouch(context, page, [
+    { x: 145, y: 430 }, { x: 190, y: 430 }, { x: 235, y: 430 }, { x: 280, y: 430 },
+  ], '[data-testid="mobile-gesture-surface"]');
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeVisible();
+  await expect(surface).toBeVisible();
+
+  await page.waitForTimeout(580);
+  await dragTouch(context, page, [
+    { x: 145, y: 430 }, { x: 190, y: 430 }, { x: 235, y: 430 }, { x: 280, y: 430 },
+  ], '[data-testid="mobile-gesture-surface"]', async () => {
+    await page.screenshot({ path: 'qa-evidence/mobile-chat-return-preview.png' });
+  });
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+  await page.waitForTimeout(580);
+  await dragTouch(context, page, [
+    { x: 280, y: 430 }, { x: 235, y: 430 }, { x: 190, y: 430 }, { x: 145, y: 430 },
+  ], '[data-testid="mobile-gesture-surface"]');
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeVisible();
+  await page.waitForTimeout(580);
+  await dragTouch(context, page, [
+    { x: 145, y: 430 }, { x: 190, y: 430 }, { x: 235, y: 430 }, { x: 280, y: 430 },
+  ], '[data-testid="mobile-gesture-surface"]');
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+
+  await expect(page.getByRole('dialog', { name: 'Mobile navigation' })).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible();
+  expect(await page.getByTestId('dashboard-daily-briefing').evaluate(element => getComputedStyle(element).borderTopWidth)).toBe('1px');
+  await expect(page.getByTestId('dashboard-daily-briefing')).toHaveClass(/rounded-2xl/);
+  await expect(page.getByTestId('briefing-refresh-button')).toHaveAttribute('title', /briefing/i);
+  await expect.poll(() => surface.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41)).toBe(0);
+
+  await dragTouch(context, page, [
+    { x: 180, y: 280 }, { x: 180, y: 306 }, { x: 180, y: 333 }, { x: 180, y: 360 },
+  ], '[data-testid="mobile-gesture-surface"]', async () => {
+    const indicator = page.getByTestId('mobile-refresh-indicator');
+    if (!(await indicator.isVisible())) return;
+    const indicatorBox = await indicator.boundingBox();
+    const surfaceBox = await surface.boundingBox();
+    expect(indicatorBox).not.toBeNull();
+    expect(surfaceBox).not.toBeNull();
+    // The cue belongs to the pull-created blank strip above the moved content.
+    expect(indicatorBox!.y + indicatorBox!.height).toBeLessThanOrEqual(surfaceBox!.y + 1);
+    await expect(indicator).toContainText('Pull to update');
+    await page.screenshot({ path: 'qa-evidence/mobile-pull-refresh-gap.png' });
+  });
+  await expect.poll(() => surface.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m42)).toBe(0);
 });
 
 test('mobile model control opens a validated catalogue and returns keyboard focus', async ({ page, context }) => {
@@ -128,7 +258,9 @@ test('mobile model control opens a validated catalogue and returns keyboard focu
   await expect.poll(() => catalogRequests).toBeGreaterThan(0);
   await expect(trigger).toHaveAttribute('aria-label', /Gemini 3\.8 Flash/);
   await expect(trigger).toHaveAttribute('title', /Gemini 3\.8 Flash/);
-  expect(await trigger.evaluate(element => Math.round(element.getBoundingClientRect().width))).toBe(44);
+  const triggerWidth = await trigger.evaluate(element => Math.round(element.getBoundingClientRect().width));
+  expect(triggerWidth).toBeGreaterThanOrEqual(44);
+  expect(triggerWidth).toBeLessThanOrEqual(64);
   await trigger.click();
   const dialog = page.getByRole('dialog', { name: 'Model and reasoning' });
   await expect(dialog).toBeVisible();

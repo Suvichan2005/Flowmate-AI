@@ -5,6 +5,121 @@ import { StateStorage } from 'zustand/middleware';
 
 const CROSS_TAB_CHANNEL_NAME = 'flowmate_cross_tab_sync';
 const STORAGE_KEY_PREFIX = 'flowmate-storage';
+const LEGACY_STORAGE_IDENTITY = 'legacy';
+let activeStorageIdentity = LEGACY_STORAGE_IDENTITY;
+let blockWritesDuringIdentitySwitch = false;
+
+function storageKeyForIdentity(name: string, identity = activeStorageIdentity): string {
+    if (name !== STORAGE_KEY_PREFIX || identity === LEGACY_STORAGE_IDENTITY) return name;
+    return `${STORAGE_KEY_PREFIX}:identity:${encodeURIComponent(identity)}`;
+}
+
+function snapshotWithIdentity(raw: string, identity: string): string | null {
+    try {
+        const parsed = JSON.parse(raw) as { state?: Record<string, unknown>; [key: string]: unknown };
+        if (!parsed.state || typeof parsed.state !== 'object') return null;
+        const owner = parsed.state.workspaceStorageIdentity;
+        if (typeof owner === 'string' && owner !== identity) return null;
+        // Existing snapshots predate the marker. The key itself is their
+        // established owner; stamp it in memory so every subsequent write is
+        // identity-bound without changing the stored source during read.
+        if (owner === undefined) parsed.state.workspaceStorageIdentity = identity;
+        return JSON.stringify(parsed);
+    } catch {
+        return null;
+    }
+}
+
+export function getActiveWorkspaceStorageIdentity(): string {
+    return activeStorageIdentity;
+}
+
+export function getWorkspaceStorageKey(identity: string): string {
+    return storageKeyForIdentity(STORAGE_KEY_PREFIX, identity);
+}
+
+/** Select a workspace snapshot and block persistence until its hydration finishes. */
+export function beginWorkspaceStorageIdentitySwitch(identity: string | null): void {
+    activeStorageIdentity = identity || LEGACY_STORAGE_IDENTITY;
+    blockWritesDuringIdentitySwitch = true;
+}
+
+export function finishWorkspaceStorageIdentitySwitch(identity?: string): void {
+    if (identity && identity !== activeStorageIdentity) return;
+    blockWritesDuringIdentitySwitch = false;
+}
+
+export function readWorkspaceStorageSnapshot(identity: string): string | null {
+    if (typeof localStorage === 'undefined') return null;
+    try {
+        const raw = localStorage.getItem(getWorkspaceStorageKey(identity));
+        return raw === null ? null : snapshotWithIdentity(raw, identity);
+    } catch { return null; }
+}
+
+export function summarizeWorkspaceStorageSnapshot(identity: string, defaultSettings?: unknown): { entities: number; relationships: number; messages: number; chatSessions: number; otherItems: number; preferencesChanged: boolean; hasContent: boolean } {
+    const raw = readWorkspaceStorageSnapshot(identity);
+    if (!raw) return { entities: 0, relationships: 0, messages: 0, chatSessions: 0, otherItems: 0, preferencesChanged: false, hasContent: false };
+    try {
+        const state = (JSON.parse(raw) as { state?: Record<string, unknown> }).state || {};
+        const entitiesValue = state.entities;
+        const entities = Array.isArray(entitiesValue)
+            ? entitiesValue.length
+            : state.kernelEntities && typeof state.kernelEntities === 'object'
+                ? Object.keys(state.kernelEntities as Record<string, unknown>).length
+                : 0;
+        const relationships = Array.isArray(state.relationships) ? state.relationships.length : 0;
+        const messages = Array.isArray(state.messages)
+            ? state.messages.filter(message => !(message && typeof message === 'object'
+                && (message as { id?: unknown }).id === 'init-1'
+                && (message as { role?: unknown }).role === 'assistant'
+                && (message as { text?: unknown }).text === 'Welcome to Flowmate. What would you like to talk through or work on?')).length
+            : 0;
+        const chatSessions = Array.isArray(state.chatSessions)
+            ? state.chatSessions.filter(session => !(session && typeof session === 'object'
+                && (session as { id?: unknown }).id === 'general'
+                && (session as { title?: unknown }).title === 'General Chat'
+                && !(session as { deleted?: unknown }).deleted)).length
+            : 0;
+        const otherArrayKeys = ['foodLogs', 'subjects', 'classSchedule', 'holidays', 'attendanceLogs', 'auditLogs', 'syncQueue'];
+        const otherArrayCount = otherArrayKeys.reduce((total, key) => total + (Array.isArray(state[key]) ? (state[key] as unknown[]).length : 0), 0);
+        const branchValues = state.branches && typeof state.branches === 'object' ? Object.values(state.branches as Record<string, unknown>) : [];
+        const customBranches = branchValues.filter(branch => branch && typeof branch === 'object'
+            && (branch as { id?: unknown }).id !== 'b_main_general').length;
+        const branchQueues = state.branchQueues && typeof state.branchQueues === 'object'
+            ? Object.values(state.branchQueues as Record<string, unknown[]>).reduce((total, queue) => total + (Array.isArray(queue) ? queue.length : 0), 0)
+            : 0;
+        const unsentDrafts = state.unsentDrafts && typeof state.unsentDrafts === 'object'
+            ? Object.values(state.unsentDrafts as Record<string, { text?: unknown; attachment?: unknown }>).filter(draft =>
+                !!draft && (typeof draft.text === 'string' && draft.text.length > 0 || typeof draft.attachment === 'string' && draft.attachment.length > 0)).length
+            : 0;
+        const otherItems = otherArrayCount + customBranches + branchQueues + unsentDrafts + (state.dailyBriefing ? 1 : 0);
+        const preferencesChanged = state.settings !== undefined && defaultSettings !== undefined
+            && canonicalJson(state.settings) !== canonicalJson(defaultSettings);
+        return { entities, relationships, messages, chatSessions, otherItems, preferencesChanged, hasContent: entities + relationships + messages + chatSessions + otherItems > 0 || preferencesChanged };
+    } catch {
+        return { entities: 0, relationships: 0, messages: 0, chatSessions: 0, otherItems: 0, preferencesChanged: false, hasContent: false };
+    }
+}
+
+/** Copies an explicitly selected snapshot only when the destination has none. */
+export function copyWorkspaceStorageSnapshot(fromIdentity: string, toIdentity: string, allowOverwrite = false): boolean {
+    if (typeof localStorage === 'undefined') return false;
+    try {
+        const sourceKey = getWorkspaceStorageKey(fromIdentity);
+        const targetKey = getWorkspaceStorageKey(toIdentity);
+        const source = localStorage.getItem(sourceKey);
+        if (!source || (!allowOverwrite && localStorage.getItem(targetKey))) return false;
+        const copied = JSON.parse(source) as { state?: Record<string, unknown>; [key: string]: unknown };
+        if (!copied.state || typeof copied.state !== 'object') return false;
+        // This helper represents the user's explicit choice to adopt the source
+        // snapshot into a different account namespace, so bind the copy to its
+        // destination while leaving the original snapshot untouched.
+        copied.state.workspaceStorageIdentity = toIdentity;
+        localStorage.setItem(targetKey, JSON.stringify(copied));
+        return true;
+    } catch { return false; }
+}
 
 interface StoredKernelEntity {
     id: string;
@@ -253,27 +368,40 @@ export function reconcileStorageSnapshot(existingRaw: string | null, incomingRaw
 export const asyncStorage: StateStorage = {
     getItem: async (name: string): Promise<string | null> => {
         if (typeof localStorage === 'undefined') return null;
-        return localStorage.getItem(name);
+        const identity = activeStorageIdentity;
+        const raw = localStorage.getItem(storageKeyForIdentity(name, identity));
+        return raw === null || name !== STORAGE_KEY_PREFIX ? raw : snapshotWithIdentity(raw, identity);
     },
     setItem: async (name: string, value: string): Promise<void> => {
         if (typeof localStorage === 'undefined') return;
+        if (blockWritesDuringIdentitySwitch) return;
 
-        const existing = localStorage.getItem(name);
+        const identity = activeStorageIdentity;
+        const storageKey = storageKeyForIdentity(name, identity);
+        const existing = localStorage.getItem(storageKey);
         let finalValue = value;
         if (name === STORAGE_KEY_PREFIX) {
-            finalValue = reconcileStorageSnapshot(existing, value);
+            const taggedIncoming = snapshotWithIdentity(value, identity);
+            // A late persist write can outlive the account transition that
+            // produced it. Refuse the stale payload instead of saving another
+            // account's state under the newly selected identity.
+            if (!taggedIncoming) return;
+            const taggedExisting = existing === null ? null : snapshotWithIdentity(existing, identity);
+            if (existing !== null && !taggedExisting) return;
+            finalValue = reconcileStorageSnapshot(taggedExisting, taggedIncoming);
+            finalValue = snapshotWithIdentity(finalValue, identity) || taggedIncoming;
         }
 
         // Hydration writes the same partialized snapshot. Broadcasting it again
         // makes peer tabs rehydrate and echo forever even without a real edit.
         if (existing === finalValue) return;
-        localStorage.setItem(name, finalValue);
+        localStorage.setItem(storageKey, finalValue);
 
         // Post broadcast message to notify peer tabs of committed snapshot revision
         if (typeof BroadcastChannel !== 'undefined') {
             try {
                 const channel = new BroadcastChannel(CROSS_TAB_CHANNEL_NAME);
-                channel.postMessage({ type: 'SNAPSHOT_COMMITTED', key: name, timestamp: Date.now() });
+                channel.postMessage({ type: 'SNAPSHOT_COMMITTED', key: name, storageKey, timestamp: Date.now() });
                 channel.close();
             } catch {
                 // Ignore channel broadcast errors
@@ -282,7 +410,7 @@ export const asyncStorage: StateStorage = {
     },
     removeItem: async (name: string): Promise<void> => {
         if (typeof localStorage === 'undefined') return;
-        localStorage.removeItem(name);
+        localStorage.removeItem(storageKeyForIdentity(name));
     },
 };
 
@@ -295,7 +423,7 @@ export function setupCrossTabSync(onExternalChange: () => void): () => void {
 
     // 1. Native window storage event (triggers in peer tabs when localStorage changes)
     const handleStorage = (event: StorageEvent) => {
-        if (event.key === STORAGE_KEY_PREFIX && event.newValue) {
+        if (event.key === storageKeyForIdentity(STORAGE_KEY_PREFIX) && event.newValue) {
             onExternalChange();
         }
     };
@@ -307,7 +435,7 @@ export function setupCrossTabSync(onExternalChange: () => void): () => void {
         try {
             channel = new BroadcastChannel(CROSS_TAB_CHANNEL_NAME);
             channel.onmessage = (msg: MessageEvent) => {
-                if (msg.data?.type === 'SNAPSHOT_COMMITTED') {
+                if (msg.data?.type === 'SNAPSHOT_COMMITTED' && msg.data?.storageKey === storageKeyForIdentity(STORAGE_KEY_PREFIX)) {
                     onExternalChange();
                 }
             };

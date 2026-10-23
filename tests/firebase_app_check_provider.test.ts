@@ -8,8 +8,13 @@ const authMocks = vi.hoisted(() => ({
   signInAnonymously: vi.fn().mockResolvedValue({ user: { uid: 'guest-user' } }),
   signInWithPopup: vi.fn(),
   signInWithRedirect: vi.fn().mockResolvedValue(undefined),
+  reauthenticateWithPopup: vi.fn(),
+  reauthenticateWithRedirect: vi.fn().mockResolvedValue(undefined),
+  linkWithPopup: vi.fn(),
+  linkWithRedirect: vi.fn().mockResolvedValue(undefined),
   getRedirectResult: vi.fn().mockResolvedValue(null),
   credentialFromResult: vi.fn().mockReturnValue({ accessToken: null }),
+  googleProviders: [] as Array<{ scopes: string[]; addScope: (scope: string) => void }>,
 }));
 
 vi.mock('firebase/app', () => ({
@@ -39,10 +44,16 @@ vi.mock('firebase/auth', () => ({
   createUserWithEmailAndPassword: vi.fn(),
   signInWithPopup: authMocks.signInWithPopup,
   signInWithRedirect: authMocks.signInWithRedirect,
+  reauthenticateWithPopup: authMocks.reauthenticateWithPopup,
+  reauthenticateWithRedirect: authMocks.reauthenticateWithRedirect,
+  linkWithPopup: authMocks.linkWithPopup,
+  linkWithRedirect: authMocks.linkWithRedirect,
   getRedirectResult: authMocks.getRedirectResult,
   GoogleAuthProvider: class {
+    scopes: string[] = [];
+    constructor() { authMocks.googleProviders.push(this); }
     static credentialFromResult = authMocks.credentialFromResult;
-    addScope() {}
+    addScope(scope: string) { this.scopes.push(scope); }
   },
   signOut: vi.fn(),
   onAuthStateChanged: vi.fn(),
@@ -66,8 +77,13 @@ describe('Firebase App Check provider wiring', () => {
     authMocks.signInAnonymously.mockReset().mockResolvedValue({ user: { uid: 'guest-user' } });
     authMocks.signInWithPopup.mockReset();
     authMocks.signInWithRedirect.mockReset().mockResolvedValue(undefined);
+    authMocks.reauthenticateWithPopup.mockReset();
+    authMocks.reauthenticateWithRedirect.mockReset().mockResolvedValue(undefined);
+    authMocks.linkWithPopup.mockReset();
+    authMocks.linkWithRedirect.mockReset().mockResolvedValue(undefined);
     authMocks.getRedirectResult.mockReset().mockResolvedValue(null);
     authMocks.credentialFromResult.mockReset().mockReturnValue({ accessToken: null });
+    authMocks.googleProviders.length = 0;
     localStorage.clear();
     if (originalMatchMedia) Object.defineProperty(window, 'matchMedia', { configurable: true, value: originalMatchMedia });
     else Reflect.deleteProperty(window, 'matchMedia');
@@ -129,6 +145,24 @@ describe('Firebase App Check provider wiring', () => {
     expect(authMocks.signInWithPopup).not.toHaveBeenCalled();
   });
 
+  it('keeps Google login limited to basic identity scopes', async () => {
+    vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
+    vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
+    authMocks.signInWithPopup.mockResolvedValue({ user: { uid: 'google-user' } });
+
+    const { signInWithGoogle } = await import('../services/firebase');
+    await signInWithGoogle();
+
+    expect(authMocks.googleProviders).toHaveLength(2);
+    expect(authMocks.googleProviders[0].scopes).toEqual([]);
+    expect(authMocks.googleProviders[1].scopes).toEqual([
+      'https://www.googleapis.com/auth/calendar',
+      'https://www.googleapis.com/auth/calendar.events',
+    ]);
+  });
+
   it('falls back to redirect when a desktop popup is blocked', async () => {
     vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
     vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
@@ -145,14 +179,16 @@ describe('Firebase App Check provider wiring', () => {
     expect(authMocks.signInWithRedirect).toHaveBeenCalledOnce();
   });
 
-  it('restores the Google redirect result and its Calendar access token after returning', async () => {
+  it('restores a Calendar token only after an explicit Calendar-scope redirect', async () => {
     vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
     vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
     vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
     vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
     const user = { uid: 'google-user' };
+    authMocks.primaryAuth.currentUser = user;
     authMocks.getRedirectResult.mockResolvedValue({ user });
     authMocks.credentialFromResult.mockReturnValue({ accessToken: 'calendar-access-token' });
+    sessionStorage.setItem('flowmate.google-calendar-auth-redirect.v1', '1');
 
     const { completeGoogleRedirectSignIn, getGoogleAccessToken } = await import('../services/firebase');
     const result = await completeGoogleRedirectSignIn();
@@ -160,6 +196,47 @@ describe('Firebase App Check provider wiring', () => {
     expect(authMocks.getRedirectResult).toHaveBeenCalledOnce();
     expect(result).toMatchObject({ user, error: null, accessToken: 'calendar-access-token' });
     expect(getGoogleAccessToken()).toBe('calendar-access-token');
+  });
+
+  it('does not treat a basic Google login token as Calendar authorization', async () => {
+    vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
+    vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
+    const user = { uid: 'google-user' };
+    authMocks.primaryAuth.currentUser = user;
+    authMocks.getRedirectResult.mockResolvedValue({ user });
+    authMocks.credentialFromResult.mockReturnValue({ accessToken: 'identity-only-token' });
+
+    const { completeGoogleRedirectSignIn, getGoogleAccessToken } = await import('../services/firebase');
+    const result = await completeGoogleRedirectSignIn();
+
+    expect(result).toMatchObject({ user, error: null, accessToken: null });
+    expect(getGoogleAccessToken()).toBeNull();
+  });
+
+  it('keeps Calendar access tokens in memory and rejects them after the active account changes', async () => {
+    vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
+    vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
+    localStorage.setItem('flowmate_google_calendar_token', 'legacy-token');
+    localStorage.setItem('flowmate_google_calendar_token_expiry', String(Date.now() + 3600000));
+
+    const { getGoogleAccessToken, setGoogleAccessToken } = await import('../services/firebase');
+    const { getLatestReviewDraft, saveReviewDraft } = await import('../services/action-review');
+
+    authMocks.primaryAuth.currentUser = { uid: 'account-a' };
+    setGoogleAccessToken('account-a-token');
+    expect(getGoogleAccessToken()).toBe('account-a-token');
+    expect(localStorage.getItem('flowmate_google_calendar_token')).toBeNull();
+
+    authMocks.primaryAuth.currentUser = { uid: 'account-b' };
+    expect(getGoogleAccessToken()).toBeNull();
+
+    const draftA = await saveReviewDraft('manual_edit', 'private A draft', [], {}, undefined, 'account-a');
+    expect(await getLatestReviewDraft('account-b')).toBeNull();
+    expect((await getLatestReviewDraft('account-a'))?.id).toBe(draftA.id);
   });
 
   it('waits for restored primary Auth before selecting a guest identity', async () => {
@@ -206,5 +283,25 @@ describe('Firebase App Check provider wiring', () => {
 
     await expect(pendingUser).resolves.toBe(persistedGuest);
     expect(authMocks.signInAnonymously).not.toHaveBeenCalled();
+  });
+
+  it('shares one anonymous sign-in when first-load requests race', async () => {
+    vi.stubEnv('VITE_FIREBASE_API_KEY', 'test-client-key');
+    vi.stubEnv('VITE_FIREBASE_AUTH_DOMAIN', 'flowmate-ai.firebaseapp.com');
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_FIREBASE_APP_ID', '1:297013476805:web:test');
+
+    let completeSignIn!: (result: { user: { uid: string } }) => void;
+    authMocks.signInAnonymously.mockImplementation(() => new Promise(resolve => { completeSignIn = resolve; }));
+    const { getManagedAiUser } = await import('../services/firebase');
+    const requests = Array.from({ length: 4 }, () => getManagedAiUser());
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(authMocks.signInAnonymously).toHaveBeenCalledOnce();
+    const guest = { uid: 'single-guest-user' };
+    completeSignIn({ user: guest });
+
+    await expect(Promise.all(requests)).resolves.toEqual([guest, guest, guest, guest]);
   });
 });

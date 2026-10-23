@@ -464,6 +464,7 @@ test('chat renders in collapsed navigation and compact command search stays insi
     await expect(onboarding).toBeHidden();
   }
   await page.getByRole('button', { name: 'Zen', exact: true }).click();
+  await expect(page.getByTestId('desktop-chat-pane')).toBeVisible();
   await navigate(page, 'Chat');
   await expect(page.getByTestId('conversation-switcher')).toBeVisible();
   await expect(page.getByText('Welcome to Flowmate. What would you like to talk through or work on?', { exact: true })).toBeVisible();

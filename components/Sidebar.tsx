@@ -22,9 +22,10 @@ interface SidebarProps {
   onCreateClick?: () => void;
   onNavigate?: () => void;
   forceExpanded?: boolean;
+  hideBranding?: boolean;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpanded = false }) => {
+const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpanded = false, hideBranding = false }) => {
   const { currentView, setView, getXP, undo, redo, canUndo, canRedo, toggleZenMode, isZenMode, settings } = useStore();
 
   const handleNav = (view: ViewType) => {
@@ -58,17 +59,18 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
     <div data-surface="sidebar" style={{ borderColor: 'var(--border-hairline)' }} className={`h-full flex flex-col bg-ideapad-base border-r transition-all duration-300 ${forceExpanded ? 'w-full' : (isZenMode ? 'w-14' : 'w-14 md:w-56')
       }`}>
 
-      {/* Logo */}
-      <div className={`p-3 flex items-center gap-2.5 ${isCompact ? 'justify-center' : ''}`}>
-        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/20">
-          <Sparkles className="text-ideapad-text w-4 h-4" />
+      {!hideBranding && (
+        <div className={`p-3 flex items-center gap-2.5 ${isCompact ? 'justify-center' : ''}`}>
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/20">
+            <Sparkles className="text-ideapad-text w-4 h-4" />
+          </div>
+          {showLabels && (
+            <span className={`font-serif font-bold text-lg tracking-tight text-ideapad-text ${forceExpanded ? '' : 'hidden md:block'}`}>
+              Flowmate
+            </span>
+          )}
         </div>
-        {showLabels && (
-          <span className={`font-serif font-bold text-lg tracking-tight text-ideapad-text ${forceExpanded ? '' : 'hidden md:block'}`}>
-            Flowmate
-          </span>
-        )}
-      </div>
+      )}
 
       {/* Create Button */}
       <div className="px-2 pb-1">

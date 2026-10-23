@@ -273,7 +273,7 @@ export const InterruptedDayRecovery: React.FC = () => {
   // Interrupted Day Active State
   return (
     <div
-      className="mb-8 bg-slate-900 border border-amber-500/30 rounded-2xl p-5 md:p-6 shadow-xl relative overflow-hidden transition-all"
+      className="horizon-recovery-container mb-8 bg-slate-900 border border-amber-500/30 rounded-2xl p-5 md:p-6 shadow-xl relative overflow-hidden transition-all"
       role="region"
       aria-label="Interrupted day recovery"
       data-testid="interrupted-day-recovery"
@@ -282,22 +282,22 @@ export const InterruptedDayRecovery: React.FC = () => {
       <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
 
       {/* Header Row */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10 mb-4">
-        <div className="flex items-start gap-3">
+      <div className="horizon-recovery-header flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10 mb-4">
+        <div className="horizon-recovery-heading flex items-start gap-3 min-w-0">
           <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 shrink-0 mt-0.5">
             <CalendarClock size={22} />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                Interrupted Day Recovery
+            <div className="horizon-recovery-title-row flex items-center gap-2 min-w-0">
+              <span className="horizon-recovery-eyebrow text-xs font-bold uppercase tracking-wider text-amber-400">
+                Interrupted day
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-semibold">
                 {totalIssuesCount} {totalIssuesCount === 1 ? 'Item Needs' : 'Items Need'} Triage
               </span>
             </div>
-            <h2 className="text-base font-bold text-slate-100 mt-0.5">
-              Pick up where you left off without a planning marathon
+            <h2 className="horizon-recovery-title text-base font-bold text-slate-100 mt-0.5">
+              Pick up where you left off
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
               {overdueTasks.length > 0 && `${overdueTasks.length} task${overdueTasks.length > 1 ? 's' : ''} overdue. `}
@@ -322,13 +322,13 @@ export const InterruptedDayRecovery: React.FC = () => {
       {!isCollapsed && (
         <div className="relative z-10 space-y-4">
           {/* Quick Batch Actions Toolbar (Action Before Exposition) */}
-          <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 flex flex-wrap items-center gap-2 justify-between">
-            <div className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+          <div className="horizon-recovery-toolbar p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 flex flex-wrap items-center gap-2 justify-between">
+            <div className="horizon-recovery-toolbar-label text-xs font-medium text-slate-400 flex items-center gap-1.5">
               <RotateCcw size={14} className="text-amber-400" />
-              <span>1-Click Fast Triage:</span>
+              <span>Quick actions</span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="horizon-recovery-toolbar-actions flex flex-wrap items-center gap-2">
               {overdueTasks.length > 0 && (
                 <>
                   <button
@@ -337,7 +337,7 @@ export const InterruptedDayRecovery: React.FC = () => {
                     aria-label="Reschedule all overdue tasks to today at 18:00"
                   >
                     <Clock size={13} />
-                    <span>Reschedule Overdue to Today (18:00)</span>
+                    <span className="horizon-batch-label">Today, 6 PM</span>
                   </button>
 
                   <button
@@ -346,7 +346,7 @@ export const InterruptedDayRecovery: React.FC = () => {
                     aria-label="Defer all overdue tasks to tomorrow at 10:00"
                   >
                     <Calendar size={13} />
-                    <span>Defer to Tomorrow (10:00)</span>
+                    <span className="horizon-batch-label">Tomorrow, 10 AM</span>
                   </button>
                 </>
               )}
@@ -358,7 +358,7 @@ export const InterruptedDayRecovery: React.FC = () => {
                   aria-label="Confirm all past events as done"
                 >
                   <CheckCircle2 size={13} />
-                  <span>Confirm Past Events as Done</span>
+                  <span className="horizon-batch-label">Confirm past events</span>
                 </button>
               )}
 
@@ -368,13 +368,13 @@ export const InterruptedDayRecovery: React.FC = () => {
                 aria-label="Auto-reconcile interrupted day with AI"
               >
                 <Sparkles size={13} />
-                <span>Auto-Reconcile Day with AI</span>
+                <span className="horizon-batch-label">Reconcile with AI</span>
               </button>
             </div>
           </div>
 
           {/* Granular Triage Filter Tabs */}
-          <div className="flex items-center gap-2 border-b border-slate-800 pb-2 text-xs">
+          <div className="horizon-recovery-filters flex items-center gap-2 border-b border-slate-800 pb-2 text-xs">
             <button
               onClick={() => setActiveTab('all')}
               className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${

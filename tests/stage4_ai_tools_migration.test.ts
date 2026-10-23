@@ -80,10 +80,10 @@ describe('Stage 4: AI Tools Migration & Greenfield Kernel Query Engine', () => {
       expect(props.schema_id).toBeDefined();
     });
 
-    it('bundles all 13 tools into FLOWMATE_TOOLS', () => {
+    it('bundles all 12 supported tools into FLOWMATE_TOOLS after retiring route lookup', () => {
       expect(FLOWMATE_TOOLS).toHaveLength(1);
       const decls = FLOWMATE_TOOLS[0].functionDeclarations!;
-      expect(decls.length).toBe(13);
+      expect(decls.length).toBe(12);
       const names = decls.map(d => d.name);
       expect(names).toContain('query_entities');
       expect(names).toContain('reflect_schemas');
@@ -93,6 +93,7 @@ describe('Stage 4: AI Tools Migration & Greenfield Kernel Query Engine', () => {
       expect(names).toContain('read_calendar');
       expect(names).toContain('search_entities');
       expect(names).toContain('apply_changes');
+      expect(names).not.toContain('lookup_travel_route');
     });
   });
 

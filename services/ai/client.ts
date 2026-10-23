@@ -53,7 +53,7 @@ export const getAiClient = (): GoogleGenAI => {
   return new GoogleGenAI({ apiKey: key || '' });
 };
 
-/** Live ephemeral credentials are only accepted by Google's v1beta endpoint. */
+/** BYOK Live uses the standard Gemini Live endpoint. */
 export const getByokLiveClient = (): GoogleGenAI => {
   const key = getEphemeralApiKey();
   return new GoogleGenAI({ apiKey: key || '', httpOptions: { apiVersion: 'v1beta' } });
@@ -119,7 +119,7 @@ export const GEMINI_RETRY_CONFIG: Partial<RetryConfig> = {
     'NetworkError',
   ],
   nonRetryableCodes: [
-    'MANAGED_AI_DISABLED', 'GUEST_TURN_ALLOWANCE_EXHAUSTED',
+    'MANAGED_AI_DISABLED', 'GUEST_TURN_ALLOWANCE_EXHAUSTED', 'GUEST_BRIEFING_ALLOWANCE_EXHAUSTED',
     'TURN_ALLOWANCE_EXHAUSTED', 'BRIEFING_ALLOWANCE_EXHAUSTED', 'MODEL_NOT_ALLOWED_FOR_ACCOUNT',
     'MODEL_UNAVAILABLE', 'UNSUPPORTED_REASONING_LEVEL', 'MODEL_CONTEXT_LIMIT', 'OUTPUT_TOKEN_LIMIT',
       'REQUEST_ALREADY_PROCESSED', 'TURN_ALREADY_COMPLETE', 'PROVIDER_RATE_LIMITED',

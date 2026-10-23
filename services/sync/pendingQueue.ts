@@ -15,6 +15,7 @@ const STORAGE_KEY = 'flowmate_pending_mutation_queue_v1';
 export class PendingMutationQueue {
   private queue: PendingMutation[] = [];
   private readonly storage: Storage | null;
+  private storageIdentity = 'legacy';
 
   constructor(customStorage?: Storage) {
     if (customStorage) {
@@ -33,7 +34,7 @@ export class PendingMutationQueue {
   private hydrate(): void {
     if (!this.storage) return;
     try {
-      const raw = this.storage.getItem(STORAGE_KEY);
+      const raw = this.storage.getItem(this.storageKey());
       if (raw) {
         const parsed: unknown = JSON.parse(raw);
         if (Array.isArray(parsed)) {
@@ -57,10 +58,26 @@ export class PendingMutationQueue {
   private persist(): void {
     if (!this.storage) return;
     try {
-      this.storage.setItem(STORAGE_KEY, JSON.stringify(this.queue));
+      this.storage.setItem(this.storageKey(), JSON.stringify(this.queue));
     } catch (e) {
       console.warn('[PendingMutationQueue] Failed to persist pending queue:', e);
     }
+  }
+
+  private storageKey(): string {
+    return this.storageIdentity === 'legacy'
+      ? STORAGE_KEY
+      : `${STORAGE_KEY}:identity:${encodeURIComponent(this.storageIdentity)}`;
+  }
+
+  /** Saves the current queue under its current identity, then loads the next identity's queue. */
+  setStorageIdentity(identity: string | null): void {
+    const nextIdentity = identity || 'legacy';
+    if (nextIdentity === this.storageIdentity) return;
+    this.persist();
+    this.storageIdentity = nextIdentity;
+    this.queue = [];
+    this.hydrate();
   }
 
   /**
@@ -72,15 +89,23 @@ export class PendingMutationQueue {
     base_revision: number,
     op_type: 'upsert_entity' | 'soft_delete_entity' | 'restore_entity',
     entity: KernelEntity,
-    created_at = new Date().toISOString()
+    created_at = new Date().toISOString(),
+    base_entity?: KernelEntity
   ): PendingMutation {
-    // Remove any older uncommitted pending mutation for the same entity to collapse state
+    // Keep the first known base when collapsing successive offline edits. The final
+    // entity is then reconciled against the state the first edit actually observed.
+    const existing = this.queue.find(m => m.entity_id === entity_id && m.status !== 'in_flight');
+    const effectiveBaseRevision = existing?.base_revision ?? base_revision;
+    const effectiveBaseEntity = existing?.base_entity ?? base_entity;
+
+    // Remove older uncommitted mutations for this entity to collapse state.
     this.queue = this.queue.filter(m => m.entity_id !== entity_id || m.status === 'in_flight');
 
     const item: PendingMutation = {
       mutation_id,
       entity_id,
-      base_revision,
+      base_revision: effectiveBaseRevision,
+      ...(effectiveBaseEntity ? { base_entity: effectiveBaseEntity } : {}),
       op_type,
       entity,
       created_at,

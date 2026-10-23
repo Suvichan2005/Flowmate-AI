@@ -80,7 +80,7 @@ export const LOCATIONAL_CAPABILITY: CapabilityDefinition<LocationalContract> = {
       display_label: geo.address || e.title,
     };
   },
-  supported_projections: ['map', 'travel_route'],
+  supported_projections: ['map'],
 };
 
 export const METRIC_CAPABILITY: CapabilityDefinition<MetricContract> = {

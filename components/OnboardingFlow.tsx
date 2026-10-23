@@ -13,8 +13,10 @@ type ProfileDraft = Omit<OnboardingProfile, 'updatedAt'>;
 
 interface OnboardingFlowProps {
   identity: string;
+  authenticated?: boolean;
   onClose: () => void;
   onSignIn: () => void;
+  onCreateAccount: () => void;
   onContinueInChat: () => void;
 }
 
@@ -47,7 +49,7 @@ export function targetedSupportQuestion(profile: Pick<ProfileDraft, 'role' | 'ro
   return { label: 'What kind of support would feel most useful?', placeholder: 'A gentle reminder, a clear next step, planning time, or something else' };
 }
 
-const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ identity, onClose, onSignIn, onContinueInChat }) => {
+const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ identity, authenticated = false, onClose, onSignIn, onCreateAccount, onContinueInChat }) => {
   const dialogRef = React.useRef<HTMLElement>(null);
   const saved = useMemo(() => {
     const profile = readOnboardingProfile(identity);
@@ -120,6 +122,9 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ identity, onClose, onSi
   const saveThenSignIn = () => {
     if (persistDraft()) onSignIn();
   };
+  const saveThenCreateAccount = () => {
+    if (persistDraft()) onCreateAccount();
+  };
   const inputClass = 'mt-2 w-full rounded-xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-slate-100 placeholder:text-slate-500 outline-none focus:border-emerald-400';
   const supportQuestion = targetedSupportQuestion(draft);
   const heading = step === 0 ? 'Make Flowmate yours' : step === 1 ? 'A little about you' : step === 2 ? 'What fills your week?' : step === 3 ? 'What context matters?' : step === 4 ? 'What would you like to move forward?' : step === 5 ? 'What kind of help fits you?' : 'Your starting point';
@@ -132,12 +137,19 @@ const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ identity, onClose, onSi
       </div>
       <h1 id="flowmate-onboarding-title" className="font-serif text-3xl font-semibold text-slate-50">{heading}</h1>
       <p className="mt-2 text-sm leading-6 text-slate-300">
-        {step === 0 ? 'A few short answers help Flowmate make your goals, plans and routines fit your life. You can skip setup and start as a guest.' : 'Answer what feels useful. You can skip any question and change these details later.'}
+        {step === 0
+          ? authenticated
+            ? 'A few optional answers can help Flowmate tailor planning to your routine. Skip setup whenever you like.'
+            : 'A few short answers help Flowmate make your goals, plans and routines fit your life. You can skip setup and start as a guest.'
+          : 'Answer what feels useful. You can skip any question and change these details later.'}
       </p>
 
       {step === 0 && <div className="mt-7 space-y-3">
-        <button type="button" onClick={() => setStep(1)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 font-semibold text-slate-950 hover:bg-emerald-400"><ArrowRight size={18} /> Continue as a guest</button>
-        <button type="button" onClick={saveThenSignIn} className="w-full rounded-xl border border-slate-700 px-4 py-3 font-medium text-slate-100 hover:bg-slate-800">Already have an account? Sign in</button>
+        <button type="button" onClick={() => setStep(1)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 font-semibold text-slate-950 hover:bg-emerald-400"><ArrowRight size={18} /> {authenticated ? 'Personalize Flowmate' : 'Continue as a guest'}</button>
+        {!authenticated && <>
+          <button type="button" onClick={saveThenCreateAccount} className="w-full rounded-xl border border-slate-700 px-4 py-3 font-medium text-slate-100 hover:bg-slate-800">Create an account</button>
+          <button type="button" onClick={saveThenSignIn} className="w-full px-4 py-2 text-sm text-slate-400 hover:text-slate-200">Already have an account? Sign in</button>
+        </>}
         <button type="button" onClick={() => saveAndClose()} className="w-full px-4 py-2 text-sm text-slate-400 hover:text-slate-200">Skip setup for now</button>
         <div className="mt-4 space-y-2 text-xs leading-5 text-slate-400">
           <p className="flex items-start gap-2"><LockKeyhole size={15} className="mt-0.5 shrink-0" /> Your answers stay in this browser. Flowmate uses them in AI requests only if you explicitly turn that on.</p>

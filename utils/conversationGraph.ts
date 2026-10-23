@@ -125,23 +125,61 @@ export function getSiblingVersions(
 export function findLeafMessage(
   messages: Message[],
   fromMessageId: string,
+  branchId?: string,
 ): Message {
-  const channel = messages.find(m => m.id === fromMessageId)?.channelId || 'general';
+  const origin = messages.find(m => m.id === fromMessageId);
+  const channel = origin?.channelId || 'general';
   const channelMsgs = messages.filter(m => (m.channelId || 'general') === channel);
 
-  let current = channelMsgs.find(m => m.id === fromMessageId);
+  let current = origin;
   if (!current) return messages[messages.length - 1];
+
+  const effectiveBranchId = branchId ?? current.branch_id;
 
   const visited = new Set<string>();
   while (current && !visited.has(current.id)) {
     visited.add(current.id);
-    // Find child node
-    const child = channelMsgs.find(m => m.parent_id === current!.id);
+    // Restrict traversal to the selected branch. Concurrent sibling replies
+    // stay available as versions instead of being picked by array order.
+    const children = channelMsgs
+      .filter(message => message.parent_id === current!.id &&
+        (!effectiveBranchId || message.branch_id === effectiveBranchId) &&
+        !(message.role === 'assistant' &&
+          (message.status === 'failed' || message.status === 'interrupted') &&
+          message.turn_metadata?.response_source === 'unavailable' && !message.text.trim()))
+      .sort((left, right) => {
+        const time = Date.parse(right.created_at) - Date.parse(left.created_at);
+        return Number.isFinite(time) && time !== 0 ? time : right.id.localeCompare(left.id);
+      });
+    const child = children[0];
     if (!child) break;
     current = child;
   }
 
   return current;
+}
+
+/**
+ * Repair branch heads that lag behind already persisted messages. This is a
+ * pointer-only recovery: message text and order are untouched. Empty failed
+ * assistant placeholders are excluded so rejected requests remain attached
+ * to the submitted user message rather than becoming fake conversation turns.
+ */
+export function repairStaleConversationBranchHeads(
+  branches: ConversationBranch[],
+  messages: Message[],
+  repairedAt = new Date().toISOString(),
+): ConversationBranch[] {
+  return branches.map(branch => {
+    if (!branch.head_message_id || branch.deleted_at) return branch;
+    const head = messages.find(message => message.id === branch.head_message_id &&
+      (message.channelId || 'general') === branch.conversation_id);
+    if (!head) return branch;
+
+    const leaf = findLeafMessage(messages, head.id, branch.id);
+    if (leaf.id === head.id) return branch;
+    return { ...branch, head_message_id: leaf.id, updated_at: repairedAt };
+  });
 }
 
 /**

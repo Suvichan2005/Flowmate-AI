@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mergeChatSessions } from '../services/firestoreSync';
-import { getInstantContextualSuggestions } from '../services/ai/suggestions';
+import { buildSuggestionPrompt, getInstantContextualSuggestions } from '../services/ai/suggestions';
 import { normalizePayload } from '../store/helpers';
 import { ChatSession, EntityKind, Entity } from '../types';
 
@@ -40,6 +40,11 @@ describe('Cross-Platform Sync: mergeChatSessions', () => {
 });
 
 describe('Dynamic Contextual Suggestions', () => {
+    it('keeps retired home and arrival defaults out of generative suggestion instructions', () => {
+        const prompt = buildSuggestionPrompt('09:00', 'Monday', 9, []);
+        expect(prompt).not.toMatch(/home.location|station|airport|arrival buffer|45|120/i);
+    });
+
     it('should generate at least 3 instant actionable prompt templates', () => {
         const suggestions = getInstantContextualSuggestions({
             entities: [],
@@ -54,6 +59,17 @@ describe('Dynamic Contextual Suggestions', () => {
             expect(s.prompt).toBeTruthy();
             expect(s.prompt.length).toBeGreaterThan(10);
         });
+    });
+
+    it('does not inject fixed home, station, or airport defaults into suggestions', () => {
+        const suggestions = getInstantContextualSuggestions({
+            entities: [],
+            foodLogs: [],
+            subjects: [],
+            timezone: 'America/New_York',
+        });
+        const text = suggestions.map(suggestion => `${suggestion.label} ${suggestion.prompt}`).join('\n').toLowerCase();
+        expect(text).not.toMatch(/default home|station.*45|airport.*120|45-minute|120-minute/);
     });
 
     it('should generate personalized prompts when tasks or events exist in context', () => {

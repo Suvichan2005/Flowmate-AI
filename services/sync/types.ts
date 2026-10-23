@@ -54,6 +54,8 @@ export interface PendingMutation {
   readonly mutation_id: string;
   readonly entity_id: string;
   readonly base_revision: number;
+  /** Entity snapshot the local edit was based on; enables a real three-way merge. */
+  readonly base_entity?: KernelEntity;
   readonly op_type: 'upsert_entity' | 'soft_delete_entity' | 'restore_entity';
   readonly entity: KernelEntity;
   readonly created_at: string;

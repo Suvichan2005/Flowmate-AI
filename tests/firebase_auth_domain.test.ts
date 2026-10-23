@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { resolveFirebaseAuthDomain } from '../services/firebaseAuthDomain';
 
 describe('Firebase Hosting Auth domain', () => {
-    it('keeps the production Auth helper on the production app origin', () => {
+    it('uses the production Hosting origin as its Auth helper domain', () => {
         expect(resolveFirebaseAuthDomain('flowmate-ai.web.app', 'flowmate-ai.firebaseapp.com'))
             .toBe('flowmate-ai.web.app');
     });
 
-    it('keeps the approved preview Auth helper on the preview app origin', () => {
+    it('uses the preview Hosting origin as its Auth helper domain', () => {
         expect(resolveFirebaseAuthDomain('flowmate-ai--managed-ai-preview-8jatmmwd.web.app', 'flowmate-ai.firebaseapp.com'))
             .toBe('flowmate-ai--managed-ai-preview-8jatmmwd.web.app');
     });

@@ -11,7 +11,7 @@ describe('Gemini Live API protocol', () => {
   beforeEach(() => GoogleGenAIMock.mockClear());
   afterEach(() => setEphemeralApiKey(null));
 
-  it('uses the documented v1beta endpoint for ephemeral Live credentials', () => {
+  it('keeps BYOK Live on the standard v1beta endpoint', () => {
     setEphemeralApiKey('runtime-only-test-key');
 
     getByokLiveClient();
@@ -21,4 +21,5 @@ describe('Gemini Live API protocol', () => {
       httpOptions: { apiVersion: 'v1beta' },
     });
   });
+
 });

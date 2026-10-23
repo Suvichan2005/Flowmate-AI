@@ -56,6 +56,11 @@ export function canonicalJson(val: unknown): string {
   return '{' + pairs.join(',') + '}';
 }
 
+/** Preserve the current reference when a remote snapshot is materially equal. */
+export function retainCanonicalReference<T>(current: T, candidate: T): T {
+  return canonicalJson(current) === canonicalJson(candidate) ? current : candidate;
+}
+
 function areAttributeValuesEqual(a: AttributeValue | undefined, b: AttributeValue | undefined): boolean {
   if (a === b) return true;
   if (a === undefined || b === undefined) return false;
@@ -280,50 +285,74 @@ export function reconcileEntity(
 
   // 5. Concurrent edit detection with pending local mutation
   const baseRevision = pendingMutation.base_revision;
+  const baseline = pendingMutation.base_entity;
 
-  // If remote has not changed since the local edit was planned
-  if (remote.version === baseRevision) {
+  // Revisions alone are not a sufficient base check: two devices can both
+  // create revision N+1 from revision N. Compare the actual captured base.
+  // Older queue records lack that snapshot, so use their enqueue timestamp as
+  // a conservative compatibility check and surface a conflict if cloud data
+  // is newer than the queued edit.
+  const sameContent = (a: KernelEntity, b: KernelEntity): boolean =>
+    a.id === b.id && a.schema_id === b.schema_id && a.version === b.version &&
+    a.title === b.title && canonicalJson(a.attributes || {}) === canonicalJson(b.attributes || {}) &&
+    a.lifecycle.status === b.lifecycle.status && a.lifecycle.deleted_at === b.lifecycle.deleted_at;
+
+  const remoteMatchesBase = baseline
+    ? sameContent(remote, baseline)
+    : remote.version === baseRevision &&
+      parseTimestampMs(remote.lifecycle.updated_at) <= parseTimestampMs(pendingMutation.created_at);
+
+  if (remoteMatchesBase) {
     return {
       resolvedEntity: local,
       action: 'keep_local',
     };
   }
 
-  // Remote has progressed (remote.version > baseRevision)
-  // Check field overlap
+  // Three-way comparison: determine what each side changed since the captured
+  // base, instead of treating every local/remote difference as a conflict.
   const conflictingFields: string[] = [];
-
-  if (local.title !== remote.title) {
-    conflictingFields.push('title');
-  }
-
+  const baseTitle = baseline?.title;
+  const baseAttrs = baseline?.attributes || {};
   const localAttrs = local.attributes || {};
   const remoteAttrs = remote.attributes || {};
+  const localTitleChanged = baseline ? local.title !== baseTitle : local.title !== remote.title;
+  const remoteTitleChanged = baseline ? remote.title !== baseTitle : remote.title !== local.title;
+  if (localTitleChanged && remoteTitleChanged && local.title !== remote.title) conflictingFields.push('title');
+
   const allAttrKeys = new Set([...Object.keys(localAttrs), ...Object.keys(remoteAttrs)]);
+  const localChangedKeys = new Set<string>();
 
   for (const key of allAttrKeys) {
     const localVal = localAttrs[key];
     const remoteVal = remoteAttrs[key];
-    if (!areAttributeValuesEqual(localVal, remoteVal)) {
+    const baseVal = baseAttrs[key];
+    const localChanged = baseline ? !areAttributeValuesEqual(localVal, baseVal) : !areAttributeValuesEqual(localVal, remoteVal);
+    const remoteChanged = baseline ? !areAttributeValuesEqual(remoteVal, baseVal) : !areAttributeValuesEqual(remoteVal, localVal);
+    if (localChanged) localChangedKeys.add(key);
+    if (localChanged && remoteChanged && !areAttributeValuesEqual(localVal, remoteVal)) {
       conflictingFields.push(`attributes.${key}`);
     }
   }
 
-  // If there are zero conflicting fields (local and remote have identical title and attributes)
   if (conflictingFields.length === 0) {
-    return {
-      resolvedEntity: remote.version >= local.version ? remote : local,
-      action: remote.version >= local.version ? 'accept_remote' : 'keep_local',
-    };
-  }
+    const localTitleWins = localTitleChanged && (!remoteTitleChanged || local.title === remote.title);
+    const localTitleNeedsApply = localTitleWins && local.title !== remote.title;
+    const mergedAttributes: Record<string, AttributeValue> = { ...remoteAttrs };
+    for (const key of localChangedKeys) {
+      const localValue = localAttrs[key];
+      if (localValue === undefined) delete mergedAttributes[key];
+      else mergedAttributes[key] = localValue;
+    }
+    const hasLocalChangesToApply = localTitleNeedsApply || [...localChangedKeys].some(key => !areAttributeValuesEqual(localAttrs[key], remoteAttrs[key]));
+    if (!hasLocalChangesToApply) {
+      return { resolvedEntity: remote, action: 'accept_remote' };
+    }
 
-  // If only non-overlapping fields were changed: perform safe attribute-level merge
-  const titleConflicted = local.title !== remote.title;
-  if (!titleConflicted && conflictingFields.length > 0) {
-    const mergedAttributes: Record<string, AttributeValue> = { ...remoteAttrs, ...localAttrs };
     const mergedEntity: KernelEntity = {
       ...remote,
       version: Math.max(local.version, remote.version) + 1,
+      title: localTitleWins ? local.title : remote.title,
       attributes: mergedAttributes,
       lifecycle: {
         ...remote.lifecycle,
@@ -368,7 +397,8 @@ export function reconcileEntityCollection(
   localEntities: Record<string, KernelEntity>,
   remoteEntities: readonly unknown[],
   pendingQueue?: PendingMutationQueue,
-  now = new Date().toISOString()
+  now = new Date().toISOString(),
+  protectedEntityIds: ReadonlySet<string> = new Set()
 ): {
   nextKernelEntities: Record<string, KernelEntity>;
   conflicts: ConflictDescriptor[];
@@ -401,7 +431,17 @@ export function reconcileEntityCollection(
     const result = reconcileEntity(local, remoteKernel, pendingMutation, now);
     nextKernelEntities[remoteKernel.id] = result.resolvedEntity;
 
-    if (pendingQueue && pendingMutation && remoteKernel.version >= pendingMutation.entity.version) {
+    const remoteAcknowledgesMutation = !!pendingMutation &&
+      remoteKernel.version >= pendingMutation.entity.version &&
+      remoteKernel.id === pendingMutation.entity.id &&
+      remoteKernel.schema_id === pendingMutation.entity.schema_id &&
+      remoteKernel.title === pendingMutation.entity.title &&
+      canonicalJson(remoteKernel.attributes || {}) === canonicalJson(pendingMutation.entity.attributes || {}) &&
+      remoteKernel.lifecycle.status === pendingMutation.entity.lifecycle.status &&
+      remoteKernel.lifecycle.deleted_at === pendingMutation.entity.lifecycle.deleted_at;
+
+    if (pendingQueue && pendingMutation && !protectedEntityIds.has(remoteKernel.id) && !result.conflict &&
+        result.action === 'accept_remote' && remoteAcknowledgesMutation) {
       pendingQueue.markCommitted(pendingMutation.mutation_id);
     }
 

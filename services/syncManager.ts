@@ -23,6 +23,7 @@ import {
     saveFoodLogs,
     saveAttendanceData,
     saveChatSessions,
+    saveChatBranches,
     deleteChannelMessages,
     syncEntities,
     syncRelationships,
@@ -42,7 +43,9 @@ import type {
     AttendanceLog,
     UserSettings,
     ChatSession,
+    ConversationBranch,
 } from '../types';
+import { canonicalJson, globalPendingMutationQueue } from './sync';
 
 // Sync state
 let syncUserId: string | null = null;
@@ -50,7 +53,16 @@ let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let isSyncing = false;
 let realtimeUnsubscribe: (() => void) | null = null;
 let lastSyncTimestamp: string | null = null;
+let lastSyncConfigSignature: string | null = null;
+let cloudBaselineReady = false;
 let isDemoModeActive = false;
+let automaticSyncRetryCount = 0;
+type WorkspaceSyncData = { entities: Entity[]; relationships: Relationship[]; universalTags: TagDefinition[]; settings?: Partial<UserSettings> };
+type DeferredSyncProvider = { userId: string; sessionToken: number; getData: () => WorkspaceSyncData };
+let deferredSyncProvider: DeferredSyncProvider | null = null;
+// Entities with an unresolved offline conflict must not be included in a
+// debounced whole-workspace save. The user must choose a winner first.
+const conflictedEntityIds = new Set<string>();
 // Firebase identity alone is not workspace-sync consent. This is populated
 // only from the explicit per-account/per-device local consent record.
 let workspaceCloudSyncEnabled = false;
@@ -77,11 +89,29 @@ export const setDemoModeSyncBlock = (active: boolean): void => {
             clearTimeout(syncDebounceTimer);
             syncDebounceTimer = null;
         }
+        deferredSyncProvider = null;
         stopRealtimeSync();
     }
 };
 
 export const isDemoSyncBlocked = (): boolean => isDemoModeActive;
+
+/** Keep automatic workspace writes away from entities awaiting a user choice. */
+export const setSyncEntityConflictBlocked = (entityId: string, blocked: boolean): void => {
+    if (blocked) conflictedEntityIds.add(entityId);
+    else conflictedEntityIds.delete(entityId);
+};
+
+/** Replace the current unresolved-conflict set after a reconciliation pass. */
+export const setSyncConflictedEntityIds = (entityIds: Iterable<string>): void => {
+    conflictedEntityIds.clear();
+    for (const entityId of entityIds) conflictedEntityIds.add(entityId);
+};
+
+const withoutConflictedEntities = <T extends { entities: Entity[] }>(data: T): T => ({
+    ...data,
+    entities: data.entities.filter(entity => !conflictedEntityIds.has(entity.id)),
+});
 
 // Track message IDs we've just written to suppress echo from onSnapshot
 const recentlyWrittenMessageIds = new Set<string>();
@@ -89,12 +119,15 @@ const MESSAGE_ECHO_TIMEOUT_MS = 5000;
 
 // Listeners for store updates (will be connected from store.ts)
 type OnSyncStatusChange = (status: 'idle' | 'syncing' | 'error', error?: string) => void;
+type SyncReadMetadata = { fromCache: boolean; hasPendingWrites: boolean };
+type OnSyncMetadataChange = (metadata: SyncReadMetadata) => void;
 type OnRemoteDataChange = (data: {
     entities: Entity[];
     relationships: Relationship[];
     universalTags: TagDefinition[];
     messages?: Message[];
     chatSessions?: ChatSession[];
+    conversationBranches?: ConversationBranch[];
     settings?: Partial<UserSettings>;
     foodLogs?: FoodLogEntry[];
     subjects?: Subject[];
@@ -103,14 +136,24 @@ type OnRemoteDataChange = (data: {
     attendanceLogs?: AttendanceLog[];
     isInitialLoad?: boolean;
     initialReadFailed?: boolean;
+    syncMetadata?: SyncReadMetadata;
 }) => void;
 
 
 let onSyncStatusChange: OnSyncStatusChange | null = null;
 let onRemoteDataChange: OnRemoteDataChange | null = null;
+let onSyncMetadataChange: OnSyncMetadataChange | null = null;
+
+const canWriteWorkspace = (): boolean => Boolean(
+    syncUserId && workspaceCloudSyncEnabled && cloudBaselineReady &&
+    isFirebaseConfigured() && !isDemoModeActive &&
+    (typeof navigator === 'undefined' || navigator.onLine)
+);
 
 // Debounce delay for auto-sync (ms)
 const SYNC_DEBOUNCE_MS = 2000;
+const MAX_AUTOMATIC_SYNC_RETRIES = 3;
+const automaticRetryDelay = (attempt: number): number => Math.min(8000, 1000 * (2 ** (attempt - 1)));
 
 /**
  * Initialize sync manager for a user
@@ -121,6 +164,7 @@ export const initializeSync = (
     statusCallback: OnSyncStatusChange,
     remoteDataCallback: OnRemoteDataChange,
     hasWorkspaceCloudSyncConsent = false,
+    syncMetadataCallback?: OnSyncMetadataChange,
 ) => {
     if (!isFirebaseConfigured()) {
         console.warn('[SyncManager] Firebase not configured, sync disabled');
@@ -128,6 +172,10 @@ export const initializeSync = (
     }
 
     const accountChanged = syncUserId !== userId;
+    // A getter captured during another auth/session transition must never be
+    // replayed after the new account's baseline is loaded.
+    deferredSyncProvider = null;
+    automaticSyncRetryCount = 0;
     if (accountChanged) {
         syncSessionToken++;
         if (syncDebounceTimer) {
@@ -136,6 +184,9 @@ export const initializeSync = (
         }
         stopRealtimeSync();
         lastSyncTimestamp = null;
+        lastSyncConfigSignature = null;
+        cloudBaselineReady = false;
+        conflictedEntityIds.clear();
     }
 
     console.log('[SyncManager] Initializing workspace sync');
@@ -143,11 +194,14 @@ export const initializeSync = (
     // user (or previous session) are invalidated immediately.
     syncSessionToken++;
     syncUserId = userId;
+    conflictedEntityIds.clear();
     onSyncStatusChange = statusCallback;
     onRemoteDataChange = remoteDataCallback;
+    onSyncMetadataChange = syncMetadataCallback || null;
     workspaceCloudSyncEnabled = hasWorkspaceCloudSyncConsent;
+    cloudBaselineReady = false;
 
-    if (workspaceCloudSyncEnabled) activateWorkspaceSync();
+    if (workspaceCloudSyncEnabled) activateWorkspaceSync(true);
     else stopRealtimeSync();
 };
 
@@ -163,27 +217,51 @@ export const setWorkspaceCloudSyncConsent = (enabled: boolean): void => {
     }
 
     if (!enabled) {
+        deferredSyncProvider = null;
+        automaticSyncRetryCount = 0;
+        cloudBaselineReady = false;
         stopRealtimeSync();
         return;
     }
 
-    activateWorkspaceSync();
+    cloudBaselineReady = false;
+    activateWorkspaceSync(true);
 };
 
-const activateWorkspaceSync = (): void => {
+const activateWorkspaceSync = (requireServerSnapshot = false): void => {
     if (!workspaceCloudSyncEnabled || !syncUserId || isDemoModeActive) return;
     const userId = syncUserId;
     const capturedToken = syncSessionToken;
 
     // Read existing cloud state before listening. The caller reconciles this
     // data through the same store/kernel path used during normal sign-in.
-    void loadUserData(userId).then(data => {
+    void loadUserData(userId, requireServerSnapshot ? 'server' : 'default').then(data => {
         if (!workspaceCloudSyncEnabled || capturedToken !== syncSessionToken || userId !== syncUserId) return;
-        if (data) onRemoteDataChange?.({ ...data, isInitialLoad: true });
-        else onRemoteDataChange?.({
-            entities: [], relationships: [], universalTags: [],
-            isInitialLoad: true, initialReadFailed: true,
-        });
+        if (data) {
+            // Never replay local changes over cached or unacknowledged state.
+            cloudBaselineReady = data.syncMetadata?.fromCache === false &&
+                data.syncMetadata?.hasPendingWrites === false;
+            if (cloudBaselineReady) {
+                lastSyncConfigSignature = canonicalJson({
+                    universalTags: data.universalTags || [],
+                    settings: data.settings,
+                });
+            }
+            if (data.syncMetadata) onSyncMetadataChange?.(data.syncMetadata);
+            onRemoteDataChange?.({ ...data, isInitialLoad: true });
+            // Reconcile the authenticated server snapshot into the local store
+            // before releasing a write that was waiting for this baseline.
+            flushDeferredSync();
+        }
+        else {
+            cloudBaselineReady = false;
+            onRemoteDataChange?.({
+                entities: [], relationships: [], universalTags: [],
+                isInitialLoad: true, initialReadFailed: true,
+            });
+            onSyncStatusChange?.('error', 'Could not load cloud workspace');
+            return;
+        }
         if (!isDemoModeActive && startRealtimeSync()) onSyncStatusChange?.('idle');
     }).catch(() => {
         if (capturedToken !== syncSessionToken) return;
@@ -231,6 +309,7 @@ export const startRealtimeSync = (): (() => void) | null => {
                 relationships: data.relationships?.length || 0,
                 messages: filteredMessages.length,
                 chatSessions: data.chatSessions?.length || 0,
+                conversationBranches: data.conversationBranches?.length || 0,
             });
 
             onRemoteDataChange({
@@ -239,9 +318,18 @@ export const startRealtimeSync = (): (() => void) | null => {
                 universalTags: data.universalTags || [],
                 messages: filteredMessages,
                 chatSessions: data.chatSessions || [],
+                conversationBranches: data.conversationBranches || [],
                 settings: data.settings,
             });
         }
+    }, (metadata) => {
+        if (capturedToken !== syncSessionToken || isDemoModeActive) return;
+        if (metadata.fromCache || metadata.hasPendingWrites) cloudBaselineReady = false;
+        else if (workspaceCloudSyncEnabled) {
+            cloudBaselineReady = true;
+            flushDeferredSync();
+        }
+        onSyncMetadataChange?.(metadata);
     });
 
     return realtimeUnsubscribe;
@@ -264,11 +352,38 @@ export const stopRealtimeSync = () => {
  * Call this whenever local state changes
  */
 export const scheduleSync = (
-    getData: () => { entities: Entity[]; relationships: Relationship[]; universalTags: TagDefinition[]; settings?: Partial<UserSettings> }
+    getData: () => WorkspaceSyncData
 ) => {
     if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoModeActive) {
         return;
     }
+    // Keep a getter, not a frozen workspace snapshot. It is identity- and
+    // session-bound, and evaluated only after a fresh server baseline has been
+    // reconciled. This prevents debounce expiry during an acknowledgement or
+    // auth transition from silently dropping the user's local change.
+    const provider: DeferredSyncProvider = { userId: syncUserId, sessionToken: syncSessionToken, getData };
+    deferredSyncProvider = provider;
+    automaticSyncRetryCount = 0;
+    scheduleDeferredSyncIfReady(provider);
+};
+
+/**
+ * Requeue durable entity mutations after a fresh server snapshot has been
+ * reconciled. The in-memory debounce provider does not survive a tab restart,
+ * so the persisted mutation queue is the source of truth for offline replay.
+ */
+export const replayPendingEntityMutations = (
+    getData: () => WorkspaceSyncData
+): void => {
+    const hasReplayableMutations = globalPendingMutationQueue.getAll().some(mutation =>
+        mutation.status === 'pending' || mutation.status === 'in_flight'
+    );
+    if (hasReplayableMutations) scheduleSync(getData);
+};
+
+const scheduleDeferredSyncIfReady = (provider: DeferredSyncProvider, delayMs = SYNC_DEBOUNCE_MS): void => {
+    if (deferredSyncProvider !== provider || provider.userId !== syncUserId ||
+        provider.sessionToken !== syncSessionToken || !canWriteWorkspace()) return;
 
     // Clear existing debounce timer
     if (syncDebounceTimer) {
@@ -277,8 +392,32 @@ export const scheduleSync = (
 
     // Set up new debounced sync
     syncDebounceTimer = setTimeout(async () => {
-        await performSync(getData);
-    }, SYNC_DEBOUNCE_MS);
+        syncDebounceTimer = null;
+        if (deferredSyncProvider !== provider || provider.userId !== syncUserId ||
+            provider.sessionToken !== syncSessionToken || !canWriteWorkspace()) return;
+        if (isSyncing) {
+            scheduleDeferredSyncIfReady(provider, SYNC_DEBOUNCE_MS);
+            return;
+        }
+        const success = await performSync(provider.getData);
+        if (deferredSyncProvider !== provider) return;
+        if (success) {
+            deferredSyncProvider = null;
+            automaticSyncRetryCount = 0;
+            return;
+        }
+        // A failed save stays queued and gets a few bounded retries. This
+        // covers transient Firestore contention/transport failures without
+        // looping forever on revoked access or a persistent rules error.
+        automaticSyncRetryCount += 1;
+        if (automaticSyncRetryCount <= MAX_AUTOMATIC_SYNC_RETRIES) {
+            scheduleDeferredSyncIfReady(provider, automaticRetryDelay(automaticSyncRetryCount));
+        }
+    }, delayMs);
+};
+
+const flushDeferredSync = (): void => {
+    if (deferredSyncProvider) scheduleDeferredSyncIfReady(deferredSyncProvider);
 };
 
 /**
@@ -288,7 +427,8 @@ export const scheduleSync = (
 export const forceSync = async (
     getData: () => { entities: Entity[]; relationships: Relationship[]; universalTags: TagDefinition[]; settings?: Partial<UserSettings> }
 ): Promise<boolean> => {
-    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoModeActive) {
+    if (!syncUserId || !workspaceCloudSyncEnabled || !cloudBaselineReady || !isFirebaseConfigured() || isDemoModeActive ||
+        (typeof navigator !== 'undefined' && !navigator.onLine)) {
         return false;
     }
 
@@ -298,14 +438,19 @@ export const forceSync = async (
         syncDebounceTimer = null;
     }
 
-    return await performSync(getData);
+    automaticSyncRetryCount = 0;
+    const provider = deferredSyncProvider;
+    const success = await performSync(() => withoutConflictedEntities(getData()));
+    if (success && provider && deferredSyncProvider === provider) deferredSyncProvider = null;
+    return success;
 };
 
 /** Run the explicit full-workspace sync action through the same consent gate. */
 export const syncWorkspaceNow = async (
     data: Parameters<typeof saveUserData>[1],
 ): Promise<boolean> => {
-    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoModeActive || isSyncing) {
+    if (!syncUserId || !workspaceCloudSyncEnabled || !cloudBaselineReady || !isFirebaseConfigured() || isDemoModeActive || isSyncing ||
+        (typeof navigator !== 'undefined' && !navigator.onLine)) {
         return false;
     }
 
@@ -317,10 +462,9 @@ export const syncWorkspaceNow = async (
     const userId = syncUserId;
     const capturedToken = syncSessionToken;
     isSyncing = true;
-    onSyncStatusChange?.('syncing');
 
     try {
-        const success = await saveUserData(userId, data);
+        const success = await saveUserData(userId, withoutConflictedEntities(data));
         if (capturedToken !== syncSessionToken || userId !== syncUserId || !workspaceCloudSyncEnabled) return false;
         if (!success) {
             onSyncStatusChange?.('error', 'Cloud save did not complete');
@@ -348,7 +492,8 @@ export const syncWorkspaceNow = async (
 const performSync = async (
     getData: () => { entities: Entity[]; relationships: Relationship[]; universalTags: TagDefinition[]; settings?: Partial<UserSettings> }
 ): Promise<boolean> => {
-    if (!syncUserId || !workspaceCloudSyncEnabled || isSyncing || isDemoModeActive) {
+    if (!syncUserId || !workspaceCloudSyncEnabled || !cloudBaselineReady || isSyncing || isDemoModeActive ||
+        (typeof navigator !== 'undefined' && !navigator.onLine)) {
         return false;
     }
 
@@ -361,6 +506,7 @@ const performSync = async (
         const data = {
             ...rawData,
             entities: rawData.entities.filter((e: Entity) =>
+                !conflictedEntityIds.has(e.id) &&
                 !e.id.startsWith('recruiter-') &&
                 !e.id.startsWith('demo-') &&
                 !e.id.startsWith('goal-recruiter') &&
@@ -371,32 +517,53 @@ const performSync = async (
 
         if (lastSyncTimestamp) {
             // Incremental sync: only write entities modified since last sync
+            const pendingEntityIds = new Set(globalPendingMutationQueue.getAll()
+                .filter(mutation => mutation.status === 'pending' || mutation.status === 'in_flight')
+                .map(mutation => mutation.entity_id));
             const changedEntities = data.entities.filter((e: Entity) => {
                 const updatedAt = e.updated_at || e.created_at;
-                return updatedAt && updatedAt > lastSyncTimestamp!;
+                return pendingEntityIds.has(e.id) || (updatedAt && updatedAt > lastSyncTimestamp!);
             });
             const changedRelationships = data.relationships.filter((r: Relationship) => {
                 return r.created_at && r.created_at > lastSyncTimestamp!;
             });
 
+            const configSignature = canonicalJson({
+                universalTags: data.universalTags,
+                settings: data.settings,
+            });
+            const configChanged = configSignature !== lastSyncConfigSignature;
+
+            // A deferred save can be triggered by reference churn in a remote
+            // snapshot. Treat a materially unchanged workspace as acknowledged
+            // without entering the syncing state or writing the config doc.
+            if (changedEntities.length === 0 && changedRelationships.length === 0 && !configChanged) {
+                lastSyncTimestamp = now;
+                onSyncStatusChange?.('idle');
+                return true;
+            }
+
             const promises: Promise<boolean>[] = [];
+            onSyncStatusChange?.('syncing');
             if (changedEntities.length > 0) {
                 promises.push(syncEntities(syncUserId!, changedEntities));
             }
             if (changedRelationships.length > 0) {
                 promises.push(syncRelationships(syncUserId!, changedRelationships));
             }
-            // Always update config (tags, settings) — it's a single doc
-            promises.push(saveUserConfig(syncUserId!, {
-                universalTags: data.universalTags,
-                settings: data.settings,
-            }));
+            if (configChanged) {
+                promises.push(saveUserConfig(syncUserId!, {
+                    universalTags: data.universalTags,
+                    settings: data.settings,
+                }));
+            }
 
             const results = await Promise.all(promises);
             const allSuccess = results.every(r => r);
 
             if (allSuccess) {
                 lastSyncTimestamp = now;
+                if (configChanged) lastSyncConfigSignature = configSignature;
                 console.log(`[SyncManager] Incremental sync: ${changedEntities.length} entities, ${changedRelationships.length} rels`);
                 onSyncStatusChange?.('idle');
                 return true;
@@ -407,6 +574,7 @@ const performSync = async (
             }
         } else {
             // First sync: full save
+            onSyncStatusChange?.('syncing');
             const success = await saveUserData(syncUserId, {
                 entities: data.entities,
                 relationships: data.relationships,
@@ -416,6 +584,10 @@ const performSync = async (
 
             if (success) {
                 lastSyncTimestamp = now;
+                lastSyncConfigSignature = canonicalJson({
+                    universalTags: data.universalTags,
+                    settings: data.settings,
+                });
                 console.log('[SyncManager] Full initial sync successful');
                 onSyncStatusChange?.('idle');
                 return true;
@@ -434,6 +606,14 @@ const performSync = async (
     }
 };
 
+/** Re-read an authoritative server snapshot before replaying offline edits. */
+export const refreshWorkspaceFromCloud = (): void => {
+    if (!workspaceCloudSyncEnabled || !syncUserId || !isFirebaseConfigured() || isDemoModeActive ||
+        (typeof navigator !== 'undefined' && !navigator.onLine)) return;
+    cloudBaselineReady = false;
+    activateWorkspaceSync(true);
+};
+
 /**
  * Load initial data from cloud
  * Returns full data: entities, relationships, tags, messages, food, attendance
@@ -443,14 +623,26 @@ export const loadInitialData = async (): Promise<UserData | null> => {
         return null;
     }
 
+    // A cloud read belongs to the identity/session that started it. Auth may
+    // change (or consent may be revoked) while Firestore is resolving the read.
+    const userId = syncUserId;
+    const capturedToken = syncSessionToken;
+
     try {
-        const data = await loadUserData(syncUserId);
+        const data = await loadUserData(userId, 'server');
+        if (
+            capturedToken !== syncSessionToken ||
+            userId !== syncUserId ||
+            !workspaceCloudSyncEnabled ||
+            isDemoModeActive
+        ) return null;
         if (data) {
             console.log('[SyncManager] Loaded initial data:', data.entities.length, 'entities,', data.messages.length, 'messages');
             return data;
         }
         return null;
     } catch {
+        if (capturedToken !== syncSessionToken) return null;
         console.error('[SyncManager] Failed to load initial data');
         return null;
     }
@@ -486,7 +678,8 @@ export const mergeMessagesWithLocal = (
  * Does NOT debounce — messages are written as they arrive.
  */
 export const syncMessage = async (message: Message): Promise<boolean> => {
-    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoSyncBlocked()) {
+    const userId = syncUserId;
+    if (!userId || !canWriteWorkspace()) {
         return false;
     }
 
@@ -497,7 +690,7 @@ export const syncMessage = async (message: Message): Promise<boolean> => {
     }, MESSAGE_ECHO_TIMEOUT_MS);
 
     try {
-        return await saveMessageToFirestore(syncUserId, message);
+        return await saveMessageToFirestore(userId, message);
     } catch {
         console.error('[SyncManager] Message sync failed');
         recentlyWrittenMessageIds.delete(message.id);
@@ -509,8 +702,9 @@ export const syncMessage = async (message: Message): Promise<boolean> => {
  * Sync food logs to Firestore
  */
 export const syncFoodLogsToCloud = async (foodLogs: FoodLogEntry[]): Promise<boolean> => {
-    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
-    return saveFoodLogs(syncUserId, foodLogs);
+    const userId = syncUserId;
+    if (!userId || !canWriteWorkspace()) return false;
+    return saveFoodLogs(userId, foodLogs);
 };
 
 /**
@@ -522,24 +716,47 @@ export const syncAttendanceToCloud = async (data: {
     holidays: Holiday[];
     attendanceLogs: AttendanceLog[];
 }): Promise<boolean> => {
-    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
-    return saveAttendanceData(syncUserId, data);
+    const userId = syncUserId;
+    if (!userId || !canWriteWorkspace()) return false;
+    return saveAttendanceData(userId, data);
 };
 
 /**
  * Sync chat sessions to Firestore
  */
 export const syncChatSessionsToCloud = async (sessions: ChatSession[]): Promise<boolean> => {
-    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
-    return saveChatSessions(syncUserId, sessions);
+    const userId = syncUserId;
+    if (!userId || !canWriteWorkspace()) return false;
+    return saveChatSessions(userId, sessions);
+};
+
+/** Persist branch metadata only after the authorized workspace has a server baseline. */
+export const syncChatBranchesToCloud = async (branches: ConversationBranch[]): Promise<boolean> => {
+    const userId = syncUserId;
+    const capturedToken = syncSessionToken;
+    if (!userId || !canWriteWorkspace()) return false;
+
+    // Branches have their own transactional document and do not pass through
+    // the deferred workspace-save queue. Retry a few transient transaction or
+    // transport failures here so a quiet client does not leave a fork/delete
+    // pending until some unrelated edit happens. Re-check identity and consent
+    // before every attempt so retries cannot cross an account or consent edge.
+    for (let attempt = 0; attempt <= MAX_AUTOMATIC_SYNC_RETRIES; attempt += 1) {
+        if (capturedToken !== syncSessionToken || userId !== syncUserId || !canWriteWorkspace()) return false;
+        if (await saveChatBranches(userId, branches)) return true;
+        if (attempt === MAX_AUTOMATIC_SYNC_RETRIES) return false;
+        await new Promise<void>(resolve => setTimeout(resolve, automaticRetryDelay(attempt + 1)));
+    }
+    return false;
 };
 
 /**
  * Delete channel messages from Firestore cloud
  */
 export const deleteChannelMessagesFromCloud = async (channelId: string): Promise<boolean> => {
-    if (!syncUserId || !workspaceCloudSyncEnabled || !isFirebaseConfigured() || isDemoSyncBlocked()) return false;
-    return deleteChannelMessages(syncUserId, channelId);
+    const userId = syncUserId;
+    if (!userId || !canWriteWorkspace()) return false;
+    return deleteChannelMessages(userId, channelId);
 };
 
 /**
@@ -561,10 +778,15 @@ export const cleanupSync = () => {
         clearTimeout(syncDebounceTimer);
         syncDebounceTimer = null;
     }
+    deferredSyncProvider = null;
+    automaticSyncRetryCount = 0;
     stopRealtimeSync();
     recentlyWrittenMessageIds.clear();
     lastSyncTimestamp = null;
+    lastSyncConfigSignature = null;
+    cloudBaselineReady = false;
     syncUserId = null;
+    conflictedEntityIds.clear();
     workspaceCloudSyncEnabled = false;
     onSyncStatusChange = null;
     onRemoteDataChange = null;

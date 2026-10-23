@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   MOBILE_GESTURE_DISTANCE_PX,
+  mobileGestureThreshold,
   mobileSidebarCloseThreshold,
+  mobileSidebarOpenThreshold,
   resolveMobileGestureIntent,
 } from '../utils/mobileNavigationGestures';
 
@@ -24,7 +26,7 @@ describe('mobile navigation gesture intent', () => {
     })).toBe('open-chat');
   });
 
-  it('opens the side menu only for a rightward edge drag', () => {
+  it('opens the side menu with a rightward drag from anywhere on a non-Chat page', () => {
     const fromEdge = resolveMobileGestureIntent({
       deltaX: 120,
       deltaY: 4,
@@ -40,7 +42,16 @@ describe('mobile navigation gesture intent', () => {
       canNavigateToChat: true,
     });
     expect(fromEdge).toBe('open-menu');
-    expect(fromMiddle).toBeNull();
+    expect(fromMiddle).toBe('open-menu');
+  });
+
+  it('keeps Chat return swipes out of the sidebar gesture and uses a shorter deliberate edge threshold', () => {
+    expect(resolveMobileGestureIntent({
+      deltaX: 100, deltaY: 3, startX: 8, startedAtTop: false,
+      canNavigateToChat: false, canReturnToView: true, canOpenSidebar: false,
+    })).toBe('return-view');
+    expect(mobileSidebarOpenThreshold(390)).toBeLessThan(mobileGestureThreshold(390));
+    expect(mobileSidebarOpenThreshold(390)).toBe(66);
   });
 
   it('pulls to refresh only with a downward gesture at the top of a scroller', () => {
@@ -78,6 +89,7 @@ describe('mobile navigation gesture intent', () => {
       startedAtTop: true,
       canNavigateToChat: false,
       canReturnToView: true,
+      canOpenSidebar: false,
     })).toBe('return-view');
   });
 

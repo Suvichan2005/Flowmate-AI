@@ -331,6 +331,124 @@ describe('Phase 3: Conversation Branching & Graph DAG', () => {
     expect(userMsgs).toHaveLength(1);
   });
 
+  it('keeps a denied request retryable without inserting an assistant response', async () => {
+    const seedUser = useStore.getState().addMessage('user', 'Seed request', undefined, null, 'test-session');
+    useStore.getState().addMessage('assistant', 'Seed response', undefined, null, 'test-session');
+    useStore.getState().registerTurnExecutor(async ({ branchId, userMessage, assistantMessageId }) => {
+      useStore.setState(state => ({
+        messages: state.messages.map(message => message.id === assistantMessageId
+          ? { ...message, text: '', status: 'failed' as const, turn_metadata: { response_source: 'unavailable' } }
+          : message.id === userMessage.id ? { ...message, status: 'failed' as const } : message),
+        branches: state.branches.map(branch => branch.id === branchId
+          ? { ...branch, head_message_id: userMessage.id }
+          : branch),
+      }));
+    });
+
+    const result = await useStore.getState().forkAndSendMessage(seedUser, 'Request over the managed cost cap', {
+      submissionId: 'managed-cost-rejected-0001',
+    });
+    expect(result).toBeTruthy();
+    const state = useStore.getState();
+    const userMessage = state.messages.find(message => message.id === 'managed-cost-rejected-0001');
+    expect(userMessage?.text).toBe('Request over the managed cost cap');
+    expect(userMessage?.status).toBe('failed');
+    const assistantReplies = state.messages.filter(message => message.parent_id === userMessage?.id && message.role === 'assistant' && message.status !== 'failed');
+    expect(assistantReplies).toHaveLength(0);
+    expect(state.branchQueues[userMessage!.branch_id!]?.some(item => item.user_message.id === userMessage.id && item.status === 'failed')).toBe(true);
+    expect(state.branches.find(branch => branch.id === userMessage!.branch_id)?.head_message_id).toBe(userMessage?.id);
+  });
+
+  it('retries with recent context as a separate branch and preserves the original request and attachment', async () => {
+    const originalId = useStore.getState().addMessage('user', 'Analyze this image with the full conversation context.', undefined, null, 'test-session');
+    const original = useStore.getState().messages.find(message => message.id === originalId)!;
+    useStore.setState(state => ({
+      messages: state.messages.map(message => message.id === originalId
+        ? { ...message, attachment: 'data:image/png;base64,c2FtcGxl', status: 'failed' as const, turn_metadata: { managed_failure: { code: 'MODEL_CONTEXT_LIMIT', outcome: 'not_sent' } } }
+        : message),
+    }));
+    useStore.getState().registerTurnExecutor(async ({ branchId, userMessage, assistantMessageId }) => {
+      useStore.setState(state => ({
+        messages: state.messages.map(message => message.id === assistantMessageId
+          ? { ...message, text: 'Recovered with recent context.', status: 'completed' as const }
+          : message.id === userMessage.id ? { ...message, status: 'completed' as const } : message),
+        branches: state.branches.map(branch => branch.id === branchId
+          ? { ...branch, head_message_id: assistantMessageId }
+          : branch),
+      }));
+    });
+
+    await useStore.getState().forkAndSendMessage(originalId, original.text, { contextRecovery: 'recent' });
+
+    const state = useStore.getState();
+    const retry = state.messages.find(message => message.id !== originalId && message.role === 'user');
+    expect(state.messages.find(message => message.id === originalId)?.turn_metadata?.managed_failure?.code).toBe('MODEL_CONTEXT_LIMIT');
+    expect(state.messages.find(message => message.id === originalId)?.attachment).toBe('data:image/png;base64,c2FtcGxl');
+    expect(retry?.text).toBe(original.text);
+    expect(retry?.attachment).toBe('data:image/png;base64,c2FtcGxl');
+    expect(retry?.turn_metadata?.context_recovery).toBe('recent');
+    expect(retry?.parent_id).toBe(original.parent_id);
+  });
+
+  it('retries with essential workspace context as a separate branch without changing the full transcript', async () => {
+    const originalId = useStore.getState().addMessage('user', 'Use my complete chat history and attached document.', undefined, null, 'test-session');
+    const original = useStore.getState().messages.find(message => message.id === originalId)!;
+    useStore.setState(state => ({
+      messages: state.messages.map(message => message.id === originalId
+        ? { ...message, attachment: 'data:image/png;base64,c2FtcGxl', status: 'failed' as const, turn_metadata: { managed_failure: { code: 'MODEL_CONTEXT_LIMIT', outcome: 'not_sent' } } }
+        : message),
+    }));
+    useStore.getState().registerTurnExecutor(async ({ branchId, userMessage, assistantMessageId }) => {
+      useStore.setState(state => ({
+        messages: state.messages.map(message => message.id === assistantMessageId
+          ? { ...message, text: 'Recovered with essential workspace context.', status: 'completed' as const }
+          : message.id === userMessage.id ? { ...message, status: 'completed' as const } : message),
+        branches: state.branches.map(branch => branch.id === branchId
+          ? { ...branch, head_message_id: assistantMessageId }
+          : branch),
+      }));
+    });
+
+    await useStore.getState().forkAndSendMessage(originalId, original.text, { contextRecovery: 'essentials' });
+
+    const state = useStore.getState();
+    const retry = state.messages.find(message => message.id !== originalId && message.role === 'user');
+    const preservedOriginal = state.messages.find(message => message.id === originalId);
+    expect(preservedOriginal?.text).toBe(original.text);
+    expect(preservedOriginal?.attachment).toBe('data:image/png;base64,c2FtcGxl');
+    expect(preservedOriginal?.turn_metadata?.managed_failure?.code).toBe('MODEL_CONTEXT_LIMIT');
+    expect(retry?.text).toBe(original.text);
+    expect(retry?.attachment).toBe('data:image/png;base64,c2FtcGxl');
+    expect(retry?.turn_metadata?.context_recovery).toBe('essentials');
+    expect(retry?.parent_id).toBe(original.parent_id);
+  });
+
+  it('can explicitly remove an attachment from a retry without changing the historical message', async () => {
+    const originalId = useStore.getState().addMessage('user', 'Please inspect this image.', undefined, null, 'test-session');
+    useStore.setState(state => ({
+      messages: state.messages.map(message => message.id === originalId
+        ? { ...message, attachment: 'data:image/png;base64,c2FtcGxl', status: 'failed' as const }
+        : message),
+    }));
+    useStore.getState().registerTurnExecutor(async ({ branchId, userMessage, assistantMessageId }) => {
+      useStore.setState(state => ({
+        messages: state.messages.map(message => message.id === assistantMessageId
+          ? { ...message, text: 'Text-only retry completed.', status: 'completed' as const }
+          : message.id === userMessage.id ? { ...message, status: 'completed' as const } : message),
+        branches: state.branches.map(branch => branch.id === branchId
+          ? { ...branch, head_message_id: assistantMessageId }
+          : branch),
+      }));
+    });
+
+    await useStore.getState().forkAndSendMessage(originalId, 'Please inspect this image.', { removeAttachment: true });
+
+    const state = useStore.getState();
+    const retry = state.messages.find(message => message.id !== originalId && message.role === 'user');
+    expect(retry?.attachment).toBeNull();
+    expect(state.messages.find(message => message.id === originalId)?.attachment).toBe('data:image/png;base64,c2FtcGxl');
+  });
+
   it('does not automatically replay an expired provider lease after a tab interruption', async () => {
     const userMessageId = useStore.getState().addMessage('user', 'A request with an uncertain outcome', undefined, null, 'test-session');
     const userMessage = useStore.getState().messages.find(message => message.id === userMessageId)!;

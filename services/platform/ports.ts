@@ -1,8 +1,8 @@
 /**
  * Flowmate Greenfield Platform Core — Port Contracts (P1-08)
  *
- * Defines platform-agnostic contracts for hardware, OS capabilities,
- * notifications, geolocation, and user identity.
+ * Defines platform-agnostic contracts for notifications, haptics,
+ * browser capabilities, and user identity.
  *
  * Flowmate Core (Kernel, Context Engine, AI) interacts with the host
  * environment exclusively through these interfaces.
@@ -11,29 +11,6 @@
  */
 
 export type PlatformPermissionState = 'granted' | 'prompt' | 'denied' | 'unsupported';
-
-export interface PlatformLocationReading {
-  readonly lat: number;
-  readonly lon: number;
-  readonly accuracy_meters: number;
-  readonly timestamp: number;
-  readonly source: 'device' | 'network' | 'ip' | 'cache';
-}
-
-export interface LocationRequestOptions {
-  readonly timeoutMs?: number;
-  readonly highAccuracy?: boolean;
-}
-
-/**
- * Platform Location Port
- * Provides access to host geolocation hardware and permission status.
- */
-export interface LocationPort {
-  checkPermission(): Promise<PlatformPermissionState>;
-  requestPermission?(): Promise<PlatformPermissionState>;
-  getCurrentPosition(options?: LocationRequestOptions): Promise<PlatformLocationReading | null>;
-}
 
 export interface PlatformNotificationPayload {
   readonly id: string | number;
@@ -87,7 +64,6 @@ export interface AuthenticatedIdentity {
  * Describes the hardware and OS capabilities available in the current environment.
  */
 export interface PlatformCapabilities {
-  readonly hasGeolocation: boolean;
   readonly hasNotifications: boolean;
   readonly hasHaptics: boolean;
   readonly hasAudioInput: boolean;
@@ -99,7 +75,6 @@ export interface PlatformCapabilities {
  * Aggregate Platform Provider
  */
 export interface PlatformPort {
-  readonly location: LocationPort;
   readonly notifications: NotificationPort;
   readonly haptics: HapticsPort;
   getCapabilities(): PlatformCapabilities;

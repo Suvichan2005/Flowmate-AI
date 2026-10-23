@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, Pencil, GitBranch, Check, X, RotateCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pencil, GitBranch, Check, X, RotateCw, ImageOff } from 'lucide-react';
 import { Message } from '../types';
 import { getSiblingVersions } from '../utils/conversationGraph';
 import { useStore } from '../store';
@@ -29,6 +29,7 @@ export const MessageVersionNav: React.FC<MessageVersionNavProps> = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(message.text);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [removeAttachment, setRemoveAttachment] = useState(false);
 
   const { currentIndex, totalCount, siblings } = getSiblingVersions(messages || [], message.id);
 
@@ -70,7 +71,7 @@ export const MessageVersionNav: React.FC<MessageVersionNavProps> = ({
 
     setIsSubmitting(true);
     try {
-      await forkAndSendMessage(message.id, trimmed);
+      await forkAndSendMessage(message.id, trimmed, { removeAttachment });
       setIsEditing(false);
       onEditEnd?.();
     } catch (err) {
@@ -83,6 +84,7 @@ export const MessageVersionNav: React.FC<MessageVersionNavProps> = ({
   const handleCancelEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
     setEditText(message.text);
+    setRemoveAttachment(false);
     setIsEditing(false);
     onEditEnd?.();
   };
@@ -90,6 +92,7 @@ export const MessageVersionNav: React.FC<MessageVersionNavProps> = ({
   const handleStartEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
     setEditText(message.text);
+    setRemoveAttachment(false);
     setIsEditing(true);
     onEditStart?.();
   };
@@ -110,6 +113,19 @@ export const MessageVersionNav: React.FC<MessageVersionNavProps> = ({
           rows={2}
           autoFocus
         />
+        {message.attachment && (
+          <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs text-slate-300">
+            <input
+              type="checkbox"
+              checked={removeAttachment}
+              onChange={event => setRemoveAttachment(event.target.checked)}
+              disabled={isSubmitting}
+              className="accent-emerald-500"
+            />
+            <ImageOff size={13} />
+            Retry without attached image
+          </label>
+        )}
         <div className="flex items-center justify-between mt-2 pt-1 border-t border-slate-800 text-xs gap-2">
           <span className="text-slate-400 flex items-center gap-1 truncate text-[11px]">
             <GitBranch size={12} className="text-indigo-400 shrink-0" />

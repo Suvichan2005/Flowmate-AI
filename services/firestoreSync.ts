@@ -12,12 +12,17 @@ import {
     collection,
     setDoc,
     getDoc,
+    getDocFromServer,
     getDocs,
+    getDocsFromServer,
+    getCountFromServer,
     writeBatch,
     serverTimestamp,
     Timestamp,
     deleteField,
     onSnapshot,
+    runTransaction,
+    SnapshotMetadata,
     Unsubscribe,
     query,
     orderBy,
@@ -35,11 +40,21 @@ import {
     Holiday,
     AttendanceLog,
     ChatSession,
+    ConversationBranch,
 } from '../types';
 import { isDemoSyncBlocked } from './syncManager';
 import { isLegacySyntheticEntity } from './legacySyntheticEntity';
-import { MODEL_PREFERENCE_FIELDS } from './modelPreferenceSync';
-export { mergeCloudSettings } from './modelPreferenceSync';
+import { MODEL_PREFERENCE_FIELDS, stripRemovedLocationSettings } from './modelPreferenceSync';
+import { createSnapshotDeduper } from './sync/snapshotDeduper';
+import { createSyncSnapshotMetadataAggregator } from './sync/snapshotMetadata';
+import { mergeConversationBranches, sameConversationBranches } from './chatBranchSync';
+export { mergeCloudSettings, stripRemovedLocationSettings } from './modelPreferenceSync';
+
+export interface AccountWorkspaceSummary {
+    entityCount: number;
+    messageCount: number;
+    conversationCount: number;
+}
 
 // --- Collection Paths ---
 
@@ -81,6 +96,34 @@ function metaDoc(uid: string, docName: string) {
     return doc(db!, usersCol, uid, metaSubCol, docName);
 }
 
+/**
+ * Read a minimal server-side inventory before the user enables workspace sync.
+ * Aggregate queries return only counts; the only document read is the chat
+ * session index, which contains titles and timestamps but no message bodies.
+ * This never writes consent or downloads entity/message records.
+ */
+export async function getAccountWorkspaceSummary(uid: string): Promise<AccountWorkspaceSummary> {
+    // This is a read-only, server-forced aggregate inventory. It remains safe
+    // in the isolated sync-demo project and must work before workspace consent
+    // is granted; only the data-sync writes remain demo-blocked.
+    if (!isFirebaseConfigured() || !db) {
+        throw new Error('Cloud workspace inventory is unavailable in this session.');
+    }
+    const [entities, messages, sessions] = await Promise.all([
+        getCountFromServer(collection(db, usersCol, uid, entitiesSubCol)),
+        getCountFromServer(collection(db, usersCol, uid, messagesSubCol)),
+        getDocFromServer(metaDoc(uid, 'chat_sessions')),
+    ]);
+    const sessionList = sessions.exists() && Array.isArray(sessions.data().sessions)
+        ? sessions.data().sessions as ChatSession[]
+        : [];
+    return {
+        entityCount: entities.data().count,
+        messageCount: messages.data().count,
+        conversationCount: sessionList.filter(session => !session.deleted).length,
+    };
+}
+
 // Recursively remove undefined values from an object before saving to Firestore
 function sanitizeForFirestore<T>(obj: T): T {
     if (obj === undefined || obj === null) {
@@ -117,6 +160,7 @@ export interface UserData {
     universalTags: TagDefinition[];
     messages: Message[];
     chatSessions?: ChatSession[];
+    conversationBranches?: ConversationBranch[];
     settings?: Partial<UserSettings>;
     foodLogs: FoodLogEntry[];
     subjects: Subject[];
@@ -124,7 +168,10 @@ export interface UserData {
     holidays: Holiday[];
     attendanceLogs: AttendanceLog[];
     lastSyncedAt: Timestamp | null;
+    syncMetadata?: { fromCache: boolean; hasPendingWrites: boolean };
 }
+
+type SyncMetadataUpdate = (metadata: { fromCache: boolean; hasPendingWrites: boolean }) => void;
 
 // --- Real-time Listeners ---
 
@@ -134,6 +181,7 @@ interface ActiveListeners {
     config: Unsubscribe | null;
     messages: Unsubscribe | null;
     chatSessions: Unsubscribe | null;
+    chatBranches: Unsubscribe | null;
 }
 
 const listeners: ActiveListeners = {
@@ -142,6 +190,7 @@ const listeners: ActiveListeners = {
     config: null,
     messages: null,
     chatSessions: null,
+    chatBranches: null,
 };
 
 /**
@@ -150,6 +199,7 @@ const listeners: ActiveListeners = {
 export function subscribeToEntities(
     userId: string,
     onUpdate: (entities: Entity[]) => void,
+    onMetadata?: (metadata: SnapshotMetadata) => void,
 ): Unsubscribe {
     if (!isFirebaseConfigured() || !db) return () => {};
 
@@ -157,7 +207,8 @@ export function subscribeToEntities(
 
     const q = query(entitiesCol(userId));
 
-    const unsub = onSnapshot(q, (snapshot) => {
+    const unsub = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
+        onMetadata?.(snapshot.metadata);
         const entities: Entity[] = [];
         snapshot.forEach((d) => {
             entities.push({ id: d.id, ...d.data() } as Entity);
@@ -178,6 +229,7 @@ export function subscribeToEntities(
 export function subscribeToRelationships(
     userId: string,
     onUpdate: (relationships: Relationship[]) => void,
+    onMetadata?: (metadata: SnapshotMetadata) => void,
 ): Unsubscribe {
     if (!isFirebaseConfigured() || !db) return () => {};
 
@@ -185,7 +237,8 @@ export function subscribeToRelationships(
 
     const q = query(relationshipsCol(userId));
 
-    const unsub = onSnapshot(q, (snapshot) => {
+    const unsub = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
+        onMetadata?.(snapshot.metadata);
         const relationships: Relationship[] = [];
         snapshot.forEach((d) => {
             relationships.push({ id: d.id, ...d.data() } as Relationship);
@@ -206,12 +259,14 @@ export function subscribeToRelationships(
 export function subscribeToConfig(
     userId: string,
     onUpdate: (config: UserConfig) => void,
+    onMetadata?: (metadata: SnapshotMetadata) => void,
 ): Unsubscribe {
     if (!isFirebaseConfigured() || !db) return () => {};
 
     listeners.config?.();
 
-    const unsub = onSnapshot(userDoc(userId), (snap) => {
+    const unsub = onSnapshot(userDoc(userId), { includeMetadataChanges: true }, (snap) => {
+        onMetadata?.(snap.metadata);
         if (snap.exists()) {
             const data = snap.data();
             onUpdate({
@@ -236,6 +291,7 @@ export function subscribeToConfig(
 export function subscribeToMessages(
     userId: string,
     onUpdate: (messages: Message[]) => void,
+    onMetadata?: (metadata: SnapshotMetadata) => void,
 ): Unsubscribe {
     if (!isFirebaseConfigured() || !db) return () => {};
 
@@ -243,7 +299,8 @@ export function subscribeToMessages(
 
     const q = query(messagesCol(userId), orderBy('created_at', 'asc'));
 
-    const unsub = onSnapshot(q, (snapshot) => {
+    const unsub = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
+        onMetadata?.(snapshot.metadata);
         const messages: Message[] = [];
         snapshot.forEach((d) => {
             messages.push({ id: d.id, ...d.data() } as Message);
@@ -264,6 +321,7 @@ export function subscribeToMessages(
 export function subscribeToChatSessions(
     userId: string,
     onUpdate: (sessions: ChatSession[]) => void,
+    onMetadata?: (metadata: SnapshotMetadata) => void,
 ): Unsubscribe {
     if (!isFirebaseConfigured() || !db) return () => {};
 
@@ -271,7 +329,8 @@ export function subscribeToChatSessions(
 
     let lastSessionsHash = '';
 
-    const unsub = onSnapshot(metaDoc(userId, 'chat_sessions'), (snap) => {
+    const unsub = onSnapshot(metaDoc(userId, 'chat_sessions'), { includeMetadataChanges: true }, (snap) => {
+        onMetadata?.(snap.metadata);
         if (snap.exists()) {
             const data = snap.data();
             const sessions: ChatSession[] = data.sessions || [];
@@ -279,6 +338,9 @@ export function subscribeToChatSessions(
                 id: s.id,
                 title: s.title,
                 deleted: !!s.deleted,
+                deleted_at: s.deleted_at,
+                messages_cleared_at: s.messages_cleared_at,
+                active_branch_id: s.active_branch_id,
                 updated_at: s.updated_at,
             })));
             if (hash !== lastSessionsHash) {
@@ -295,6 +357,25 @@ export function subscribeToChatSessions(
     return unsub;
 }
 
+/** Subscribe to cross-device conversation branch metadata. */
+export function subscribeToChatBranches(
+    userId: string,
+    onUpdate: (branches: ConversationBranch[]) => void,
+    onMetadata?: (metadata: SnapshotMetadata) => void,
+): Unsubscribe {
+    if (!isFirebaseConfigured() || !db) return () => {};
+
+    listeners.chatBranches?.();
+    const unsub = onSnapshot(metaDoc(userId, 'chat_branches'), { includeMetadataChanges: true }, snap => {
+        onMetadata?.(snap.metadata);
+        const branches = snap.exists() ? snap.data().branches : [];
+        if (Array.isArray(branches)) onUpdate(branches as ConversationBranch[]);
+    }, error => console.error('[FirestoreSync] Chat branches listener error:', error));
+
+    listeners.chatBranches = unsub;
+    return unsub;
+}
+
 /**
  * Combined subscription for all user data.
  * Fires onDataChange whenever any subcollection changes.
@@ -302,6 +383,7 @@ export function subscribeToChatSessions(
 export const subscribeToUserData = (
     userId: string,
     onDataChange: (data: Partial<UserData>) => void,
+    onSyncMetadataChange?: SyncMetadataUpdate,
 ): Unsubscribe => {
     if (!isFirebaseConfigured() || !db) return () => {};
 
@@ -310,45 +392,63 @@ export const subscribeToUserData = (
     let currentTags: TagDefinition[] = [];
     let currentMessages: Message[] = [];
     let currentChatSessions: ChatSession[] = [];
+    let currentChatBranches: ConversationBranch[] = [];
     let currentSettings: Partial<UserSettings> | undefined;
+    const shouldNotify = createSnapshotDeduper<{
+        entities: Entity[];
+        relationships: Relationship[];
+        universalTags: TagDefinition[];
+        messages: Message[];
+        chatSessions: ChatSession[];
+        conversationBranches: ConversationBranch[];
+        settings: Partial<UserSettings> | undefined;
+    }>();
+    const updateMetadata = createSyncSnapshotMetadataAggregator(metadata => onSyncMetadataChange?.(metadata));
 
     const notify = () => {
-        onDataChange({
+        const snapshot = {
             entities: currentEntities,
             relationships: currentRelationships,
             universalTags: currentTags,
             messages: currentMessages,
             chatSessions: currentChatSessions,
+            conversationBranches: currentChatBranches,
             settings: currentSettings,
-            lastSyncedAt: null,
-        });
+        };
+        if (!shouldNotify(snapshot)) return;
+        onDataChange({ ...snapshot, lastSyncedAt: null });
     };
 
     const unsub1 = subscribeToEntities(userId, (entities) => {
         currentEntities = entities;
         notify();
-    });
+    }, metadata => updateMetadata('entities', metadata));
 
     const unsub2 = subscribeToRelationships(userId, (relationships) => {
         currentRelationships = relationships;
         notify();
-    });
+    }, metadata => updateMetadata('relationships', metadata));
 
     const unsub3 = subscribeToConfig(userId, (config) => {
         currentTags = config.universalTags;
         currentSettings = config.settings;
         notify();
-    });
+    }, metadata => updateMetadata('config', metadata));
 
     const unsub4 = subscribeToMessages(userId, (messages) => {
         currentMessages = messages;
         notify();
-    });
+    }, metadata => updateMetadata('messages', metadata));
 
     const unsub5 = subscribeToChatSessions(userId, (sessions) => {
         currentChatSessions = sessions;
         notify();
-    });
+    }, metadata => updateMetadata('chatSessions', metadata));
+
+    const unsub6 = subscribeToChatBranches(userId, branches => {
+        currentChatBranches = branches;
+        notify();
+    }, metadata => updateMetadata('chatBranches', metadata));
 
     return () => {
         unsub1();
@@ -356,6 +456,7 @@ export const subscribeToUserData = (
         unsub3();
         unsub4();
         unsub5();
+        unsub6();
     };
 };
 
@@ -365,28 +466,35 @@ export const unsubscribeFromUserData = () => {
     listeners.config?.();
     listeners.messages?.();
     listeners.chatSessions?.();
+    listeners.chatBranches?.();
     listeners.entities = null;
     listeners.relationships = null;
     listeners.config = null;
     listeners.messages = null;
     listeners.chatSessions = null;
+    listeners.chatBranches = null;
 };
 
 // --- Read Operations ---
 
-export const loadUserData = async (userId: string): Promise<UserData | null> => {
+export const loadUserData = async (userId: string, source: 'default' | 'server' = 'default'): Promise<UserData | null> => {
     if (!isFirebaseConfigured() || !db) return null;
 
     try {
+        const readDocs = source === 'server' ? getDocsFromServer : getDocs;
+        const readDoc = source === 'server' ? getDocFromServer : getDoc;
+        const readMetadata: SnapshotMetadata[] = [];
         // Load entities
-        const entitiesSnap = await getDocs(entitiesCol(userId));
+        const entitiesSnap = await readDocs(entitiesCol(userId));
+        readMetadata.push(entitiesSnap.metadata);
         const entities: Entity[] = [];
         entitiesSnap.forEach((d) => {
             entities.push({ id: d.id, ...d.data() } as Entity);
         });
 
         // Load relationships
-        const relsSnap = await getDocs(relationshipsCol(userId));
+        const relsSnap = await readDocs(relationshipsCol(userId));
+        readMetadata.push(relsSnap.metadata);
         const relationships: Relationship[] = [];
         relsSnap.forEach((d) => {
             relationships.push({ id: d.id, ...d.data() } as Relationship);
@@ -394,20 +502,23 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
 
         // Load messages
         const msgsQuery = query(messagesCol(userId), orderBy('created_at', 'asc'));
-        const msgsSnap = await getDocs(msgsQuery);
+        const msgsSnap = await readDocs(msgsQuery);
+        readMetadata.push(msgsSnap.metadata);
         const messages: Message[] = [];
         msgsSnap.forEach((d) => {
             messages.push({ id: d.id, ...d.data() } as Message);
         });
 
         // Load config
-        const configSnap = await getDoc(userDoc(userId));
+        const configSnap = await readDoc(userDoc(userId));
+        readMetadata.push(configSnap.metadata);
         const configData = configSnap.exists() ? configSnap.data() : {};
 
         // Load food logs
         let foodLogs: FoodLogEntry[] = [];
         try {
-            const foodSnap = await getDoc(metaDoc(userId, 'food'));
+            const foodSnap = await readDoc(metaDoc(userId, 'food'));
+            readMetadata.push(foodSnap.metadata);
             if (foodSnap.exists()) {
                 foodLogs = foodSnap.data().foodLogs || [];
             }
@@ -421,7 +532,8 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
         let holidays: Holiday[] = [];
         let attendanceLogs: AttendanceLog[] = [];
         try {
-            const attSnap = await getDoc(metaDoc(userId, 'attendance'));
+            const attSnap = await readDoc(metaDoc(userId, 'attendance'));
+            readMetadata.push(attSnap.metadata);
             if (attSnap.exists()) {
                 const data = attSnap.data();
                 subjects = data.subjects || [];
@@ -436,7 +548,8 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
         // Load chat sessions
         let chatSessions: ChatSession[] = [];
         try {
-            const chatSnap = await getDoc(metaDoc(userId, 'chat_sessions'));
+            const chatSnap = await readDoc(metaDoc(userId, 'chat_sessions'));
+            readMetadata.push(chatSnap.metadata);
             if (chatSnap.exists()) {
                 chatSessions = chatSnap.data().sessions || [];
             }
@@ -444,7 +557,18 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
             console.warn('[FirestoreSync] Chat sessions load failed:', e);
         }
 
-        console.log(`[FirestoreSync] Loaded: ${entities.length} entities, ${relationships.length} rels, ${messages.length} msgs, ${chatSessions.length} sessions`);
+        let conversationBranches: ConversationBranch[] = [];
+        try {
+            const branchesSnap = await readDoc(metaDoc(userId, 'chat_branches'));
+            readMetadata.push(branchesSnap.metadata);
+            if (branchesSnap.exists() && Array.isArray(branchesSnap.data().branches)) {
+                conversationBranches = branchesSnap.data().branches as ConversationBranch[];
+            }
+        } catch (e) {
+            console.warn('[FirestoreSync] Chat branches load failed:', e);
+        }
+
+        console.log(`[FirestoreSync] Loaded: ${entities.length} entities, ${relationships.length} rels, ${messages.length} msgs, ${chatSessions.length} sessions, ${conversationBranches.length} branches`);
 
         return {
             entities,
@@ -453,12 +577,17 @@ export const loadUserData = async (userId: string): Promise<UserData | null> => 
             settings: configData?.settings || undefined,
             messages,
             chatSessions,
+            conversationBranches,
             foodLogs,
             subjects,
             classSchedule,
             holidays,
             attendanceLogs,
             lastSyncedAt: configData?.lastSyncedAt || null,
+            syncMetadata: {
+                fromCache: readMetadata.some(metadata => metadata.fromCache),
+                hasPendingWrites: readMetadata.some(metadata => metadata.hasPendingWrites),
+            },
         };
     } catch (error) {
         console.error('[FirestoreSync] Load failed:', error);
@@ -675,7 +804,22 @@ export async function saveUserConfig(
         const { settings, ...otherConfig } = config;
         const safePayload: Record<string, unknown> = sanitizeForFirestore(otherConfig) as Record<string, unknown>;
         if (settings) {
-            const safeSettings = sanitizeForFirestore(settings) as Record<string, unknown>;
+            const safeSettings = sanitizeForFirestore(stripRemovedLocationSettings(settings as Partial<UserSettings> & Record<string, unknown>)) as Record<string, unknown>;
+            safeSettings.home_location = deleteField();
+            safeSettings.travel_preferences = deleteField();
+            const privacyPreferences = safeSettings.privacy_preferences && typeof safeSettings.privacy_preferences === 'object' && !Array.isArray(safeSettings.privacy_preferences)
+                ? safeSettings.privacy_preferences as Record<string, unknown>
+                : {};
+            const capabilities = privacyPreferences.capabilities && typeof privacyPreferences.capabilities === 'object' && !Array.isArray(privacyPreferences.capabilities)
+                ? privacyPreferences.capabilities as Record<string, unknown>
+                : {};
+            safeSettings.privacy_preferences = {
+                ...privacyPreferences,
+                capabilities: {
+                    ...capabilities,
+                    device_location: deleteField(),
+                },
+            };
             if (settings.sync_ai_preferences !== true) {
                 // Revoking consent also clears preferences that were synced earlier.
                 for (const key of MODEL_PREFERENCE_FIELDS) safeSettings[key] = deleteField();
@@ -734,10 +878,43 @@ export async function saveChatSessions(userId: string, sessions: ChatSession[]):
     if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
 
     try {
-        await setDoc(metaDoc(userId, 'chat_sessions'), { sessions: sanitizeForFirestore(sessions), updatedAt: serverTimestamp() });
+        const ref = metaDoc(userId, 'chat_sessions');
+        await runTransaction(db, async transaction => {
+            const snapshot = await transaction.get(ref);
+            const remote = snapshot.exists() && Array.isArray(snapshot.data().sessions)
+                ? snapshot.data().sessions as ChatSession[]
+                : [];
+            const merged = mergeChatSessions(sessions, remote);
+            const byId = (items: ChatSession[]) => [...items].sort((a, b) => a.id.localeCompare(b.id));
+            if (JSON.stringify(byId(merged)) === JSON.stringify(byId(remote))) return;
+            transaction.set(ref, { sessions: sanitizeForFirestore(merged), updatedAt: serverTimestamp() }, { merge: true });
+        });
         return true;
     } catch (error) {
         console.error('[FirestoreSync] Chat sessions save failed:', error);
+        return false;
+    }
+}
+
+/** Save branch metadata with a transaction so stale devices cannot erase newer branches. */
+export async function saveChatBranches(userId: string, branches: ConversationBranch[]): Promise<boolean> {
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
+
+    try {
+        const ref = metaDoc(userId, 'chat_branches');
+        await runTransaction(db, async transaction => {
+            const snapshot = await transaction.get(ref);
+            const remote = snapshot.exists() && Array.isArray(snapshot.data().branches)
+                ? snapshot.data().branches as ConversationBranch[]
+                : [];
+            const merged = mergeConversationBranches(branches, remote);
+            if (!sameConversationBranches(merged, remote)) {
+                transaction.set(ref, { branches: sanitizeForFirestore(merged), updatedAt: serverTimestamp() }, { merge: true });
+            }
+        });
+        return true;
+    } catch (error) {
+        console.error('[FirestoreSync] Chat branches save failed:', error);
         return false;
     }
 }
@@ -754,6 +931,7 @@ export const saveUserData = async (
         universalTags?: TagDefinition[];
         messages?: Message[];
         chatSessions?: ChatSession[];
+        conversationBranches?: ConversationBranch[];
         settings?: Partial<UserSettings>;
         foodLogs?: FoodLogEntry[];
         subjects?: Subject[];
@@ -808,32 +986,38 @@ export const saveUserData = async (
         }
 
         // Write config
-        await saveUserConfig(userId, {
+        const configSaved = await saveUserConfig(userId, {
             universalTags: data.universalTags || [],
             settings: data.settings,
         });
+        if (!configSaved) return false;
 
         // Write food logs
-        if (data.foodLogs && data.foodLogs.length > 0) {
-            await saveFoodLogs(userId, data.foodLogs);
+        if (data.foodLogs && data.foodLogs.length > 0 && !await saveFoodLogs(userId, data.foodLogs)) {
+            return false;
         }
 
         // Write attendance data
         if (data.subjects || data.classSchedule || data.holidays || data.attendanceLogs) {
-            await saveAttendanceData(userId, {
+            const attendanceSaved = await saveAttendanceData(userId, {
                 subjects: data.subjects || [],
                 classSchedule: data.classSchedule || [],
                 holidays: data.holidays || [],
                 attendanceLogs: data.attendanceLogs || [],
             });
+            if (!attendanceSaved) return false;
         }
 
         // Write chat sessions
         if (data.chatSessions && data.chatSessions.length > 0) {
-            await saveChatSessions(userId, data.chatSessions);
+            if (!await saveChatSessions(userId, data.chatSessions)) return false;
         }
 
-        console.log(`[FirestoreSync] Full save: ${data.entities.length} entities, ${data.relationships.length} rels, ${data.messages?.length || 0} msgs, ${data.chatSessions?.length || 0} sessions`);
+        if (data.conversationBranches && data.conversationBranches.length > 0) {
+            if (!await saveChatBranches(userId, data.conversationBranches)) return false;
+        }
+
+        console.log(`[FirestoreSync] Full save: ${data.entities.length} entities, ${data.relationships.length} rels, ${data.messages?.length || 0} msgs, ${data.chatSessions?.length || 0} sessions, ${data.conversationBranches?.length || 0} branches`);
         return true;
     } catch (error) {
         console.error('[FirestoreSync] Full save failed:', error);
@@ -972,6 +1156,33 @@ export const mergeMessages = (
     );
 };
 
+/** Initial store greeting shown in a new chat; it is not a user-authored turn. */
+export const isDefaultWelcomeMessage = (message: Message): boolean =>
+    message.id === 'init-1' &&
+    message.role === 'assistant' &&
+    message.text === 'Welcome to Flowmate. What would you like to talk through or work on?' &&
+    (message.channelId || 'general') === 'general' &&
+    !message.parent_id &&
+    !message.branch_id &&
+    !message.status;
+
+/** Apply durable session deletion and clear markers after additive message merge. */
+export const filterMessagesBySessionState = (messages: Message[], sessions: ChatSession[]): Message[] => {
+    const byId = new Map(sessions.map(session => [session.id, session]));
+    return messages.filter(message => {
+        const session = byId.get(message.channelId || 'general');
+        if (!session) return true;
+        if (session.deleted) return false;
+        if (!session.messages_cleared_at) return true;
+        const clearedThrough = Date.parse(session.messages_cleared_at);
+        const createdAt = Date.parse(message.created_at);
+        // Once a valid clear marker exists, an undated legacy/corrupt message
+        // cannot be proven newer than the clear. Keep it suppressed rather
+        // than letting it reappear on another device.
+        return !Number.isFinite(clearedThrough) || (Number.isFinite(createdAt) && createdAt > clearedThrough);
+    });
+};
+
 /**
  * Merge chat sessions - union by ID, newer updated_at wins.
  * Preserves soft-deleted tombstones so deletions propagate across devices and sync without resurrection.
@@ -985,30 +1196,48 @@ export const mergeChatSessions = (
     // Remote first
     remote.forEach(s => merged.set(s.id, s));
 
-    // Local fills in or overrides if newer
+    // Local fills in or overrides if newer. A deletion tombstone is terminal:
+    // no stale, later-timestamped cached copy can resurrect a deleted session.
     local.forEach(localSession => {
         const remoteSession = merged.get(localSession.id);
         if (!remoteSession) {
             merged.set(localSession.id, localSession);
+        } else if (localSession.deleted || remoteSession.deleted) {
+            const winner = localSession.deleted ? localSession : remoteSession;
+            merged.set(localSession.id, {
+                ...winner,
+                deleted: true,
+                deleted_at: localSession.deleted_at || remoteSession.deleted_at || winner.updated_at,
+            });
         } else {
+            // The built-in General Chat session is recreated with a current
+            // timestamp on a fresh device. When the cloud copy contains branch,
+            // clear, or other session metadata, that placeholder must not win
+            // solely because the new device was initialized later.
+            const localIsFreshGeneralPlaceholder = localSession.id === 'general' &&
+                localSession.title === 'General Chat' &&
+                !localSession.active_branch_id &&
+                !localSession.messages_cleared_at;
+            const remoteHasGeneralState = remoteSession.id === 'general' &&
+                (!!remoteSession.active_branch_id || !!remoteSession.messages_cleared_at ||
+                    remoteSession.title !== 'General Chat');
+            if (localIsFreshGeneralPlaceholder && remoteHasGeneralState) {
+                merged.set(localSession.id, remoteSession);
+                return;
+            }
             const localTime = new Date(localSession.updated_at || localSession.created_at).getTime();
             const remoteTime = new Date(remoteSession.updated_at || remoteSession.created_at).getTime();
+            const localClear = localSession.messages_cleared_at ? Date.parse(localSession.messages_cleared_at) : Number.NEGATIVE_INFINITY;
+            const remoteClear = remoteSession.messages_cleared_at ? Date.parse(remoteSession.messages_cleared_at) : Number.NEGATIVE_INFINITY;
+            const messages_cleared_at = localClear >= remoteClear
+                ? localSession.messages_cleared_at
+                : remoteSession.messages_cleared_at;
             if (localTime > remoteTime) {
-                merged.set(localSession.id, localSession);
+                merged.set(localSession.id, { ...localSession, ...(messages_cleared_at ? { messages_cleared_at } : {}) });
             } else if (remoteTime > localTime) {
-                merged.set(localSession.id, remoteSession);
+                merged.set(localSession.id, { ...remoteSession, ...(messages_cleared_at ? { messages_cleared_at } : {}) });
             } else {
-                // Identical timestamps: preserve deleted tombstone if either is deleted
-                if (localSession.deleted || remoteSession.deleted) {
-                    const winner = localSession.deleted ? localSession : remoteSession;
-                    merged.set(localSession.id, {
-                        ...winner,
-                        deleted: true,
-                        deleted_at: localSession.deleted_at || remoteSession.deleted_at || winner.updated_at,
-                    });
-                } else {
-                    merged.set(localSession.id, localSession);
-                }
+                merged.set(localSession.id, { ...localSession, ...(messages_cleared_at ? { messages_cleared_at } : {}) });
             }
         }
     });
