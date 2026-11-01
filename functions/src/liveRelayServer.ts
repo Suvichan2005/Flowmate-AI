@@ -100,7 +100,10 @@ async function verifyIdentity(req: IncomingMessage): Promise<Identity> {
   if (!authorization.startsWith('Bearer ')) throw new RequestFailure('AUTH_REQUIRED', 401);
   let decoded;
   try { decoded = await getAuth().verifyIdToken(authorization.slice(7), true); }
-  catch { throw new RequestFailure('AUTH_REQUIRED', 401); }
+  catch (err) {
+    console.warn('[liveRelayServer] verifyIdToken failed:', err);
+    throw new RequestFailure('AUTH_REQUIRED', 401);
+  }
   const allowance = decoded.firebase?.sign_in_provider === 'anonymous' ? 'guest' : 'account';
   if (allowance === 'account' && decoded.email_verified !== true) throw new RequestFailure('EMAIL_VERIFICATION_REQUIRED', 403);
   const appCheckRequired = process.env.APP_CHECK_REQUIRED !== 'false';
@@ -108,7 +111,10 @@ async function verifyIdentity(req: IncomingMessage): Promise<Identity> {
     const token = req.headers['x-firebase-appcheck'];
     if (typeof token !== 'string') throw new RequestFailure('APP_CHECK_REQUIRED', 401);
     try { await getAppCheck().verifyToken(token); }
-    catch { throw new RequestFailure('APP_CHECK_REQUIRED', 401); }
+    catch (err) {
+      console.warn('[liveRelayServer] verifyToken AppCheck failed:', err);
+      throw new RequestFailure('APP_CHECK_REQUIRED', 401);
+    }
   }
   const email = decoded.email;
   const allow = await db.doc(`managedAiAllowlist/${decoded.uid}`).get();

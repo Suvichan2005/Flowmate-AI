@@ -81,6 +81,7 @@ import {
     ConflictResolutionOption,
     globalIdempotencyTracker,
     globalPendingMutationQueue,
+    globalSyncCoordinator,
     reconcileEntityCollection,
 } from './services/sync';
 
@@ -105,6 +106,7 @@ export interface FlowmateState {
     } | null;
     syncQueue: SyncQueueItem[];
     currentView: ViewType;
+    activeDashboardId: string | null;
     selectedEntityId: string | null;
     settings: UserSettings;
     debugLogs: DebugLogEntry[];
@@ -191,6 +193,7 @@ export interface FlowmateState {
 
     // View Navigation
     setView: (view: ViewType, knowledgeFilters?: string[], calendarView?: CalendarViewMode) => void;
+    setActiveDashboardId: (id: string | null) => void;
     selectEntity: (id: string | null) => void;
     updateSettings: (settings: Partial<UserSettings>) => void;
     addDebugLog: (type: DebugLogEntry['type'], summary: string, details?: any) => void;
@@ -243,6 +246,7 @@ export interface FlowmateState {
     // Conversation Graph & Branching Actions (Phase 3)
     toggleDeveloperMode: () => void;
     setUnsentDraft: (branchId: string, text: string) => void;
+    setRemoteDraft: (branchId: string, text: string, attachment?: string | null) => void;
     setDraftAttachment: (branchId: string, attachment: string | null) => void;
     getUnsentDraft: (branchId: string) => string;
     updateMessageText: (id: string, text: string) => void;
@@ -304,6 +308,42 @@ const inFlightSubmissions = new Set<string>();
 let sampleExitInProgress = false;
 let personalStorageAtSampleEntry: string | null = null;
 
+let draftDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const broadcastDraftDebounced = (branchId: string, text: string, attachment?: string | null) => {
+    if (!text && !attachment) {
+        if (draftDebounceTimer) {
+            clearTimeout(draftDebounceTimer);
+            draftDebounceTimer = null;
+        }
+        try {
+            globalSyncCoordinator.enqueueMutation({
+                entityKind: 'chat_draft',
+                op: 'upsert',
+                entityId: branchId,
+                data: { branchId, text: '', attachment: null } as unknown as Record<string, unknown>
+            });
+        } catch {
+            // Coordinator inactive or safe fallback
+        }
+        return;
+    }
+
+    if (draftDebounceTimer) clearTimeout(draftDebounceTimer);
+    draftDebounceTimer = setTimeout(() => {
+        draftDebounceTimer = null;
+        try {
+            globalSyncCoordinator.enqueueMutation({
+                entityKind: 'chat_draft',
+                op: 'upsert',
+                entityId: branchId,
+                data: { branchId, text, attachment: attachment || null } as unknown as Record<string, unknown>
+            });
+        } catch {
+            // Coordinator inactive or safe fallback
+        }
+    }, 80);
+};
+
 export const useStore = create<FlowmateState>()(
     persist(
         (set, get) => ({
@@ -352,6 +392,7 @@ export const useStore = create<FlowmateState>()(
             pendingOps: null,
             syncQueue: [],
             currentView: 'dashboard',
+            activeDashboardId: null,
             selectedEntityId: null,
             settings: {
                 timezone: 'Asia/Kolkata', // Force IST
@@ -822,6 +863,8 @@ export const useStore = create<FlowmateState>()(
                 knowledgeInitialFilters: knowledgeFilters || null,
                 calendarInitialView: calendarView || null
             }),
+
+            setActiveDashboardId: (id) => set({ activeDashboardId: id }),
 
             selectEntity: (id) => set({ selectedEntityId: id }),
 
@@ -1331,6 +1374,26 @@ export const useStore = create<FlowmateState>()(
                         }
                     };
                 });
+                if (!get().isDemoMode) {
+                    broadcastDraftDebounced(branchId, text, get().unsentDrafts?.[branchId]?.attachment);
+                }
+            },
+
+            setRemoteDraft: (branchId: string, text: string, attachment?: string | null) => {
+                set(state => {
+                    const existingDraft = state.unsentDrafts?.[branchId];
+                    return {
+                        unsentDrafts: {
+                            ...(state.unsentDrafts || {}),
+                            [branchId]: {
+                                ...existingDraft,
+                                text,
+                                attachment: attachment !== undefined ? attachment : existingDraft?.attachment || null,
+                                updated_at: new Date().toISOString()
+                            }
+                        }
+                    };
+                });
             },
 
             getUnsentDraft: (branchId: string) => {
@@ -1341,6 +1404,9 @@ export const useStore = create<FlowmateState>()(
             setDraftAttachment: (branchId: string, attachment: string | null) => {
                 get().setUnsentDraft(branchId, get().getUnsentDraft(branchId));
                 set(state => ({ unsentDrafts: { ...state.unsentDrafts, [branchId]: { ...state.unsentDrafts[branchId], attachment } } }));
+                if (!get().isDemoMode) {
+                    broadcastDraftDebounced(branchId, get().getUnsentDraft(branchId), attachment);
+                }
             },
 
             updateMessageText: (id: string, text: string) => {

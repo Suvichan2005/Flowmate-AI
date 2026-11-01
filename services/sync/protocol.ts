@@ -36,6 +36,8 @@ export type SyncEntityKind =
   | 'message'
   | 'chat_session'
   | 'chat_branch'
+  | 'chat_draft'
+  | 'chat_streaming'
   | 'settings'
   | 'attendance'
   | 'food_logs';
@@ -56,6 +58,7 @@ export interface SyncEnvelope {
   readonly version: 2;
   readonly envelopeId: string;
   readonly senderDeviceId: string;
+  readonly senderTabId?: string;
   readonly userId: string;
   readonly timestamp: string;
   readonly mutations: SyncMutationPayload[];

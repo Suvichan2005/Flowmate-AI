@@ -4,7 +4,7 @@ import { DashboardManifest, MetricCounterItem } from '../services/workspaces/gen
 import { computeTemporalRecommendation } from '../services/workspaces/temporalRecommendationEngine';
 import { generativeWorkspaceManager, CANONICAL_GYM_DASHBOARD_ID } from '../services/workspaces/workspaceManager';
 import { KernelEntity } from '../services/kernel/types';
-import { Dumbbell, Plus, Trash2, CheckCircle2, Circle, Play, Pause, RotateCcw, Volume2, Mic, Sparkles, TrendingUp, Droplets, Utensils } from 'lucide-react';
+import { Dumbbell, Plus, Trash2, CheckCircle2, Circle, Play, Pause, RotateCcw, Volume2, Mic, Sparkles, TrendingUp, Droplets, Utensils, ArrowLeft } from 'lucide-react';
 
 interface GenerativeDashboardViewProps {
   dashboardId?: string;
@@ -21,6 +21,13 @@ export const GenerativeDashboardView: React.FC<GenerativeDashboardViewProps> = (
   const [activeDashboard, setActiveDashboard] = useState<DashboardManifest>(() => {
     return generativeWorkspaceManager.getDashboard(dashboardId) || generativeWorkspaceManager.listDashboards()[0];
   });
+
+  useEffect(() => {
+    if (dashboardId) {
+      const found = generativeWorkspaceManager.getDashboard(dashboardId);
+      if (found) setActiveDashboard(found);
+    }
+  }, [dashboardId]);
 
   // Local state for Metric Counters
   const [metricCounters, setMetricCounters] = useState<Record<string, number>>(() => {
@@ -241,6 +248,14 @@ export const GenerativeDashboardView: React.FC<GenerativeDashboardViewProps> = (
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => useStore.getState().setView('knowledge')}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Gallery
+          </button>
           <button
             type="button"
             onClick={() => handleAddExercise('Quick 3x10 Pushups', 'Push')}

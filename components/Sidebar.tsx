@@ -15,7 +15,6 @@ import {
   Minimize2,
   TrendingUp,
   Network,
-  Dumbbell,
   Search
 } from 'lucide-react';
 
@@ -54,7 +53,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
     { icon: Calendar, label: 'Calendar', view: 'calendar' as ViewType },
     { icon: TrendingUp, label: 'Analytics', view: 'analytics' as ViewType },
     { icon: Library, label: 'Library', view: 'knowledge' as ViewType },
-    { icon: Dumbbell, label: 'Performance', view: 'generative_dashboard' as ViewType },
   ];
 
   return (

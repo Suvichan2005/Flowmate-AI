@@ -45,6 +45,7 @@ export class WebSocketRelayProvider implements SyncRelayProvider {
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectDelay = INITIAL_RECONNECT_MS;
   private isExplicitlyDisconnected = false;
+  readonly tabId = Math.random().toString(36).slice(2, 9);
   readonly deviceId: string;
 
   constructor() {
@@ -58,7 +59,9 @@ export class WebSocketRelayProvider implements SyncRelayProvider {
           if (msg.type === 'sync_envelope' && msg.envelope && typeof msg.envelope === 'object') {
             const envelope = msg.envelope as SyncEnvelope;
             // Ignore messages originating from this exact tab/sender session
-            if (envelope.senderDeviceId !== this.deviceId || msg.tabSource !== this.tabId) {
+            const isDifferentTab = (envelope.senderTabId && envelope.senderTabId !== this.tabId) || msg.tabSource !== this.tabId;
+            const isDifferentDevice = envelope.senderDeviceId !== this.deviceId;
+            if (isDifferentDevice || isDifferentTab) {
               this.notifyEnvelopeListeners(envelope);
             }
           }
@@ -68,8 +71,6 @@ export class WebSocketRelayProvider implements SyncRelayProvider {
       }
     }
   }
-
-  private tabId = Math.random().toString(36).slice(2, 9);
 
   isAvailable(): boolean {
     return typeof WebSocket !== 'undefined';
@@ -241,12 +242,17 @@ export class WebSocketRelayProvider implements SyncRelayProvider {
   broadcast(envelope: SyncEnvelope): boolean {
     let sentToRelay = false;
 
+    const fullEnvelope: SyncEnvelope = envelope.senderTabId ? envelope : {
+      ...envelope,
+      senderTabId: this.tabId,
+    };
+
     // 1. Send to WebSocket live relay for cross-device broadcast
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       try {
         this.socket.send(JSON.stringify({
           type: 'sync_envelope',
-          envelope,
+          envelope: fullEnvelope,
         }));
         sentToRelay = true;
       } catch {
@@ -259,7 +265,7 @@ export class WebSocketRelayProvider implements SyncRelayProvider {
       try {
         this.broadcastChannel.postMessage({
           type: 'sync_envelope',
-          envelope,
+          envelope: fullEnvelope,
           tabSource: this.tabId,
         });
       } catch {

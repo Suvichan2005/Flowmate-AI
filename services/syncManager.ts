@@ -137,6 +137,8 @@ type OnRemoteDataChange = (data: {
     isInitialLoad?: boolean;
     initialReadFailed?: boolean;
     syncMetadata?: SyncReadMetadata;
+    chatDraft?: { branchId: string; text: string; attachment?: string | null };
+    chatStreaming?: { messageId: string; text: string; isStreaming: boolean; branchId?: string; channelId?: string };
 }) => void;
 
 
@@ -202,7 +204,23 @@ export const initializeSync = (
     cloudBaselineReady = false;
     globalSyncCoordinator.initialize(userId);
     globalSyncCoordinator.onRemoteMutation(mutation => {
-        if (!onRemoteDataChange || !workspaceCloudSyncEnabled || isDemoModeActive) return;
+        if (!onRemoteDataChange || isDemoModeActive) return;
+        if (mutation.entityKind === 'chat_draft' && mutation.data) {
+            const draft = mutation.data as { branchId: string; text: string; attachment?: string | null };
+            onRemoteDataChange({
+                entities: [], relationships: [], universalTags: [],
+                chatDraft: draft
+            });
+            return;
+        } else if (mutation.entityKind === 'chat_streaming' && mutation.data) {
+            const streaming = mutation.data as { messageId: string; text: string; isStreaming: boolean; branchId?: string; channelId?: string };
+            onRemoteDataChange({
+                entities: [], relationships: [], universalTags: [],
+                chatStreaming: streaming
+            });
+            return;
+        }
+        if (!workspaceCloudSyncEnabled) return;
         if (mutation.entityKind === 'message' && mutation.data) {
             onRemoteDataChange({
                 entities: [], relationships: [], universalTags: [],

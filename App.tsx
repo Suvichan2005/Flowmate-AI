@@ -31,11 +31,11 @@ import { MessageVersionNav } from './components/MessageVersionNav';
 import { ManagedRequestNotice } from './components/ManagedRequestNotice';
 import { DeveloperModeDrawer } from './components/DeveloperModeDrawer';
 import { repairStaleConversationBranchHeads, resolveBranchHistory } from './utils/conversationGraph';
-import { EntityKind, ToonOperation, ChatSession, Entity, TurnExecutor, BranchQueueItem, ViewType } from './types';
+import { EntityKind, ToonOperation, ChatSession, Entity, Message, TurnExecutor, BranchQueueItem, ViewType } from './types';
 import { v4 as uuidv4 } from 'uuid';
 import { ConfirmedExecutionPlan } from './services/kernel';
 
-import { reconcileEntityCollection, globalPendingMutationQueue, retainCanonicalReference, canonicalJson } from './services/sync';
+import { reconcileEntityCollection, globalPendingMutationQueue, retainCanonicalReference, canonicalJson, globalSyncCoordinator } from './services/sync';
 import { projectKernelEntitiesToLegacy } from './store/kernelProjection';
 import {
   setupCrossTabSync,
@@ -165,6 +165,7 @@ const App: React.FC = () => {
     updateMessageTurnMetadata,
     setIsStreaming,
     isStreaming,
+    activeDashboardId,
     setLastTurnDiagnostics,
     addToast,
   } = useStore();
@@ -839,6 +840,42 @@ const App: React.FC = () => {
         (remoteData) => {
           const ownerState = useStore.getState();
           if (ownerState.currentUser?.uid !== user.uid || ownerState.workspaceStorageIdentity !== user.uid) return;
+
+          // 1. Live Chat Draft Sync across tabs & devices
+          if (remoteData.chatDraft) {
+            useStore.getState().setRemoteDraft(
+              remoteData.chatDraft.branchId,
+              remoteData.chatDraft.text,
+              remoteData.chatDraft.attachment
+            );
+            return;
+          }
+
+          // 2. Live Chat Streaming Sync across tabs & devices
+          if (remoteData.chatStreaming) {
+            const { messageId, text, isStreaming, branchId, channelId } = remoteData.chatStreaming;
+            const currentState = useStore.getState();
+            const messageExists = (currentState.messages || []).some(m => m.id === messageId);
+            if (!messageExists && isStreaming) {
+              const streamMsg: Message = {
+                id: messageId,
+                role: 'assistant',
+                text,
+                channelId: channelId || currentState.activeSessionId || 'general',
+                branch_id: branchId || currentState.activeBranchId || 'b_main_general',
+                status: 'streaming',
+                created_at: new Date().toISOString()
+              };
+              useStore.setState(s => ({
+                messages: [...(s.messages || []), streamMsg]
+              }));
+            } else if (messageExists) {
+              currentState.updateMessageText(messageId, text);
+            }
+            currentState.setIsStreaming(Boolean(isStreaming), isStreaming ? messageId : null);
+            return;
+          }
+
           if (remoteData.initialReadFailed) {
             useStore.setState({ syncStatus: 'error', syncError: 'Could not load cloud workspace' });
             return;
@@ -1437,6 +1474,20 @@ const App: React.FC = () => {
               accumulatedText += chunk;
               if (onChunk) onChunk(chunk);
               updateMessageText(assistantMessageId, accumulatedText);
+              if (!useStore.getState().isDemoMode) {
+                globalSyncCoordinator.enqueueMutation({
+                  entityKind: 'chat_streaming',
+                  op: 'upsert',
+                  entityId: assistantMessageId,
+                  data: {
+                    messageId: assistantMessageId,
+                    text: accumulatedText,
+                    isStreaming: true,
+                    branchId,
+                    channelId,
+                  } as unknown as Record<string, unknown>,
+                });
+              }
             },
             onMetrics: (metrics) => {
               collectedMetrics = { ...collectedMetrics, ...metrics };
@@ -1502,6 +1553,20 @@ const App: React.FC = () => {
         });
       } finally {
         setLoading(false);
+        if (!useStore.getState().isDemoMode) {
+          globalSyncCoordinator.enqueueMutation({
+            entityKind: 'chat_streaming',
+            op: 'upsert',
+            entityId: assistantMessageId,
+            data: {
+              messageId: assistantMessageId,
+              text: accumulatedText,
+              isStreaming: false,
+              branchId,
+              channelId,
+            } as unknown as Record<string, unknown>,
+          });
+        }
       }
     };
 
@@ -1660,7 +1725,7 @@ const App: React.FC = () => {
       case 'dashboard':
         return <Dashboard onManagedAiLimit={setManagedAiLimit} onRequestSignIn={() => setShowAuthModal(true)} />;
       case 'generative_dashboard':
-        return <GenerativeDashboardView />;
+        return <GenerativeDashboardView dashboardId={activeDashboardId || undefined} />;
       case 'chat':
         // Mobile: 'chat' view should show chat panel + graph
         if (!isChatOpen) setIsChatOpen(true);
@@ -1935,7 +2000,7 @@ const App: React.FC = () => {
           <span className="font-bold text-base text-slate-100">
             {currentView === 'chat' ? 'Chat' :
               currentView === 'dashboard' ? 'Flowmate' :
-                currentView === 'generative_dashboard' ? 'Performance' :
+                currentView === 'generative_dashboard' ? 'Workspace' :
                   currentView === 'calendar' ? 'Calendar' :
                   currentView === 'knowledge' ? 'Library' :
                     currentView === 'analytics' ? 'Analytics' :

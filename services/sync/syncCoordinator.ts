@@ -156,14 +156,17 @@ export class SyncCoordinator {
       version: 2,
       envelopeId: 'env_' + Math.random().toString(36).slice(2, 10),
       senderDeviceId: this.relay.deviceId,
+      senderTabId: this.relay.tabId,
       userId: this.userId || 'anonymous',
       timestamp: payload.clientTimestamp,
       mutations: [payload],
     };
     this.relay.broadcast(envelope);
 
-    // 2. Schedule durable cloud storage flush
-    this.scheduleDebouncedFlush();
+    // 2. Schedule durable cloud storage flush for persistent entity changes (skip ephemeral drafts & streaming)
+    if (mutation.entityKind !== 'chat_draft' && mutation.entityKind !== 'chat_streaming') {
+      this.scheduleDebouncedFlush();
+    }
     this.notifyStatusChange();
   }
 
@@ -228,7 +231,9 @@ export class SyncCoordinator {
    * Handles incoming remote mutations delivered over WebSocket relay or storage polling.
    */
   private handleIncomingEnvelope(envelope: SyncEnvelope): void {
-    if (envelope.senderDeviceId === this.relay.deviceId) return;
+    if (envelope.senderDeviceId === this.relay.deviceId && (!envelope.senderTabId || envelope.senderTabId === this.relay.tabId)) {
+      return;
+    }
 
     for (const mutation of envelope.mutations) {
       for (const listener of this.remoteMutationListeners) {

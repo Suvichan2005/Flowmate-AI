@@ -199,7 +199,7 @@ export function extractSituationalItem(e: KernelEntity): SituationalStateItem {
     topic: getStringAttr(attrs, 'topic', e.title),
     details: getStringAttr(attrs, 'details', ''),
     valid_from: getStringAttr(attrs, 'valid_from', e.lifecycle.created_at),
-    valid_until: getStringAttr(attrs, 'valid_until', new Date(Date.now() + 7 * 86400000).toISOString()),
+    valid_until: getStringAttr(attrs, 'valid_until', new Date(new Date(getStringAttr(attrs, 'valid_from', e.lifecycle.created_at)).getTime() + 7 * 86400000).toISOString()),
     confidence: getNumberAttr(attrs, 'confidence', 1.0),
     source_type: (getStringAttr(attrs, 'source_type', 'user_explicit') as MemorySourceType) || 'user_explicit',
     privacy_tier: (getStringAttr(attrs, 'privacy_tier', 'private') as PrivacyTier) || 'private',

@@ -98,8 +98,11 @@ async function fetchWithManagedAuthRetry(
   const response = await doFetch(initialToken, appCheckToken);
   if (response.status === 401) {
     try {
-      const freshToken = await user.getIdToken(true);
-      return await doFetch(freshToken, appCheckToken);
+      const [freshToken, freshAppCheckToken] = await Promise.all([
+        user.getIdToken(true),
+        getFirebaseAppCheckToken(),
+      ]);
+      return await doFetch(freshToken, freshAppCheckToken);
     } catch {
       return response;
     }

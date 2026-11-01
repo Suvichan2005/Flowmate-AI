@@ -36,7 +36,13 @@ function compactEntity(e: Entity): Record<string, unknown> {
   };
   if (e.parent_id) obj.p_id = e.parent_id;
   if (e.deadline) obj.dl = e.deadline;
-  if (e.start_time) obj.st = e.start_time;
+  if (e.start_time) {
+    obj.st = e.start_time;
+    const startMs = new Date(e.start_time).getTime();
+    if (!isNaN(startMs) && startMs < Date.now()) {
+      obj.is_past = true;
+    }
+  }
   if (e.canonical_tags?.length) obj.tags = e.canonical_tags;
   const certainty = e.scheduling_certainty || (e.metadata?.scheduling_certainty as string | undefined);
   if (certainty) obj.cert = certainty;
@@ -75,7 +81,13 @@ export function buildEntityContext(
 
   // 1) Date-window entities
   const inWindow = visible.filter(e => {
-    const dates = [e.created_at, e.updated_at, e.deadline, e.start_time, e.end_time].filter(Boolean);
+    if (e.kind === EntityKind.EVENT) {
+      const eventTime = e.start_time || e.end_time;
+      if (!eventTime) return false;
+      const ts = new Date(eventTime).getTime();
+      return ts >= windowStart && ts <= windowEnd;
+    }
+    const dates = [e.deadline, e.created_at, e.updated_at].filter(Boolean);
     return dates.some(d => {
       const ts = new Date(d!).getTime();
       return ts >= windowStart && ts <= windowEnd;

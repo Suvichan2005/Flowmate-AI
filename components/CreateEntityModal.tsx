@@ -34,8 +34,23 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
         }
         return '';
     });
+    const [endDate, setEndDate] = useState<string>(() => {
+        if (initialDate) {
+            const d = new Date(initialDate);
+            d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+            if (initialTime) {
+                const [h, m] = initialTime.split(':').map(Number);
+                const endH = (h + 1) % 24;
+                return d.toISOString().slice(0, 10) + 'T' + String(endH).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+            }
+            d.setHours(d.getHours() + 1);
+            return d.toISOString().slice(0, 16);
+        }
+        return '';
+    });
     const [isAllDay, setIsAllDay] = useState(false);
     const [recurrence, setRecurrence] = useState<RecurrenceType>(null);
+    const [customRrule, setCustomRrule] = useState<string>('');
 
     // Habit-specific fields
     const [habitType, setHabitType] = useState<'GOOD' | 'BAD'>('GOOD');
@@ -51,8 +66,9 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
         if (kind !== EntityKind.EVENT || !date) return null;
         try {
             if (isAllDay) {
-                const start = new Date(date + 'T00:00:00');
-                const end = new Date(date + 'T23:59:59.999');
+                const start = new Date(date.includes('T') ? date.split('T')[0] + 'T00:00:00' : date + 'T00:00:00');
+                const effectiveEndDate = endDate ? (endDate.includes('T') ? endDate.split('T')[0] : endDate) : (date.includes('T') ? date.split('T')[0] : date);
+                const end = new Date(effectiveEndDate + 'T23:59:59.999');
                 if (isNaN(start.getTime()) || isNaN(end.getTime())) return null;
                 return {
                     startTimeIso: start.toISOString(),
@@ -62,7 +78,17 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
             } else {
                 const start = new Date(date);
                 if (isNaN(start.getTime())) return null;
-                const end = new Date(start.getTime() + 60 * 60 * 1000);
+                let end: Date;
+                if (endDate) {
+                    const parsedEnd = new Date(endDate);
+                    if (!isNaN(parsedEnd.getTime()) && parsedEnd.getTime() > start.getTime()) {
+                        end = parsedEnd;
+                    } else {
+                        end = new Date(start.getTime() + 60 * 60 * 1000);
+                    }
+                } else {
+                    end = new Date(start.getTime() + 60 * 60 * 1000);
+                }
                 return {
                     startTimeIso: start.toISOString(),
                     endTimeIso: end.toISOString(),
@@ -72,7 +98,7 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
         } catch {
             return null;
         }
-    }, [kind, date, isAllDay]);
+    }, [kind, date, endDate, isAllDay]);
 
     const candidateEvaluation = useMemo(() => {
         if (!candidateSlot) return null;
@@ -94,6 +120,11 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
         slotStart.setMinutes(slotStart.getMinutes() - slotStart.getTimezoneOffset());
         const newDateStr = isAllDay ? slotStart.toISOString().slice(0, 10) : slotStart.toISOString().slice(0, 16);
         setDate(newDateStr);
+
+        const slotEnd = new Date(suggestedFreeSlot.endTimeIso);
+        slotEnd.setMinutes(slotEnd.getMinutes() - slotEnd.getTimezoneOffset());
+        const newEndDateStr = isAllDay ? slotEnd.toISOString().slice(0, 10) : slotEnd.toISOString().slice(0, 16);
+        setEndDate(newEndDateStr);
     };
 
     useEffect(() => {
@@ -148,7 +179,8 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
         if (date) {
             let isoDate;
             if (isAllDay) {
-                isoDate = new Date(date + 'T00:00:00').toISOString();
+                const startDatePart = date.includes('T') ? date.split('T')[0] : date;
+                isoDate = new Date(startDatePart + 'T00:00:00').toISOString();
                 if (kind === EntityKind.EVENT) {
                     payload.all_day = true;
                     payload.is_all_day = true;
@@ -166,15 +198,34 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
             if (kind === EntityKind.EVENT) {
                 payload.start_time = isoDate;
                 if (isAllDay) {
-                    payload.end_time = new Date(date + 'T23:59:59.999').toISOString();
+                    const endDatePart = endDate ? (endDate.includes('T') ? endDate.split('T')[0] : endDate) : (date.includes('T') ? date.split('T')[0] : date);
+                    payload.end_time = new Date(endDatePart + 'T23:59:59.999').toISOString();
                 } else {
-                    const sd = new Date(isoDate);
-                    sd.setMinutes(sd.getMinutes() + 60);
-                    payload.end_time = sd.toISOString();
-                    payload.duration_minutes = 60;
+                    let endIso: string;
+                    if (endDate && new Date(endDate).getTime() > new Date(date).getTime()) {
+                        endIso = new Date(endDate).toISOString();
+                        const durationMins = Math.max(1, Math.round((new Date(endDate).getTime() - new Date(date).getTime()) / 60000));
+                        payload.duration_minutes = durationMins;
+                    } else {
+                        const sd = new Date(isoDate);
+                        sd.setMinutes(sd.getMinutes() + 60);
+                        endIso = sd.toISOString();
+                        payload.duration_minutes = 60;
+                    }
+                    payload.end_time = endIso;
                 }
             } else {
                 payload.deadline = isoDate;
+            }
+        }
+
+        if (customRrule.trim()) {
+            payload.metadata = { ...(payload.metadata || {}), rrule: customRrule.trim() };
+            if (!payload.recurrence) {
+                if (customRrule.includes('FREQ=DAILY')) payload.recurrence = 'DAILY';
+                else if (customRrule.includes('FREQ=WEEKLY')) payload.recurrence = 'WEEKLY';
+                else if (customRrule.includes('FREQ=MONTHLY')) payload.recurrence = 'MONTHLY';
+                else if (customRrule.includes('FREQ=YEARLY')) payload.recurrence = 'YEARLY';
             }
         }
 
@@ -328,7 +379,9 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
                         <div>
                             <div className="flex justify-between items-center mb-1">
                                 <div className="flex items-center gap-2">
-                                    <label className="block text-xs font-semibold text-slate-500 uppercase">Date</label>
+                                    <label className="block text-xs font-semibold text-slate-500 uppercase">
+                                        {kind === EntityKind.EVENT ? "Start Time" : "Date"}
+                                    </label>
                                     {kind === EntityKind.EVENT && date && isSlotClear && (
                                         <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1" data-testid="create-modal-slot-clear">
                                             <CheckCircle2 className="w-3 h-3" />
@@ -354,28 +407,131 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
                                     type={isAllDay ? "date" : "datetime-local"}
                                     aria-label="Date"
                                     value={date}
-                                    onChange={(e) => setDate(e.target.value)}
+                                    onChange={(e) => {
+                                        const newDate = e.target.value;
+                                        setDate(newDate);
+                                        if (kind === EntityKind.EVENT && newDate) {
+                                            if (isAllDay) {
+                                                if (!endDate || endDate < newDate) setEndDate(newDate);
+                                            } else {
+                                                const startMs = new Date(newDate).getTime();
+                                                if (!endDate || new Date(endDate).getTime() <= startMs) {
+                                                    const autoEnd = new Date(startMs + 60 * 60 * 1000);
+                                                    autoEnd.setMinutes(autoEnd.getMinutes() - autoEnd.getTimezoneOffset());
+                                                    setEndDate(autoEnd.toISOString().slice(0, 16));
+                                                }
+                                            }
+                                        }
+                                    }}
                                     className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-2 focus:ring-2 focus:ring-indigo-500/50 outline-none text-xs"
                                 />
                             </div>
                         </div>
+
+                        {kind === EntityKind.EVENT ? (
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">End Time</label>
+                                <div className="relative">
+                                    <Calendar className="absolute left-3 top-2.5 text-slate-600 w-4 h-4" />
+                                    <input
+                                        type={isAllDay ? "date" : "datetime-local"}
+                                        aria-label="End Date"
+                                        value={endDate}
+                                        onChange={(e) => setEndDate(e.target.value)}
+                                        className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-2 focus:ring-2 focus:ring-indigo-500/50 outline-none text-xs"
+                                    />
+                                </div>
+                            </div>
+                        ) : (
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Recurrence</label>
+                                <div className="relative">
+                                    <Repeat className="absolute left-3 top-2.5 text-slate-600 w-4 h-4" />
+                                    <select
+                                        value={customRrule ? 'CUSTOM' : (recurrence || '')}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (val === 'CUSTOM') {
+                                                setRecurrence('WEEKLY');
+                                                if (!customRrule) setCustomRrule('FREQ=WEEKLY;BYDAY=MO,WE,FR');
+                                            } else {
+                                                setRecurrence(val ? val as RecurrenceType : null);
+                                                setCustomRrule('');
+                                            }
+                                        }}
+                                        className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-2 focus:ring-2 focus:ring-indigo-500/50 outline-none appearance-none text-xs"
+                                    >
+                                        <option value="">None</option>
+                                        <option value="DAILY">Daily</option>
+                                        <option value="WEEKLY">Weekly</option>
+                                        <option value="MONTHLY">Monthly</option>
+                                        <option value="YEARLY">Yearly</option>
+                                        <option value="CUSTOM">Custom (RRULE)</option>
+                                    </select>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {kind === EntityKind.EVENT && (
                         <div>
                             <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Recurrence</label>
                             <div className="relative">
                                 <Repeat className="absolute left-3 top-2.5 text-slate-600 w-4 h-4" />
                                 <select
-                                    value={recurrence || ''}
-                                    onChange={(e) => setRecurrence(e.target.value ? e.target.value as RecurrenceType : null)}
+                                    value={customRrule ? 'CUSTOM' : (recurrence || '')}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val === 'CUSTOM') {
+                                            setRecurrence('WEEKLY');
+                                            if (!customRrule) setCustomRrule('FREQ=WEEKLY;BYDAY=MO,WE,FR');
+                                        } else {
+                                            setRecurrence(val ? val as RecurrenceType : null);
+                                            setCustomRrule('');
+                                        }
+                                    }}
                                     className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 pl-9 pr-2 focus:ring-2 focus:ring-indigo-500/50 outline-none appearance-none text-xs"
                                 >
                                     <option value="">None</option>
                                     <option value="DAILY">Daily</option>
                                     <option value="WEEKLY">Weekly</option>
                                     <option value="MONTHLY">Monthly</option>
+                                    <option value="YEARLY">Yearly</option>
+                                    <option value="CUSTOM">Custom (RRULE)</option>
                                 </select>
                             </div>
                         </div>
-                    </div>
+                    )}
+
+                    {customRrule && (
+                        <div className="space-y-1">
+                            <label className="block text-xs font-semibold text-slate-500 uppercase">Recurrence Rule (RRULE)</label>
+                            <input
+                                type="text"
+                                aria-label="Custom RRULE"
+                                value={customRrule}
+                                onChange={(e) => setCustomRrule(e.target.value)}
+                                placeholder="e.g. FREQ=WEEKLY;BYDAY=MO,WE,FR"
+                                className="w-full bg-slate-950 border border-slate-700 text-slate-100 font-mono text-xs rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                            />
+                            <div className="flex gap-1.5 flex-wrap pt-1">
+                                {[
+                                    { label: 'Weekdays', rule: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' },
+                                    { label: 'Mon/Wed/Fri', rule: 'FREQ=WEEKLY;BYDAY=MO,WE,FR' },
+                                    { label: 'Bi-weekly', rule: 'FREQ=WEEKLY;INTERVAL=2' },
+                                ].map(preset => (
+                                    <button
+                                        key={preset.label}
+                                        type="button"
+                                        onClick={() => setCustomRrule(preset.rule)}
+                                        className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-0.5 rounded transition-colors"
+                                    >
+                                        {preset.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Real-time calendar conflict banner & alternative slot recommendation */}
                     {kind === EntityKind.EVENT && hasConflict && (

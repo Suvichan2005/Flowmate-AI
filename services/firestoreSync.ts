@@ -890,13 +890,27 @@ export async function saveChatSessions(userId: string, sessions: ChatSession[]):
             transaction.set(ref, { sessions: sanitizeForFirestore(merged), updatedAt: serverTimestamp() }, { merge: true });
         });
         return true;
-    } catch (error) {
-        console.warn('[FirestoreSync] Chat sessions transaction failed:', error);
-        return false;
+    } catch (_error) {
+        // Multi-tab IndexedDB cache precondition conflict fallback:
+        // When cached updateTime conflicts, fetch fresh server doc and setDoc with merge.
+        try {
+            const snapshot = await getDocFromServer(ref).catch(() => getDoc(ref));
+            const remote = snapshot && snapshot.exists() && Array.isArray(snapshot.data()?.sessions)
+                ? snapshot.data()!.sessions as ChatSession[]
+                : [];
+            const merged = mergeChatSessions(sessions, remote);
+            const byId = (items: ChatSession[]) => [...items].sort((a, b) => a.id.localeCompare(b.id));
+            if (JSON.stringify(byId(merged)) === JSON.stringify(byId(remote))) return true;
+            await setDoc(ref, { sessions: sanitizeForFirestore(merged), updatedAt: serverTimestamp() }, { merge: true });
+            return true;
+        } catch (fallbackError) {
+            console.warn('[FirestoreSync] Chat sessions fallback save failed:', fallbackError);
+            return false;
+        }
     }
 }
 
-/** Save branch metadata with a transaction so stale devices cannot erase newer branches. */
+/** Save branch metadata with transaction and cache-conflict fallback so stale devices cannot erase newer branches. */
 export async function saveChatBranches(userId: string, branches: ConversationBranch[]): Promise<boolean> {
     if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
 
@@ -913,9 +927,22 @@ export async function saveChatBranches(userId: string, branches: ConversationBra
             }
         });
         return true;
-    } catch (error) {
-        console.warn('[FirestoreSync] Chat branches transaction failed:', error);
-        return false;
+    } catch (_error) {
+        // Multi-tab IndexedDB cache precondition conflict fallback
+        try {
+            const snapshot = await getDocFromServer(ref).catch(() => getDoc(ref));
+            const remote = snapshot && snapshot.exists() && Array.isArray(snapshot.data()?.branches)
+                ? snapshot.data()!.branches as ConversationBranch[]
+                : [];
+            const merged = mergeConversationBranches(branches, remote);
+            if (!sameConversationBranches(merged, remote)) {
+                await setDoc(ref, { branches: sanitizeForFirestore(merged), updatedAt: serverTimestamp() }, { merge: true });
+            }
+            return true;
+        } catch (fallbackError) {
+            console.warn('[FirestoreSync] Chat branches fallback save failed:', fallbackError);
+            return false;
+        }
     }
 }
 

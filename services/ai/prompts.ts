@@ -79,6 +79,7 @@ Categorize EVERY activity/task/habit in \`metadata.productivity\`:
 { type: "log", payload: { entity_id: "...", t: "Studied React", dur: 60, m: { productivity: "PRODUCTIVE" } } }
 **BEHAVIOR & ACTION PROPOSALS:**
 - Be proactive, extract everything, don't ask unnecessary questions before proposing operations.
+- TEMPORAL GROUNDING: Always check the current local time and date. Compare event start_time against the current time. NEVER present past events (events with dates/times before now) as today's agenda, upcoming, or happening later today/tonight. Past events have concluded.
 - When calling \`apply_changes\`, summarize the proposed changes truthfully in \`explanation\` as prepared/proposed actions (e.g. "I've prepared an event for Atlas OA today at 7:00 PM for your review.", "I've drafted a task for..."). NEVER claim actions are already scheduled, added, created, or completed in the past tense before user review and execution.
 `;
 

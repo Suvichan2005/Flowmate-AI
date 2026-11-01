@@ -3,15 +3,34 @@ import { useStore } from '../store';
 import { getActiveEntities } from '../store/helpers';
 import { EntityKind, EntityStatus } from '../types';
 import { queryKnowledgeBase } from '../services/ai';
-import { Library, Search, Plus, Sparkles, X, ArrowRight, Loader2, Filter, FileText, BookOpen, Folder, Target, Calendar, CheckSquare, Square, Eye, EyeOff, User } from 'lucide-react';
+import {
+  Library, Search, Plus, Sparkles, X, ArrowRight, Loader2, Filter, FileText,
+  BookOpen, Folder, Target, Calendar, CheckSquare, Square, Eye, EyeOff, User,
+  LayoutDashboard, Dumbbell, Download, Copy, Check
+} from 'lucide-react';
 import MarkdownText from './MarkdownText';
+import {
+  globalWorkspacePluginRegistry,
+  WorkspacePlugin,
+} from '../services/workspaces/workspacePluginRegistry';
 
 type FilterKind = 'all' | EntityKind.PERSON | EntityKind.TASK | EntityKind.PROJECT | EntityKind.GOAL | EntityKind.EVENT;
 
 const KnowledgeView: React.FC = () => {
     const { entities: rawEntities = [], relationships = [], universalTags = [], selectEntity, applyOperations, selectedEntityId, knowledgeInitialFilters } = useStore();
+    const setView = useStore(state => state.setView);
+    const setActiveDashboardId = useStore(state => state.setActiveDashboardId);
+    const addToast = useStore(state => state.addToast);
     const entities = useMemo(() => getActiveEntities(rawEntities), [rawEntities]);
     const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+
+    // Primary View Section Toggle ('items' vs 'workspaces')
+    const [viewSection, setViewSection] = useState<'items' | 'workspaces'>('items');
+    const [workspaceCategoryFilter, setWorkspaceCategoryFilter] = useState<string>('all');
+    const [showImportModal, setShowImportModal] = useState(false);
+    const [importJsonText, setImportJsonText] = useState('');
+    const [importError, setImportError] = useState<string | null>(null);
+    const [pluginsList, setPluginsList] = useState<WorkspacePlugin[]>(() => globalWorkspacePluginRegistry.listPlugins());
 
     // UI State
     const [searchQuery, setSearchQuery] = useState('');
@@ -264,14 +283,32 @@ const KnowledgeView: React.FC = () => {
             <div className="shrink-0 border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm z-10">
                 <div className="p-4 pl-4 md:pl-16 flex flex-col gap-4">
 
-                    {/* Top Row: Title, Search, Actions */}
-                    <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-2 mr-2">
+                    {/* Top Row: Title, Section Switcher, Search, Actions */}
+                    <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
+                        <div className="flex items-center gap-2 mr-1">
                             <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center text-indigo-400">
                                 <Library size={18} />
                             </div>
                             <h1 className="text-xl font-bold text-slate-100 hidden md:block">Library</h1>
+                        </div>
 
+                        {/* Section Switcher Tabs */}
+                        <div className="flex items-center bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs shrink-0">
+                            <button
+                                type="button"
+                                onClick={() => setViewSection('items')}
+                                className={`px-2.5 py-1.5 rounded-md font-medium transition-colors ${viewSection === 'items' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                            >
+                                Items & Graph
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => { setViewSection('workspaces'); setPluginsList(globalWorkspacePluginRegistry.listPlugins()); }}
+                                className={`px-2.5 py-1.5 rounded-md font-medium flex items-center gap-1.5 transition-colors ${viewSection === 'workspaces' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                            >
+                                <LayoutDashboard size={13} />
+                                Workspaces & Plugins
+                            </button>
                         </div>
 
                         {/* Search Bar */}
@@ -506,79 +543,264 @@ const KnowledgeView: React.FC = () => {
                 </div>
             )}
 
-            {/* 3. Main Grid */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-950">
-                {filteredItems.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-slate-600">
-                        <div className="w-16 h-16 rounded-full bg-slate-900 flex items-center justify-center mb-4">
-                            <Search size={24} className="opacity-20" />
-                        </div>
-                        <p className="font-medium">No results found</p>
-                        {hasActiveFilters && <button onClick={clearFilters} className="mt-2 text-sm text-indigo-400 hover:underline">Clear Filters</button>}
-                    </div>
-                ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 pb-20">
-                        {filteredItems.map(item => (
-                            <div
-                                key={item.id}
-                                onClick={() => selectEntity(item.id)}
-                                className={`
-                                    group relative flex flex-col h-48 bg-slate-900 rounded-2xl overflow-hidden cursor-pointer transition-all duration-200
-                                    ${selectedIds.has(item.id)
-                                        ? 'ring-2 ring-indigo-500 shadow-lg shadow-indigo-500/20 scale-[1.02] bg-slate-800'
-                                        : 'border border-slate-800/60 hover:border-slate-700 hover:shadow-xl hover:-translate-y-1'
-                                    }
-                                `}
-                            >
-                                {/* Header */}
-                                <div className="p-4 flex justify-between items-start gap-2">
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-1.5">
-                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wide ${getKindColorClass(item.kind)}`}>
-                                                {item.kind}
-                                            </span>
-                                            {item.priority > 1 && <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" title="High Priority" />}
-                                        </div>
-                                        <h3 className="font-bold text-slate-100 text-sm truncate leading-snug group-hover:text-indigo-400 transition-colors">
-                                            {item.title}
-                                        </h3>
-                                    </div>
-                                    <button
-                                        onClick={(e) => toggleSelect(item.id, e)}
-                                        className={`shrink-0 p-1.5 rounded-lg transition-colors ${selectedIds.has(item.id) ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500 opacity-0 group-hover:opacity-100 hover:bg-slate-700 hover:text-slate-300'}`}
-                                    >
-                                        {selectedIds.has(item.id) ? <CheckSquare size={14} /> : <Square size={14} />}
-                                    </button>
-                                </div>
-
-                                {/* Body */}
-                                <div className="px-4 pb-2 flex-1 relative">
-                                    <div className="text-xs text-slate-400 line-clamp-3 leading-relaxed">
-                                        {item.description ? <MarkdownText content={item.description} /> : <span className="italic opacity-30">No content</span>}
-                                    </div>
-                                    {/* Gradient Fade for text */}
-                                    <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-slate-900 to-transparent pointer-events-none" />
-                                </div>
-
-                                {/* Link / Metadata Footer */}
-                                <div className="px-4 py-3 bg-slate-950/30 border-t border-slate-800/50 flex items-center justify-between text-[10px] text-slate-500">
-                                    <div className="flex items-center gap-2">
-                                        {item.canonical_tags && item.canonical_tags.length > 0 ? (
-                                            <div className="flex -space-x-1">
-                                                <div className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-400 truncate max-w-[80px]">#{item.canonical_tags[0]}</div>
-                                                {item.canonical_tags.length > 1 && <div className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-500">+{item.canonical_tags.length - 1}</div>}
-                                            </div>
-                                        ) : (
-                                            <span>{new Date(item.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-                                        )}
-                                    </div>
-                                    <ArrowRight size={12} className="opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all text-indigo-400" />
-                                </div>
+            {/* 3. Main Content: Workspaces Gallery OR Items Grid */}
+            {viewSection === 'workspaces' ? (
+                <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-950">
+                    <div className="max-w-6xl mx-auto space-y-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                            <div>
+                                <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
+                                    <LayoutDashboard className="w-5 h-5 text-indigo-400" />
+                                    Generative Workspaces & Plugins
+                                </h2>
+                                <p className="text-xs text-slate-400 mt-1">
+                                    Dynamic domain dashboard manifests designed by AI or customized by you. Zero hardcoded pages.
+                                </p>
                             </div>
-                        ))}
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => { setShowImportModal(true); setImportError(null); }}
+                                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 flex items-center gap-1.5 transition-colors"
+                                >
+                                    <Download size={13} />
+                                    Import Manifest
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Category filter pills */}
+                        <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+                            {['all', 'fitness', 'wellness', 'productivity'].map(cat => (
+                                <button
+                                    key={cat}
+                                    type="button"
+                                    onClick={() => setWorkspaceCategoryFilter(cat)}
+                                    className={`px-3 py-1 rounded-full uppercase tracking-wider text-[11px] font-semibold transition-colors border ${workspaceCategoryFilter === cat ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'}`}
+                                >
+                                    {cat}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Plugin Cards Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
+                            {pluginsList
+                                .filter(p => workspaceCategoryFilter === 'all' || p.category === workspaceCategoryFilter)
+                                .map(plugin => (
+                                    <div
+                                        key={plugin.id}
+                                        className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between hover:border-slate-700 transition-all shadow-md group"
+                                    >
+                                        <div>
+                                            <div className="flex items-start justify-between gap-2 mb-3">
+                                                <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+                                                    {plugin.icon === 'dumbbell' ? <Dumbbell size={20} /> : plugin.icon === 'sparkles' ? <Sparkles size={20} /> : <Target size={20} />}
+                                                </div>
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 uppercase">
+                                                        {plugin.category}
+                                                    </span>
+                                                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-400 border border-indigo-800/40">
+                                                        v{plugin.version}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <h3 className="font-bold text-slate-100 text-base mb-1.5 group-hover:text-indigo-400 transition-colors">
+                                                {plugin.name}
+                                            </h3>
+                                            <p className="text-xs text-slate-400 leading-relaxed mb-4">
+                                                {plugin.description}
+                                            </p>
+
+                                            <div className="space-y-1.5 mb-4">
+                                                <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                                                    Included Widgets ({plugin.manifest.widgets.length})
+                                                </div>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {plugin.manifest.widgets.map(w => (
+                                                        <span key={w.id} className="text-[10px] bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-slate-300">
+                                                            {w.title}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="pt-4 border-t border-slate-800 flex items-center justify-between gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    try {
+                                                        const json = globalWorkspacePluginRegistry.exportPlugin(plugin.id);
+                                                        navigator.clipboard.writeText(json);
+                                                        addToast('Manifest JSON copied to clipboard!', 'success');
+                                                    } catch {
+                                                        addToast('Could not copy manifest', 'error');
+                                                    }
+                                                }}
+                                                className="px-2.5 py-1.5 text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg flex items-center gap-1 transition-colors"
+                                                title="Copy Manifest JSON"
+                                            >
+                                                <Copy size={13} />
+                                                Export
+                                            </button>
+
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setActiveDashboardId(plugin.id);
+                                                    setView('generative_dashboard');
+                                                }}
+                                                className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-md shadow-indigo-500/20 transition-all hover:scale-105 active:scale-95"
+                                            >
+                                                Launch Workspace
+                                                <ArrowRight size={13} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                        </div>
                     </div>
-                )}
-            </div>
+                </div>
+            ) : (
+                <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-slate-950">
+                    {filteredItems.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-slate-600">
+                            <div className="w-16 h-16 rounded-full bg-slate-900 flex items-center justify-center mb-4">
+                                <Search size={24} className="opacity-20" />
+                            </div>
+                            <p className="font-medium">No results found</p>
+                            {hasActiveFilters && <button onClick={clearFilters} className="mt-2 text-sm text-indigo-400 hover:underline">Clear Filters</button>}
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 pb-20">
+                            {filteredItems.map(item => (
+                                <div
+                                    key={item.id}
+                                    onClick={() => selectEntity(item.id)}
+                                    className={`
+                                        group relative flex flex-col h-48 bg-slate-900 rounded-2xl overflow-hidden cursor-pointer transition-all duration-200
+                                        ${selectedIds.has(item.id)
+                                            ? 'ring-2 ring-indigo-500 shadow-lg shadow-indigo-500/20 scale-[1.02] bg-slate-800'
+                                            : 'border border-slate-800/60 hover:border-slate-700 hover:shadow-xl hover:-translate-y-1'
+                                        }
+                                    `}
+                                >
+                                    {/* Header */}
+                                    <div className="p-4 flex justify-between items-start gap-2">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1.5">
+                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wide ${getKindColorClass(item.kind)}`}>
+                                                    {item.kind}
+                                                </span>
+                                                {item.priority > 1 && <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" title="High Priority" />}
+                                            </div>
+                                            <h3 className="font-bold text-slate-100 text-sm truncate leading-snug group-hover:text-indigo-400 transition-colors">
+                                                {item.title}
+                                            </h3>
+                                        </div>
+                                        <button
+                                            onClick={(e) => toggleSelect(item.id, e)}
+                                            className={`shrink-0 p-1.5 rounded-lg transition-colors ${selectedIds.has(item.id) ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500 opacity-0 group-hover:opacity-100 hover:bg-slate-700 hover:text-slate-300'}`}
+                                        >
+                                            {selectedIds.has(item.id) ? <CheckSquare size={14} /> : <Square size={14} />}
+                                        </button>
+                                    </div>
+
+                                    {/* Body */}
+                                    <div className="px-4 pb-2 flex-1 relative">
+                                        <div className="text-xs text-slate-400 line-clamp-3 leading-relaxed">
+                                            {item.description ? <MarkdownText content={item.description} /> : <span className="italic opacity-30">No content</span>}
+                                        </div>
+                                        {/* Gradient Fade for text */}
+                                        <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-slate-900 to-transparent pointer-events-none" />
+                                    </div>
+
+                                    {/* Link / Metadata Footer */}
+                                    <div className="px-4 py-3 bg-slate-950/30 border-t border-slate-800/50 flex items-center justify-between text-[10px] text-slate-500">
+                                        <div className="flex items-center gap-2">
+                                            {item.canonical_tags && item.canonical_tags.length > 0 ? (
+                                                <div className="flex -space-x-1">
+                                                    <div className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-400 truncate max-w-[80px]">#{item.canonical_tags[0]}</div>
+                                                    {item.canonical_tags.length > 1 && <div className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-500">+{item.canonical_tags.length - 1}</div>}
+                                                </div>
+                                            ) : (
+                                                <span>{new Date(item.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                                            )}
+                                        </div>
+                                        <ArrowRight size={12} className="opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all text-indigo-400" />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Import Workspace Plugin Modal */}
+            {showImportModal && (
+                <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 space-y-4 shadow-2xl">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                                <Download className="w-4 h-4 text-indigo-400" />
+                                Import Workspace Plugin Manifest
+                            </h3>
+                            <button
+                                type="button"
+                                onClick={() => setShowImportModal(false)}
+                                className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-slate-200"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+                        <p className="text-xs text-slate-400">
+                            Paste a valid Flowmate DashboardManifest JSON to dynamically instantiate and register the generative workspace.
+                        </p>
+                        <textarea
+                            value={importJsonText}
+                            onChange={(e) => { setImportJsonText(e.target.value); setImportError(null); }}
+                            rows={8}
+                            placeholder={`{\n  "id": "custom-workspace",\n  "name": "Custom Dashboard",\n  "description": "My custom layout",\n  "version": "1.0.0",\n  "category": "custom",\n  "icon": "target",\n  "manifest": {\n    "id": "dash-custom",\n    "title": "Custom Dashboard",\n    "widgets": []\n  }\n}`}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs font-mono text-slate-200 outline-none focus:border-indigo-500/50"
+                        />
+                        {importError && (
+                            <p className="text-xs text-rose-400 font-medium">{importError}</p>
+                        )}
+                        <div className="flex justify-end gap-2 pt-2">
+                            <button
+                                type="button"
+                                onClick={() => setShowImportModal(false)}
+                                className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    try {
+                                        const imported = globalWorkspacePluginRegistry.importPlugin(importJsonText);
+                                        setPluginsList(globalWorkspacePluginRegistry.listPlugins());
+                                        setShowImportModal(false);
+                                        setImportJsonText('');
+                                        addToast(`Imported ${imported.name} successfully!`, 'success');
+                                        setActiveDashboardId(imported.id);
+                                        setView('generative_dashboard');
+                                    } catch (err: unknown) {
+                                        setImportError(err instanceof Error ? err.message : 'Invalid JSON');
+                                    }
+                                }}
+                                disabled={!importJsonText.trim()}
+                                className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-md transition-all"
+                            >
+                                Import & Launch
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
