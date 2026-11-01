@@ -40,7 +40,8 @@ export type SyncEntityKind =
   | 'chat_streaming'
   | 'settings'
   | 'attendance'
-  | 'food_logs';
+  | 'food_logs'
+  | 'workspace_plugin';
 
 export type SyncOperationType = 'upsert' | 'delete';
 

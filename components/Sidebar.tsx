@@ -1,6 +1,7 @@
 import React from 'react';
 import { useStore } from '../store';
 import { ViewType } from '../types';
+import { globalWorkspacePluginRegistry } from '../services/workspaces/workspacePluginRegistry';
 import {
   LayoutDashboard,
   MessageSquare,
@@ -15,7 +16,8 @@ import {
   Minimize2,
   TrendingUp,
   Network,
-  Search
+  Search,
+  Layers,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -29,6 +31,13 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
   const { currentView, setView, getXP, undo, redo, canUndo, canRedo, toggleZenMode, isZenMode, settings } = useStore();
 
   const handleNav = (view: ViewType) => {
+    if (view === 'generative_dashboard') {
+      const activeId = useStore.getState().activeDashboardId;
+      if (!activeId) {
+        const first = globalWorkspacePluginRegistry.listPlugins()[0];
+        if (first) useStore.getState().setActiveDashboardId(first.id);
+      }
+    }
     setView(view);
     onNavigate?.();
   };
@@ -49,6 +58,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onCreateClick, onNavigate, forceExpan
   const navItems: Array<{ icon: any; label: string; view: ViewType; mobileOnly?: boolean }> = [
     { icon: LayoutDashboard, label: 'Dashboard', view: 'dashboard' as ViewType },
     { icon: MessageSquare, label: 'Chat', view: 'chat' as ViewType },
+    { icon: Layers, label: 'Workspaces', view: 'generative_dashboard' as ViewType },
     { icon: Network, label: 'Graph', view: 'chat_graph' as ViewType },
     { icon: Calendar, label: 'Calendar', view: 'calendar' as ViewType },
     { icon: TrendingUp, label: 'Analytics', view: 'analytics' as ViewType },

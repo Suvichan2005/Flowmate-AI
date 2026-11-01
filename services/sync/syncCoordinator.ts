@@ -23,6 +23,8 @@ import { globalWebSocketRelayProvider, WebSocketRelayProvider } from './provider
 import { globalFirestoreSyncProvider, FirestoreSyncProvider } from './providers/firestoreSyncProvider';
 import { globalGoogleDriveProvider, GoogleDriveProvider } from './providers/googleDriveProvider';
 import { auth } from '../firebase';
+import { WorkspacePlugin, globalWorkspacePluginRegistry } from '../workspaces/workspacePluginRegistry';
+import { dynamicSchemaRegistry } from '../kernel/dynamicSchemaRegistry';
 
 const STORAGE_BACKEND_PREF_KEY = 'flowmate_sync_backend_preference_v1';
 const LAST_SYNCED_TIMESTAMP_KEY = 'flowmate_last_synced_timestamp_v1';
@@ -230,12 +232,30 @@ export class SyncCoordinator {
   /**
    * Handles incoming remote mutations delivered over WebSocket relay or storage polling.
    */
-  private handleIncomingEnvelope(envelope: SyncEnvelope): void {
+  handleIncomingEnvelope(envelope: SyncEnvelope): void {
     if (envelope.senderDeviceId === this.relay.deviceId && (!envelope.senderTabId || envelope.senderTabId === this.relay.tabId)) {
       return;
     }
 
     for (const mutation of envelope.mutations) {
+      if (mutation.entityKind === 'workspace_plugin' && mutation.data) {
+        try {
+          const plugin = mutation.data as unknown as WorkspacePlugin;
+          if (plugin && plugin.id && plugin.manifest) {
+            globalWorkspacePluginRegistry.registerPlugin(plugin);
+            if (plugin.manifest.associatedSchemas) {
+              for (const schema of plugin.manifest.associatedSchemas) {
+                if (!dynamicSchemaRegistry.has(schema.id)) {
+                  dynamicSchemaRegistry.register(schema);
+                }
+              }
+            }
+          }
+        } catch {
+          // Guarded dispatch
+        }
+      }
+
       for (const listener of this.remoteMutationListeners) {
         try {
           listener(mutation);

@@ -384,6 +384,41 @@ export const generateWorkspaceTool: FunctionDeclaration = {
   },
 };
 
+export const evolveWorkspaceTool: FunctionDeclaration = {
+  name: "evolve_workspace",
+  description:
+    "Evolve or update an existing workspace based on user instructions. Use this to add widgets (timers, metric counters, data tables, temporal split trackers), modify widget configurations, or extend schema attributes for an active workspace.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      workspace_id: {
+        type: Type.STRING,
+        description: "ID of the workspace to evolve (e.g. 'dash-research-paper-lab', 'dash-job-application-pipeline')",
+      },
+      action: {
+        type: Type.STRING,
+        enum: ["add_widget", "remove_widget", "update_widget", "extend_schema", "update_metadata"],
+        description: "Action to perform on the workspace",
+      },
+      widget: {
+        type: Type.OBJECT,
+        description: "Widget configuration to add or update (type: 'interactive_timer' | 'metric_counter' | 'entity_log_list' | 'temporal_recommendation' | 'cross_reference_summary', title, etc.)",
+      },
+      widget_id: {
+        type: Type.STRING,
+        description: "ID of the widget to remove or update",
+      },
+      schema_attribute: {
+        type: Type.OBJECT,
+        description: "New attribute definition to add to the associated schema (name, type, label, description)",
+      },
+      title: { type: Type.STRING, description: "Updated workspace title" },
+      description: { type: Type.STRING, description: "Updated workspace description" },
+    },
+    required: ["workspace_id", "action"],
+  },
+};
+
 export const FLOWMATE_TOOLS: Tool[] = [
   {
     functionDeclarations: [
@@ -393,6 +428,7 @@ export const FLOWMATE_TOOLS: Tool[] = [
       configureCommitmentTool,
       recordCommitmentEvidenceTool,
       generateWorkspaceTool,
+      evolveWorkspaceTool,
       readCalendarTool,
       searchEntitiesTool,
       lookupFoodHistoryTool,
@@ -414,6 +450,7 @@ export const ACTIVE_AI_TOOLS: Tool[] = [
       configureCommitmentTool,
       recordCommitmentEvidenceTool,
       generateWorkspaceTool,
+      evolveWorkspaceTool,
       searchMemoryTool,
       getRelevantContextTool,
       proposeMemoryUpdateTool,

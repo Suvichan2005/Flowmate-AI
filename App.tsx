@@ -2661,21 +2661,21 @@ const App: React.FC = () => {
           if (event.target === event.currentTarget) event.preventDefault();
         }}>
           <section role="dialog" aria-modal="true" aria-labelledby="legacy-workspace-title" className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-400">Sync with your Flowmate account</p>
-            <h2 id="legacy-workspace-title" className="mt-2 text-xl font-semibold text-slate-100">Sync your local workspace</h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-400">Account Sync &amp; Migration</p>
+            <h2 id="legacy-workspace-title" className="mt-2 text-xl font-semibold text-slate-100">Sync your offline work</h2>
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              You have local work saved on this device ({legacyWorkspaceRecovery.entities} items, {legacyWorkspaceRecovery.messages} chat messages, {legacyWorkspaceRecovery.chatSessions} conversations). How would you like to proceed with your signed-in account?
+              You created local content before signing in ({legacyWorkspaceRecovery.entities} items, {legacyWorkspaceRecovery.messages} chat messages, {legacyWorkspaceRecovery.chatSessions} conversations). How would you like to handle your data?
             </p>
             <p className="mt-2 text-sm leading-6 text-slate-400">
-              You can merge your local items into your account to keep everything in sync across devices, or load your existing cloud account workspace.
+              You can merge your offline items directly into your account so they sync across all your devices, or discard them to load your authoritative cloud workspace.
             </p>
             <div className="mt-6 flex flex-wrap justify-end gap-3">
               <button type="button" onClick={async () => {
                 const result = await signOut();
-                if (result.error) addToast('Could not return to the local workspace. Please try again.', 'error');
-              }} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Stay Offline</button>
-              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800">Load Cloud Workspace</button>
-              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(true)} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 shadow-sm shadow-emerald-500/20">Sync &amp; Merge Workspace (Recommended)</button>
+                if (result.error) addToast('Could not cancel sign-in. Please try again.', 'error');
+              }} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Cancel Sign-In</button>
+              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800">Discard Local &amp; Load Cloud</button>
+              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(true)} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 shadow-sm shadow-emerald-500/20">Merge with Cloud Workspace (Recommended)</button>
             </div>
           </section>
         </div>

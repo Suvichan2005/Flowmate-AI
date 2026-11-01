@@ -84,7 +84,8 @@ export function summarizeWorkspaceStorageSnapshot(identity: string, defaultSetti
                 && (session as { title?: unknown }).title === 'General Chat'
                 && !(session as { deleted?: unknown }).deleted)).length
             : 0;
-        const otherArrayKeys = ['foodLogs', 'subjects', 'classSchedule', 'holidays', 'attendanceLogs', 'auditLogs', 'syncQueue'];
+        const realFoodLogs = Array.isArray(state.foodLogs) ? state.foodLogs.length : 0;
+        const otherArrayKeys = ['subjects', 'classSchedule', 'holidays', 'attendanceLogs', 'auditLogs', 'syncQueue'];
         const otherArrayCount = otherArrayKeys.reduce((total, key) => total + (Array.isArray(state[key]) ? (state[key] as unknown[]).length : 0), 0);
         const branchValues = state.branches && typeof state.branches === 'object' ? Object.values(state.branches as Record<string, unknown>) : [];
         const customBranches = branchValues.filter(branch => branch && typeof branch === 'object'
@@ -100,7 +101,11 @@ export function summarizeWorkspaceStorageSnapshot(identity: string, defaultSetti
         const preferencesChanged = state.settings !== undefined && defaultSettings !== undefined
             && canonicalJson(state.settings) !== canonicalJson(defaultSettings);
         const hasContent = entities + relationships + messages + chatSessions + otherItems > 0 || preferencesChanged;
-        const hasRealUserContent = realEntities + relationships + messages + chatSessions + otherItems > 0;
+        // Only genuine user-created records (real entities, user messages, user chat sessions, user food logs, custom branches)
+        // constitute real unmerged content that requires user consideration before switching accounts.
+        // Default seeded subjects, academic holidays, and empty queues must never trigger legacy merge modals.
+        const genuineUserRecords = realEntities + relationships + messages + chatSessions + realFoodLogs + customBranches;
+        const hasRealUserContent = genuineUserRecords > 0;
         return { entities, relationships, messages, chatSessions, otherItems, preferencesChanged, hasContent, hasRealUserContent };
     } catch {
         return { entities: 0, relationships: 0, messages: 0, chatSessions: 0, otherItems: 0, preferencesChanged: false, hasContent: false, hasRealUserContent: false };

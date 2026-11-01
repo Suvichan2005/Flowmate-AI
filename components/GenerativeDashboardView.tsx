@@ -20,7 +20,6 @@ import {
 } from '../services/workspaces/generativeDashboardTypes';
 import { computeTemporalRecommendation } from '../services/workspaces/temporalRecommendationEngine';
 import { generativeWorkspaceManager, CANONICAL_GYM_DASHBOARD_ID } from '../services/workspaces/workspaceManager';
-import { globalWorkspacePluginRegistry } from '../services/workspaces/workspacePluginRegistry';
 import { KernelEntity } from '../services/kernel/types';
 import {
   LayoutDashboard,
@@ -39,7 +38,20 @@ import {
   TrendingUp,
   ArrowLeft,
   Flame,
+  Briefcase,
+  Code,
+  Wand2,
+  X,
+  ChevronRight,
 } from 'lucide-react';
+import { WorkspacePlugin, globalWorkspacePluginRegistry } from '../services/workspaces/workspacePluginRegistry';
+import {
+  generateWorkspaceFromPrompt,
+  evolveWorkspace,
+  createResearchPaperWorkspace,
+  createJobApplicationWorkspace,
+} from '../services/workspaces/workspaceGenerator';
+import { AttributeDefinition } from '../services/kernel/types';
 
 interface GenerativeDashboardViewProps {
   dashboardId?: string;
@@ -53,6 +65,11 @@ export const GenerativeDashboardView: React.FC<GenerativeDashboardViewProps> = (
   const applyOperations = useStore(state => state.applyOperations);
   const addToast = useStore(state => state.addToast);
   const setView = useStore(state => state.setView);
+  const setActiveDashboardIdInStore = useStore(state => state.setActiveDashboardId);
+
+  const [workspacePlugins, setWorkspacePlugins] = useState<WorkspacePlugin[]>(() =>
+    globalWorkspacePluginRegistry.listPlugins()
+  );
 
   const [activeDashboard, setActiveDashboard] = useState<DashboardManifest>(() => {
     return (
@@ -62,6 +79,11 @@ export const GenerativeDashboardView: React.FC<GenerativeDashboardViewProps> = (
     );
   });
 
+  const refreshPlugins = () => {
+    const plugins = globalWorkspacePluginRegistry.listPlugins();
+    setWorkspacePlugins(plugins);
+  };
+
   useEffect(() => {
     if (dashboardId) {
       const found =
@@ -69,34 +91,204 @@ export const GenerativeDashboardView: React.FC<GenerativeDashboardViewProps> = (
         globalWorkspacePluginRegistry.getPlugin(dashboardId)?.manifest;
       if (found) setActiveDashboard(found);
     }
+    refreshPlugins();
   }, [dashboardId]);
 
+  const handleSelectWorkspace = (pluginId: string) => {
+    const plugin = globalWorkspacePluginRegistry.getPlugin(pluginId);
+    if (plugin) {
+      setActiveDashboard(plugin.manifest);
+      setActiveDashboardIdInStore(plugin.id);
+    }
+  };
+
+  // Creation Modal State
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createTopic, setCreateTopic] = useState('');
+  const [createCategory, setCreateCategory] = useState<'education' | 'productivity' | 'fitness' | 'wellness' | 'finance' | 'custom'>('custom');
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // Evolution Modal State
+  const [showEvolveModal, setShowEvolveModal] = useState(false);
+  const [evolveType, setEvolveType] = useState<'attribute' | 'timer' | 'counter'>('attribute');
+  const [attrName, setAttrName] = useState('');
+  const [attrLabel, setAttrLabel] = useState('');
+  const [attrType, setAttrType] = useState<'string' | 'number' | 'boolean'>('string');
+  const [timerTitle, setTimerTitle] = useState('Deep Work Sprint Timer');
+  const [timerMinutes, setTimerMinutes] = useState(25);
+  const [counterTitle, setCounterTitle] = useState('Sprint Target Goals');
+  const [counterLabel, setCounterLabel] = useState('Completed Items');
+  const [counterTarget, setCounterTarget] = useState(10);
+
+  const handleGenerateWorkspace = (
+    topicOverride?: string,
+    categoryOverride?: 'education' | 'productivity' | 'fitness' | 'wellness' | 'finance' | 'custom'
+  ) => {
+    const topic = (topicOverride || createTopic).trim();
+    if (!topic) {
+      addToast('Please enter a workspace topic or brief', 'error');
+      return;
+    }
+    setIsGenerating(true);
+    try {
+      const plugin = generateWorkspaceFromPrompt({
+        topic,
+        category: categoryOverride || createCategory,
+      });
+      refreshPlugins();
+      setActiveDashboard(plugin.manifest);
+      setActiveDashboardIdInStore(plugin.id);
+      setShowCreateModal(false);
+      setCreateTopic('');
+      addToast(`✨ Generated "${plugin.name}" workspace!`, 'success');
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : 'Generation failed', 'error');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleEvolve = () => {
+    try {
+      if (evolveType === 'attribute') {
+        const cleanName = attrName.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        if (!cleanName) {
+          addToast('Please enter a field name', 'error');
+          return;
+        }
+        const cleanLabel = attrLabel.trim() || cleanName.replace('_', ' ').toUpperCase();
+        const attrDef: AttributeDefinition = {
+          name: cleanName,
+          label: cleanLabel,
+          type: attrType,
+          required: false,
+          default_value: attrType === 'number' ? 0 : attrType === 'boolean' ? false : '',
+          description: cleanLabel,
+        };
+        const res = evolveWorkspace({
+          workspace_id: activeDashboard.id,
+          action: 'extend_schema',
+          schema_attribute: attrDef,
+        });
+        setActiveDashboard(res.plugin.manifest);
+        refreshPlugins();
+        addToast(res.message, 'success');
+        setShowEvolveModal(false);
+        setAttrName('');
+        setAttrLabel('');
+      } else if (evolveType === 'timer') {
+        const newTimer: DashboardWidgetConfig = {
+          id: `widget-timer-${Date.now()}`,
+          type: 'interactive_timer',
+          title: timerTitle.trim() || 'Sprint Timer',
+          gridSpan: 2,
+          defaultSeconds: timerMinutes * 60,
+          presetSeconds: [300, 900, 1500, 3000],
+          alertSound: true,
+        };
+        const res = evolveWorkspace({
+          workspace_id: activeDashboard.id,
+          action: 'add_widget',
+          widget: newTimer,
+        });
+        setActiveDashboard(res.plugin.manifest);
+        refreshPlugins();
+        addToast(res.message, 'success');
+        setShowEvolveModal(false);
+      } else if (evolveType === 'counter') {
+        const newCounter: DashboardWidgetConfig = {
+          id: `widget-counter-${Date.now()}`,
+          type: 'metric_counter',
+          title: counterTitle.trim() || 'Milestone Goals',
+          gridSpan: 2,
+          counters: [
+            {
+              id: `target_${Date.now()}`,
+              label: counterLabel.trim() || 'Target Units',
+              unit: 'units',
+              current: 0,
+              target: counterTarget,
+              step: 1,
+              color: 'indigo',
+            },
+          ],
+        };
+        const res = evolveWorkspace({
+          workspace_id: activeDashboard.id,
+          action: 'add_widget',
+          widget: newCounter,
+        });
+        setActiveDashboard(res.plugin.manifest);
+        refreshPlugins();
+        addToast(res.message, 'success');
+        setShowEvolveModal(false);
+      }
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : 'Evolution failed', 'error');
+    }
+  };
+
   // Dynamic Icon Resolver
-  const renderDashboardIcon = () => {
-    switch (activeDashboard.icon) {
+  const renderIcon = (iconName?: string) => {
+    switch (iconName) {
       case 'dumbbell':
-        return <Dumbbell className="w-5 h-5" />;
+        return <Dumbbell className="w-4 h-4" />;
       case 'sparkles':
-        return <Sparkles className="w-5 h-5" />;
+        return <Sparkles className="w-4 h-4" />;
       case 'target':
-        return <Target className="w-5 h-5" />;
+        return <Target className="w-4 h-4" />;
       case 'book-open':
-        return <BookOpen className="w-5 h-5" />;
+        return <BookOpen className="w-4 h-4" />;
       case 'flame':
-        return <Flame className="w-5 h-5" />;
+        return <Flame className="w-4 h-4" />;
+      case 'briefcase':
+        return <Briefcase className="w-4 h-4" />;
+      case 'code':
+        return <Code className="w-4 h-4" />;
       default:
-        return <LayoutDashboard className="w-5 h-5" />;
+        return <LayoutDashboard className="w-4 h-4" />;
     }
   };
 
   return (
     <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8 space-y-6 max-w-7xl mx-auto">
+      {/* Workspaces Switcher Pill Bar */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-800/80 scrollbar-none">
+        {workspacePlugins.map(p => {
+          const isActive = p.id === activeDashboard.id;
+          return (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => handleSelectWorkspace(p.id)}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all shadow-sm ${
+                isActive
+                  ? 'bg-indigo-600 text-white border border-indigo-400/50 shadow-indigo-600/30 ring-2 ring-indigo-400/30 font-semibold'
+                  : 'bg-slate-900/90 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              <span className={isActive ? 'text-white' : 'text-slate-400'}>{renderIcon(p.icon)}</span>
+              <span>{p.name}</span>
+            </button>
+          );
+        })}
+
+        <button
+          type="button"
+          onClick={() => setShowCreateModal(true)}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600/80 to-purple-600/80 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-medium whitespace-nowrap shrink-0 shadow-sm transition"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-indigo-200" />
+          <span>+ New Workspace</span>
+        </button>
+      </div>
+
       {/* Top Banner / Workspace Identity */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <span className="flex items-center justify-center p-2 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-              {renderDashboardIcon()}
+              {renderIcon(activeDashboard.icon)}
             </span>
             <h1 className="text-2xl font-bold text-slate-100 tracking-tight">{activeDashboard.title}</h1>
             <span className="text-xs uppercase font-semibold px-2.5 py-0.5 rounded-full bg-slate-800 text-indigo-400 border border-indigo-500/30">
@@ -106,17 +298,332 @@ export const GenerativeDashboardView: React.FC<GenerativeDashboardViewProps> = (
           <p className="mt-1 text-sm text-slate-400">{activeDashboard.description}</p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setShowEvolveModal(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 transition shadow-sm"
+          >
+            <Wand2 className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Evolve Workspace</span>
+          </button>
           <button
             type="button"
             onClick={() => setView('knowledge')}
             className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
-            Workspaces Gallery
+            <span>Library</span>
           </button>
         </div>
       </div>
+
+      {/* Autonomous Workspace Creation Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2 text-slate-100 font-bold text-lg">
+                <Sparkles className="w-5 h-5 text-indigo-400" />
+                <span>Autonomous Workspace Creator</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Describe what domain you want to organize. Flowmate will autonomously generate a typed data schema, metric targets, focus timers, and reactive widgets.
+            </p>
+
+            {/* Fast Preset Templates */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Fast Presets</label>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleGenerateWorkspace('Research Paper & Literature Review', 'education')}
+                  className="p-2.5 text-left rounded-xl bg-slate-950/80 hover:bg-indigo-950/40 border border-slate-800 hover:border-indigo-500/50 transition group"
+                >
+                  <div className="text-xs font-semibold text-slate-200 group-hover:text-indigo-300 flex items-center gap-1">
+                    <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Research Lab</span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">Papers & annotations</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleGenerateWorkspace('Job & Internship Applications', 'productivity')}
+                  className="p-2.5 text-left rounded-xl bg-slate-950/80 hover:bg-indigo-950/40 border border-slate-800 hover:border-indigo-500/50 transition group"
+                >
+                  <div className="text-xs font-semibold text-slate-200 group-hover:text-indigo-300 flex items-center gap-1">
+                    <Briefcase className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Job Pipeline</span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">Stages & mock timers</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleGenerateWorkspace('Foreign Language Vocabulary Drills', 'education')}
+                  className="p-2.5 text-left rounded-xl bg-slate-950/80 hover:bg-indigo-950/40 border border-slate-800 hover:border-indigo-500/50 transition group"
+                >
+                  <div className="text-xs font-semibold text-slate-200 group-hover:text-indigo-300 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Language Drill</span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">Flashcards & reviews</div>
+                </button>
+              </div>
+            </div>
+
+            {/* Custom Description Input */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                Or describe your custom domain
+              </label>
+              <textarea
+                rows={3}
+                placeholder="e.g. Real Estate Deal Pipeline with property values, inspection stages, and closing milestones..."
+                value={createTopic}
+                onChange={e => setCreateTopic(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-indigo-500 transition resize-none"
+              />
+            </div>
+
+            {/* Category Selector */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Category</label>
+              <div className="flex flex-wrap gap-1.5">
+                {(['productivity', 'education', 'wellness', 'fitness', 'finance', 'custom'] as const).map(cat => (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => setCreateCategory(cat)}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                      createCategory === cat
+                        ? 'bg-indigo-600 text-white font-semibold'
+                        : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                    }`}
+                  >
+                    {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isGenerating || !createTopic.trim()}
+                onClick={() => handleGenerateWorkspace()}
+                className="flex items-center gap-1.5 px-5 py-2 text-xs font-semibold rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white shadow-md shadow-indigo-600/30 transition"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{isGenerating ? 'Generating...' : 'Generate Workspace'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Autonomous Workspace Evolution Modal */}
+      {showEvolveModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2 text-slate-100 font-bold text-lg">
+                <Wand2 className="w-5 h-5 text-indigo-400" />
+                <span>Evolve: {activeDashboard.title}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEvolveModal(false)}
+                className="text-slate-400 hover:text-slate-200 p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Evolution Action Type Selector */}
+            <div className="flex rounded-xl bg-slate-950 p-1 border border-slate-800">
+              <button
+                type="button"
+                onClick={() => setEvolveType('attribute')}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition ${
+                  evolveType === 'attribute' ? 'bg-indigo-600 text-white font-semibold shadow' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                + Data Field
+              </button>
+              <button
+                type="button"
+                onClick={() => setEvolveType('timer')}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition ${
+                  evolveType === 'timer' ? 'bg-indigo-600 text-white font-semibold shadow' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                + Focus Timer
+              </button>
+              <button
+                type="button"
+                onClick={() => setEvolveType('counter')}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition ${
+                  evolveType === 'counter' ? 'bg-indigo-600 text-white font-semibold shadow' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                + Target Goals
+              </button>
+            </div>
+
+            {/* Type Specific Form */}
+            {evolveType === 'attribute' && (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-400">
+                  Extends this workspace's schema. The new field will instantly appear in data tables and the quick-add bar.
+                </p>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Field Name (Key)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. rating, priority, tags, difficulty, notes"
+                    value={attrName}
+                    onChange={e => setAttrName(e.target.value)}
+                    className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Display Label</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Priority Level"
+                    value={attrLabel}
+                    onChange={e => setAttrLabel(e.target.value)}
+                    className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Field Type</label>
+                  <div className="flex gap-2 mt-1">
+                    {(['string', 'number', 'boolean'] as const).map(t => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setAttrType(t)}
+                        className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition border ${
+                          attrType === t
+                            ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500'
+                            : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200'
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {evolveType === 'timer' && (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-400">
+                  Adds a dedicated interactive countdown sprint timer to this workspace.
+                </p>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Timer Title</label>
+                  <input
+                    type="text"
+                    value={timerTitle}
+                    onChange={e => setTimerTitle(e.target.value)}
+                    className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Duration (Minutes)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={180}
+                    value={timerMinutes}
+                    onChange={e => setTimerMinutes(Number(e.target.value) || 25)}
+                    className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {evolveType === 'counter' && (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-400">
+                  Adds an interactive target counter widget to monitor daily or weekly progress.
+                </p>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Widget Title</label>
+                  <input
+                    type="text"
+                    value={counterTitle}
+                    onChange={e => setCounterTitle(e.target.value)}
+                    className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Target Label</label>
+                    <input
+                      type="text"
+                      value={counterLabel}
+                      onChange={e => setCounterLabel(e.target.value)}
+                      className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Goal Target</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={counterTarget}
+                      onChange={e => setCounterTarget(Number(e.target.value) || 10)}
+                      className="w-full mt-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowEvolveModal(false)}
+                className="px-4 py-2 text-xs font-semibold rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleEvolve}
+                className="flex items-center gap-1.5 px-5 py-2 text-xs font-semibold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-md shadow-indigo-600/30 transition"
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                <span>Apply Evolution</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Declarative Widgets Grid */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">

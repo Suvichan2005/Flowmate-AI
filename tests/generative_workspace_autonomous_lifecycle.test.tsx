@@ -48,7 +48,7 @@ function createMockKernelEntity(
       deleted_at: null,
     },
     provenance: {
-      source_type: 'user_explicit',
+      source_type: 'user',
       observed_at: now,
       confidence: 1.0,
       is_inferred: false,
@@ -73,7 +73,7 @@ describe('Autonomous Generative Workspace Lifecycle & Multi-Domain Engine', () =
       applyOperations: applyOperationsMock,
       addToast: addToastMock,
       activeDashboardId: null,
-      view: 'chat',
+      currentView: 'chat',
     });
 
     // 2. Invoke the AI generate_workspace tool for literature research
@@ -133,14 +133,14 @@ describe('Autonomous Generative Workspace Lifecycle & Multi-Domain Engine', () =
         [paperEntity.id]: paperEntity,
       },
       activeDashboardId: 'dash-research-paper-lab',
-      view: 'generative_dashboard',
+      currentView: 'generative_dashboard',
     });
 
     // 6. Mount GenerativeDashboardView and assert declarative rendering
     render(<GenerativeDashboardView dashboardId="dash-research-paper-lab" />);
 
     // Assert Workspace Header
-    expect(screen.getByText('Research Paper & Literature Studio')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Research Paper & Literature Studio' })).toBeInTheDocument();
 
     // Assert Declarative Widgets
     expect(screen.getByText('Literature Review Sprint')).toBeInTheDocument();
@@ -165,7 +165,7 @@ describe('Autonomous Generative Workspace Lifecycle & Multi-Domain Engine', () =
       applyOperations: applyOperationsMock,
       addToast: addToastMock,
       activeDashboardId: null,
-      view: 'chat',
+      currentView: 'chat',
     });
 
     // 1. Invoke the AI generate_workspace tool for career pipeline
@@ -219,14 +219,14 @@ describe('Autonomous Generative Workspace Lifecycle & Multi-Domain Engine', () =
         [jobEntity.id]: jobEntity,
       },
       activeDashboardId: 'dash-job-application-pipeline',
-      view: 'generative_dashboard',
+      currentView: 'generative_dashboard',
     });
 
     // 4. Mount GenerativeDashboardView and assert declarative rendering
     render(<GenerativeDashboardView dashboardId="dash-job-application-pipeline" />);
 
     // Assert Workspace Header
-    expect(screen.getByText('Career & Internship Pipeline')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Career & Internship Pipeline' })).toBeInTheDocument();
 
     // Assert Declarative Widgets
     expect(screen.getByText('Career Search Cadence')).toBeInTheDocument();
@@ -250,7 +250,7 @@ describe('Autonomous Generative Workspace Lifecycle & Multi-Domain Engine', () =
       applyOperations: applyOperationsMock,
       addToast: addToastMock,
       activeDashboardId: null,
-      view: 'chat',
+      currentView: 'chat',
     });
 
     // 1. Invoke tool for arbitrary custom domain
@@ -298,12 +298,12 @@ describe('Autonomous Generative Workspace Lifecycle & Multi-Domain Engine', () =
         [frenchEntity.id]: frenchEntity,
       },
       activeDashboardId: result.workspace_id,
-      view: 'generative_dashboard',
+      currentView: 'generative_dashboard',
     });
 
     // 4. Render and verify
     render(<GenerativeDashboardView dashboardId={result.workspace_id} />);
-    expect(screen.getByText('French Vocabulary Mastery')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'French Vocabulary Mastery' })).toBeInTheDocument();
     expect(screen.getByText('French Vocabulary Mastery Focus Timer')).toBeInTheDocument();
     expect(screen.getByText('Le Subjonctif Drill')).toBeInTheDocument();
     expect(screen.getByText('Review irregular forms: être, avoir, aller')).toBeInTheDocument();
@@ -319,7 +319,7 @@ describe('Autonomous Generative Workspace Lifecycle & Multi-Domain Engine', () =
       applyOperations: applyOperationsMock,
       addToast: addToastMock,
       activeDashboardId: 'dash-research-paper-lab',
-      view: 'generative_dashboard',
+      currentView: 'generative_dashboard',
     });
 
     render(<GenerativeDashboardView dashboardId="dash-research-paper-lab" />);
@@ -347,5 +347,83 @@ describe('Autonomous Generative Workspace Lifecycle & Multi-Domain Engine', () =
     expect(payload.title).toBe('Deep Residual Learning');
     expect(payload.attributes.authors).toBe('He et al.');
     expect(payload.attributes.venue).toBe('CVPR 2016');
+  });
+
+  it('autonomously evolves an existing workspace: adds widgets and extends dynamic schema contracts', async () => {
+    // 1. First ensure Literature Studio is generated
+    await dispatchToolCall(
+      {
+        name: 'generate_workspace',
+        args: {
+          topic: 'Literature Review and Research Papers',
+        },
+      },
+      []
+    );
+
+    const initialPlugin = globalWorkspacePluginRegistry.getPlugin('dash-research-paper-lab');
+    expect(initialPlugin).toBeDefined();
+    const initialWidgetCount = initialPlugin!.manifest.widgets.length;
+
+    // 2. Evolve by adding a new Metric Counter widget
+    const addWidgetResult = await dispatchToolCall(
+      {
+        name: 'evolve_workspace',
+        args: {
+          workspace_id: 'dash-research-paper-lab',
+          action: 'add_widget',
+          widget: {
+            id: 'widget-paper-citations-verified',
+            type: 'metric_counter',
+            title: 'Verified Citations',
+            gridSpan: 2,
+            counters: [
+              { id: 'verified_citations', label: 'Cross-Verified Citations', unit: 'refs', current: 5, target: 20, step: 1, color: 'emerald' },
+            ],
+          },
+        },
+      },
+      []
+    );
+
+    expect(addWidgetResult.name).toBe('evolve_workspace');
+    const addRes = addWidgetResult.response.result as { widget_count: number; message: string };
+    expect(addRes.widget_count).toBe(initialWidgetCount + 1);
+
+    // 3. Evolve by extending the dynamic schema with a new attribute ('difficulty')
+    const extendSchemaResult = await dispatchToolCall(
+      {
+        name: 'evolve_workspace',
+        args: {
+          workspace_id: 'dash-research-paper-lab',
+          action: 'extend_schema',
+          schema_attribute: {
+            name: 'difficulty',
+            label: 'Difficulty Rating',
+            type: 'string',
+            description: 'Introductory | Intermediate | Frontier',
+            required: false,
+            default_value: 'Frontier',
+          },
+        },
+      },
+      []
+    );
+
+    expect(extendSchemaResult.name).toBe('evolve_workspace');
+    const updatedSchema = dynamicSchemaRegistry.get('user/research_paper');
+    expect(updatedSchema).toBeDefined();
+    expect(updatedSchema?.attributes['difficulty']).toBeDefined();
+    expect(updatedSchema?.attributes['difficulty'].label).toBe('Difficulty Rating');
+    expect(updatedSchema?.version).toBeGreaterThanOrEqual(2);
+
+    // 4. Verify entity_log_list widget automatically incorporated the new attribute
+    const evolvedPlugin = globalWorkspacePluginRegistry.getPlugin('dash-research-paper-lab');
+    const logListWidget = evolvedPlugin?.manifest.widgets.find(w => w.type === 'entity_log_list');
+    expect(logListWidget).toBeDefined();
+    if (logListWidget && logListWidget.type === 'entity_log_list') {
+      expect(logListWidget.quickAddFields).toContain('difficulty');
+      expect(logListWidget.columns.some(col => col.key === 'difficulty')).toBe(true);
+    }
   });
 });

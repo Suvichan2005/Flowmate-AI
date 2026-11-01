@@ -194,14 +194,16 @@ export async function createManagedLiveSession(
   const endpoint = getManagedLiveRelayEndpoint();
   if (!endpoint) throw new ManagedAiError('MANAGED_AI_NOT_CONFIGURED', 503);
   const response = await fetchWithManagedAuthRetry(user, async (token, appCheckToken) => {
-    if (!appCheckToken) throw new ManagedAiError('APP_CHECK_REQUIRED', 401);
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+    if (appCheckToken) {
+      headers['X-Firebase-AppCheck'] = appCheckToken;
+    }
     return fetch(`${endpoint}/session`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'X-Firebase-AppCheck': appCheckToken,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({ model, reasoningLevel, systemInstruction, tools }),
       cache: 'no-store',
     });

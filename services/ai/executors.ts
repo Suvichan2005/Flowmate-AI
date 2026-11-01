@@ -34,7 +34,12 @@ import {
   MemoryCategory,
   selectEligibleMemories,
 } from "../context";
-import { generateWorkspaceFromPrompt, WorkspaceGenerationRequest } from "../workspaces/workspaceGenerator";
+import {
+  generateWorkspaceFromPrompt,
+  WorkspaceGenerationRequest,
+  evolveWorkspace,
+  WorkspaceEvolutionRequest,
+} from "../workspaces/workspaceGenerator";
 
 // ---------------------------------------------------------------------------
 // Argument Interfaces
@@ -45,6 +50,16 @@ export interface GenerateWorkspaceArgs {
   description?: string;
   category?: 'fitness' | 'productivity' | 'wellness' | 'education' | 'finance' | 'custom';
   icon?: string;
+}
+
+export interface EvolveWorkspaceArgs {
+  workspace_id: string;
+  action: 'add_widget' | 'remove_widget' | 'update_widget' | 'extend_schema' | 'update_metadata';
+  widget?: Record<string, unknown>;
+  widget_id?: string;
+  schema_attribute?: Record<string, unknown>;
+  title?: string;
+  description?: string;
 }
 
 export interface SearchMemoryArgs {
@@ -1282,6 +1297,21 @@ export function executeGenerateWorkspace(args: GenerateWorkspaceArgs): {
   };
 }
 
+export function executeEvolveWorkspace(args: EvolveWorkspaceArgs): {
+  workspace_id: string;
+  title: string;
+  widget_count: number;
+  message: string;
+} {
+  const result = evolveWorkspace(args as unknown as WorkspaceEvolutionRequest);
+  return {
+    workspace_id: result.plugin.id,
+    title: result.plugin.name,
+    widget_count: result.plugin.manifest.widgets.length,
+    message: result.message,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch Map
 // ---------------------------------------------------------------------------
@@ -1303,6 +1333,13 @@ export async function dispatchToolCall(
         name: call.name,
         response: {
           result: executeGenerateWorkspace(args as unknown as GenerateWorkspaceArgs) as unknown as ToolDispatchResultData,
+        },
+      };
+    case 'evolve_workspace':
+      return {
+        name: call.name,
+        response: {
+          result: executeEvolveWorkspace(args as unknown as EvolveWorkspaceArgs) as unknown as ToolDispatchResultData,
         },
       };
     case 'query_entities':

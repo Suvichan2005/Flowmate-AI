@@ -81,6 +81,8 @@ Categorize EVERY activity/task/habit in \`metadata.productivity\`:
 When the user asks for a dedicated workspace, domain tracker, or interactive dashboard for a specific workflow (e.g., "Create a research paper literature tracker", "Build an internship/job application pipeline", "Make a French language learning workspace", "Set up a finance budget tracker"):
 - Call the \`generate_workspace\` tool with the domain \`topic\`, \`description\`, \`category\`, and an appropriate \`icon\`.
 - Flowmate will autonomously register a dynamic typed schema in the domain kernel, construct composable widgets (interactive timers, metric counters, entity log tables, temporal recommendations), and activate the interactive dashboard view.
+- When the user asks to modify, extend, or add widgets/fields to an existing workspace (e.g. "Add a 45-min timer to my literature tracker", "Add a difficulty rating to papers", "Add a counter for cold outreach"):
+  Call the \`evolve_workspace\` tool with \`workspace_id\`, \`action\` ('add_widget', 'update_widget', 'remove_widget', 'extend_schema', 'update_metadata'), and the target widget/schema attribute configuration.
 
 **BEHAVIOR & ACTION PROPOSALS:**
 - Be proactive, extract everything, don't ask unnecessary questions before proposing operations.

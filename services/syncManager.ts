@@ -46,6 +46,8 @@ import type {
     ConversationBranch,
 } from '../types';
 import { canonicalJson, globalPendingMutationQueue, globalSyncCoordinator } from './sync';
+import { WorkspacePlugin, globalWorkspacePluginRegistry } from './workspaces/workspacePluginRegistry';
+import { dynamicSchemaRegistry } from './kernel/dynamicSchemaRegistry';
 
 // Sync state
 let syncUserId: string | null = null;
@@ -218,6 +220,19 @@ export const initializeSync = (
                 entities: [], relationships: [], universalTags: [],
                 chatStreaming: streaming
             });
+            return;
+        } else if (mutation.entityKind === 'workspace_plugin' && mutation.data) {
+            const plugin = mutation.data as unknown as WorkspacePlugin;
+            if (plugin && plugin.id && plugin.manifest) {
+                globalWorkspacePluginRegistry.registerPlugin(plugin);
+                if (plugin.manifest.associatedSchemas) {
+                    for (const schema of plugin.manifest.associatedSchemas) {
+                        if (!dynamicSchemaRegistry.has(schema.id)) {
+                            dynamicSchemaRegistry.register(schema);
+                        }
+                    }
+                }
+            }
             return;
         }
         if (!workspaceCloudSyncEnabled) return;
@@ -799,6 +814,18 @@ export const syncChatBranchesToCloud = async (branches: ConversationBranch[]): P
         await new Promise<void>(resolve => setTimeout(resolve, automaticRetryDelay(attempt + 1)));
     }
     return false;
+};
+
+/**
+ * Broadcasts a dynamic workspace plugin to all connected devices in real time.
+ */
+export const syncWorkspacePluginToCloud = (plugin: WorkspacePlugin): void => {
+    globalSyncCoordinator.enqueueMutation({
+        entityKind: 'workspace_plugin',
+        op: 'upsert',
+        entityId: plugin.id,
+        data: plugin as unknown as Record<string, unknown>,
+    });
 };
 
 /**

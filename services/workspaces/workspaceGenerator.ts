@@ -9,11 +9,13 @@
  * STRICT INVARIANT: ZERO `any`
  */
 
-import { SchemaDefinition } from '../kernel/types';
+import { SchemaDefinition, AttributeDefinition } from '../kernel/types';
 import { dynamicSchemaRegistry } from '../kernel/dynamicSchemaRegistry';
 import { DashboardManifest, DashboardWidgetConfig } from './generativeDashboardTypes';
 import { WorkspacePlugin, globalWorkspacePluginRegistry } from './workspacePluginRegistry';
 import { generativeWorkspaceManager } from './workspaceManager';
+import { useStore } from '../../store';
+import { syncWorkspacePluginToCloud } from '../syncManager';
 
 export interface WorkspaceGenerationRequest {
   topic: string;
@@ -104,6 +106,11 @@ export function createResearchPaperWorkspace(): WorkspacePlugin {
   if (!dynamicSchemaRegistry.has(schemaId)) {
     dynamicSchemaRegistry.register(schema);
   }
+  try {
+    useStore.setState(s => ({ schemas: { ...s.schemas, [schemaId]: schema } }));
+  } catch {
+    // In headless tests or SSR, store might not be mounted
+  }
 
   const manifest: DashboardManifest = {
     id: 'dash-research-paper-lab',
@@ -182,6 +189,12 @@ export function createResearchPaperWorkspace(): WorkspacePlugin {
   };
 
   generativeWorkspaceManager.registerDashboard(manifest);
+  globalWorkspacePluginRegistry.registerPlugin(plugin);
+  try {
+    syncWorkspacePluginToCloud(plugin);
+  } catch {
+    // Offline / test safe fallback
+  }
   return plugin;
 }
 
@@ -258,6 +271,11 @@ export function createJobApplicationWorkspace(): WorkspacePlugin {
 
   if (!dynamicSchemaRegistry.has(schemaId)) {
     dynamicSchemaRegistry.register(schema);
+  }
+  try {
+    useStore.setState(s => ({ schemas: { ...s.schemas, [schemaId]: schema } }));
+  } catch {
+    // In headless tests or SSR, store might not be mounted
   }
 
   const manifest: DashboardManifest = {
@@ -337,6 +355,12 @@ export function createJobApplicationWorkspace(): WorkspacePlugin {
   };
 
   generativeWorkspaceManager.registerDashboard(manifest);
+  globalWorkspacePluginRegistry.registerPlugin(plugin);
+  try {
+    syncWorkspacePluginToCloud(plugin);
+  } catch {
+    // Offline / test safe fallback
+  }
   return plugin;
 }
 
@@ -420,6 +444,11 @@ export function generateWorkspaceFromPrompt(request: WorkspaceGenerationRequest)
   if (!dynamicSchemaRegistry.has(schemaId)) {
     dynamicSchemaRegistry.register(schema);
   }
+  try {
+    useStore.setState(s => ({ schemas: { ...s.schemas, [schemaId]: schema } }));
+  } catch {
+    // In headless tests or SSR, store might not be mounted
+  }
 
   const manifest: DashboardManifest = {
     id: `dash-${sanitizedSlug}`,
@@ -486,5 +515,164 @@ export function generateWorkspaceFromPrompt(request: WorkspaceGenerationRequest)
 
   generativeWorkspaceManager.registerDashboard(manifest);
   globalWorkspacePluginRegistry.registerPlugin(plugin);
+  try {
+    syncWorkspacePluginToCloud(plugin);
+  } catch {
+    // Offline / test safe fallback
+  }
   return plugin;
+}
+
+export interface WorkspaceEvolutionRequest {
+  workspace_id: string;
+  action: 'add_widget' | 'remove_widget' | 'update_widget' | 'extend_schema' | 'update_metadata';
+  widget?: DashboardWidgetConfig;
+  widget_id?: string;
+  schema_attribute?: AttributeDefinition;
+  title?: string;
+  description?: string;
+}
+
+/**
+ * Evolve an existing workspace based on user instructions or automated adaptations.
+ * Adds/removes widgets, extends schemas, updates metrics/timers, and persists the changes.
+ */
+export function evolveWorkspace(request: WorkspaceEvolutionRequest): {
+  success: boolean;
+  plugin: WorkspacePlugin;
+  message: string;
+} {
+  const existingPlugin = globalWorkspacePluginRegistry.getPlugin(request.workspace_id);
+  const existingDashboard = existingPlugin?.manifest || generativeWorkspaceManager.getDashboard(request.workspace_id);
+
+  if (!existingDashboard) {
+    throw new Error(`Workspace with ID "${request.workspace_id}" not found.`);
+  }
+
+  const updatedManifest: DashboardManifest = structuredClone(existingDashboard);
+  updatedManifest.updatedAt = new Date().toISOString();
+
+  let message = `Workspace "${updatedManifest.title}" evolved successfully.`;
+
+  switch (request.action) {
+    case 'add_widget': {
+      if (!request.widget) throw new Error('Widget configuration is required for add_widget action.');
+      const widgetToAdd: DashboardWidgetConfig = {
+        ...request.widget,
+        id: request.widget.id || `widget-${Date.now().toString(36)}`,
+      };
+      updatedManifest.widgets.push(widgetToAdd);
+      message = `Added widget "${widgetToAdd.title}" to workspace "${updatedManifest.title}".`;
+      break;
+    }
+
+    case 'remove_widget': {
+      const targetId = request.widget_id || request.widget?.id;
+      if (!targetId) throw new Error('Widget ID is required for remove_widget action.');
+      const initialLen = updatedManifest.widgets.length;
+      updatedManifest.widgets = updatedManifest.widgets.filter(w => w.id !== targetId);
+      if (updatedManifest.widgets.length === initialLen) {
+        throw new Error(`Widget with ID "${targetId}" not found in workspace.`);
+      }
+      message = `Removed widget "${targetId}" from workspace "${updatedManifest.title}".`;
+      break;
+    }
+
+    case 'update_widget': {
+      if (!request.widget || !request.widget.id) {
+        throw new Error('Widget configuration with id is required for update_widget action.');
+      }
+      const idx = updatedManifest.widgets.findIndex(w => w.id === request.widget!.id);
+      if (idx === -1) {
+        throw new Error(`Widget with ID "${request.widget.id}" not found in workspace.`);
+      }
+      updatedManifest.widgets[idx] = { ...updatedManifest.widgets[idx], ...request.widget };
+      message = `Updated widget "${request.widget.title || request.widget.id}" in workspace "${updatedManifest.title}".`;
+      break;
+    }
+
+    case 'extend_schema': {
+      if (!request.schema_attribute) {
+        throw new Error('schema_attribute is required for extend_schema action.');
+      }
+      const targetSchemaId = updatedManifest.associatedSchemas[0]?.id;
+      if (!targetSchemaId) {
+        throw new Error('No associated schema found for this workspace to extend.');
+      }
+      const existingSchema = dynamicSchemaRegistry.get(targetSchemaId);
+      if (!existingSchema) {
+        throw new Error(`Schema "${targetSchemaId}" not found in dynamic registry.`);
+      }
+      const updatedSchema: SchemaDefinition = structuredClone(existingSchema);
+      updatedSchema.attributes[request.schema_attribute.name] = request.schema_attribute;
+      updatedSchema.version += 1;
+      updatedSchema.updated_at = new Date().toISOString();
+      dynamicSchemaRegistry.register(updatedSchema);
+      try {
+        useStore.setState(s => ({ schemas: { ...s.schemas, [targetSchemaId]: updatedSchema } }));
+      } catch {
+        // Safe fallback for SSR or headless tests
+      }
+
+      // Update associated schema in manifest
+      const schemaIdx = updatedManifest.associatedSchemas.findIndex(s => s.id === targetSchemaId);
+      if (schemaIdx >= 0) {
+        updatedManifest.associatedSchemas[schemaIdx] = updatedSchema;
+      }
+
+      // Also automatically update any entity_log_list widget bound to this schema
+      for (const widget of updatedManifest.widgets) {
+        if (widget.type === 'entity_log_list' && widget.schemaId === targetSchemaId) {
+          if (!widget.quickAddFields.includes(request.schema_attribute.name)) {
+            widget.quickAddFields.push(request.schema_attribute.name);
+          }
+          if (!widget.columns.some(c => c.key === request.schema_attribute!.name)) {
+            widget.columns.push({
+              key: request.schema_attribute.name,
+              label: request.schema_attribute.label,
+              type: request.schema_attribute.type === 'number' ? 'number' : request.schema_attribute.type === 'boolean' ? 'boolean' : 'string',
+              editable: true,
+            });
+          }
+        }
+      }
+      message = `Extended schema "${targetSchemaId}" with attribute "${request.schema_attribute.name}" (${request.schema_attribute.label}).`;
+      break;
+    }
+
+    case 'update_metadata': {
+      if (request.title) updatedManifest.title = request.title;
+      if (request.description) updatedManifest.description = request.description;
+      message = `Updated metadata for workspace "${updatedManifest.title}".`;
+      break;
+    }
+  }
+
+  const updatedPlugin: WorkspacePlugin = {
+    id: updatedManifest.id,
+    name: updatedManifest.title,
+    description: updatedManifest.description,
+    version: existingPlugin?.version || '1.0.0',
+    category: updatedManifest.category || existingPlugin?.category || 'custom',
+    icon: updatedManifest.icon || existingPlugin?.icon || 'sparkles',
+    author: existingPlugin?.author || 'Flowmate Autonomous Generator',
+    manifest: updatedManifest,
+    enabled: true,
+    createdAt: updatedManifest.createdAt,
+    updatedAt: updatedManifest.updatedAt,
+  };
+
+  generativeWorkspaceManager.registerDashboard(updatedManifest);
+  globalWorkspacePluginRegistry.registerPlugin(updatedPlugin);
+  try {
+    syncWorkspacePluginToCloud(updatedPlugin);
+  } catch {
+    // Offline / test safe fallback
+  }
+
+  return {
+    success: true,
+    plugin: updatedPlugin,
+    message,
+  };
 }
