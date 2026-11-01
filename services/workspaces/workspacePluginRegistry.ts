@@ -27,6 +27,8 @@ export interface WorkspacePlugin {
   enabled: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
+  deleted?: boolean;
+  deletedAt?: string | null;
 }
 
 const LOCAL_STORAGE_KEY = 'flowmate_workspace_plugins_v1';
@@ -168,7 +170,9 @@ export class WorkspacePluginRegistry {
         for (const plugin of parsed) {
           if (plugin && plugin.id && plugin.manifest) {
             this.plugins.set(plugin.id, plugin);
-            generativeWorkspaceManager.registerDashboard(plugin.manifest);
+            if (!plugin.deleted) {
+              generativeWorkspaceManager.registerDashboard(plugin.manifest);
+            }
           }
         }
       }
@@ -189,23 +193,38 @@ export class WorkspacePluginRegistry {
 
   registerPlugin(plugin: WorkspacePlugin): void {
     this.plugins.set(plugin.id, structuredClone(plugin));
-    generativeWorkspaceManager.registerDashboard(plugin.manifest);
+    if (!plugin.deleted) {
+      generativeWorkspaceManager.registerDashboard(plugin.manifest);
+    }
     this.saveToStorage();
   }
 
   unregisterPlugin(id: string): boolean {
-    const deleted = this.plugins.delete(id);
-    if (deleted) this.saveToStorage();
-    return deleted;
+    const plugin = this.plugins.get(id);
+    if (!plugin) return false;
+    const now = new Date().toISOString();
+    const updated: WorkspacePlugin = {
+      ...plugin,
+      deleted: true,
+      deletedAt: now,
+      updatedAt: now,
+    };
+    this.plugins.set(id, updated);
+    this.saveToStorage();
+    return true;
   }
 
   getPlugin(id: string): WorkspacePlugin | undefined {
     const found = this.plugins.get(id);
-    return found ? structuredClone(found) : undefined;
+    if (!found || found.deleted) return undefined;
+    return structuredClone(found);
   }
 
-  listPlugins(filter?: { category?: string; enabledOnly?: boolean }): WorkspacePlugin[] {
+  listPlugins(filter?: { category?: string; enabledOnly?: boolean; includeDeleted?: boolean }): WorkspacePlugin[] {
     let result = Array.from(this.plugins.values());
+    if (!filter?.includeDeleted) {
+      result = result.filter(p => !p.deleted);
+    }
     if (filter?.category && filter.category !== 'all') {
       result = result.filter(p => p.category === filter.category);
     }
@@ -213,6 +232,14 @@ export class WorkspacePluginRegistry {
       result = result.filter(p => p.enabled);
     }
     return result.map(p => structuredClone(p));
+  }
+
+  listAllPluginsWithTombstones(): WorkspacePlugin[] {
+    return Array.from(this.plugins.values()).map(p => structuredClone(p));
+  }
+
+  getDynamicPlugins(): WorkspacePlugin[] {
+    return this.listPlugins().filter(p => p.author !== 'Flowmate Core');
   }
 
   togglePluginEnabled(id: string, enabled?: boolean): boolean {

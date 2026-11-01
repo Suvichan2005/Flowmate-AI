@@ -34,6 +34,8 @@ import {
   MemoryCategory,
   selectEligibleMemories,
 } from "../context";
+import { AttributeDefinition } from '../kernel/types';
+import { DashboardWidgetConfig } from '../workspaces/generativeDashboardTypes';
 import {
   generateWorkspaceFromPrompt,
   WorkspaceGenerationRequest,
@@ -50,6 +52,10 @@ export interface GenerateWorkspaceArgs {
   description?: string;
   category?: 'fitness' | 'productivity' | 'wellness' | 'education' | 'finance' | 'custom';
   icon?: string;
+  custom_attributes?: Record<string, AttributeDefinition>;
+  pipeline_stages?: Array<{ id: string; label: string; color?: 'sky' | 'indigo' | 'emerald' | 'amber' | 'rose' | 'purple' | 'slate' }>;
+  suggested_widgets?: DashboardWidgetConfig[];
+  initial_records?: Array<{ title?: string; name?: string; attributes?: Record<string, unknown> }>;
 }
 
 export interface EvolveWorkspaceArgs {
@@ -1273,6 +1279,10 @@ export function executeGenerateWorkspace(args: GenerateWorkspaceArgs): {
     description: args.description,
     category: args.category,
     icon: args.icon,
+    custom_attributes: args.custom_attributes,
+    pipeline_stages: args.pipeline_stages,
+    suggested_widgets: args.suggested_widgets,
+    initial_records: args.initial_records,
   });
 
   try {

@@ -24,6 +24,8 @@ import {
     saveAttendanceData,
     saveChatSessions,
     saveChatBranches,
+    saveWorkspacePlugins,
+    saveDynamicSchemas,
     deleteChannelMessages,
     syncEntities,
     syncRelationships,
@@ -46,6 +48,7 @@ import type {
     ConversationBranch,
 } from '../types';
 import { canonicalJson, globalPendingMutationQueue, globalSyncCoordinator } from './sync';
+import { SchemaDefinition } from './kernel/types';
 import { WorkspacePlugin, globalWorkspacePluginRegistry } from './workspaces/workspacePluginRegistry';
 import { dynamicSchemaRegistry } from './kernel/dynamicSchemaRegistry';
 
@@ -136,6 +139,8 @@ type OnRemoteDataChange = (data: {
     classSchedule?: ClassSchedule[];
     holidays?: Holiday[];
     attendanceLogs?: AttendanceLog[];
+    workspacePlugins?: WorkspacePlugin[];
+    dynamicSchemas?: SchemaDefinition[];
     isInitialLoad?: boolean;
     initialReadFailed?: boolean;
     syncMetadata?: SyncReadMetadata;
@@ -234,6 +239,14 @@ export const initializeSync = (
                 }
             }
             return;
+        } else if (mutation.entityKind === 'dynamic_schema' && mutation.data) {
+            const schema = mutation.data as unknown as SchemaDefinition;
+            if (schema && schema.id) {
+                if (!dynamicSchemaRegistry.has(schema.id)) {
+                    dynamicSchemaRegistry.register(schema);
+                }
+            }
+            return;
         }
         if (!workspaceCloudSyncEnabled) return;
         if (mutation.entityKind === 'message' && mutation.data) {
@@ -295,6 +308,25 @@ const activateWorkspaceSync = (requireServerSnapshot = false): void => {
                     settings: data.settings,
                 });
             }
+            if (data.dynamicSchemas && data.dynamicSchemas.length > 0) {
+                dynamicSchemaRegistry.loadPersistedSchemas(data.dynamicSchemas);
+            }
+            if (data.workspacePlugins && data.workspacePlugins.length > 0) {
+                for (const plugin of data.workspacePlugins) {
+                    if (plugin.deleted) {
+                        globalWorkspacePluginRegistry.unregisterPlugin(plugin.id);
+                    } else {
+                        globalWorkspacePluginRegistry.registerPlugin(plugin);
+                    }
+                    if (!plugin.deleted && plugin.manifest && plugin.manifest.associatedSchemas) {
+                        for (const s of plugin.manifest.associatedSchemas) {
+                            if (!dynamicSchemaRegistry.has(s.id)) {
+                                dynamicSchemaRegistry.register(s);
+                            }
+                        }
+                    }
+                }
+            }
             if (data.syncMetadata) onSyncMetadataChange?.(data.syncMetadata);
             onRemoteDataChange?.({ ...data, isInitialLoad: true });
             // Reconcile the authenticated server snapshot into the local store
@@ -347,6 +379,27 @@ export const startRealtimeSync = (): (() => void) | null => {
         }
         // Remote updates must never be dropped while syncing or debouncing
         if (onRemoteDataChange) {
+            // Reconcile dynamic schemas and workspace plugins in real time
+            if (data.dynamicSchemas && data.dynamicSchemas.length > 0) {
+                dynamicSchemaRegistry.loadPersistedSchemas(data.dynamicSchemas);
+            }
+            if (data.workspacePlugins && data.workspacePlugins.length > 0) {
+                for (const plugin of data.workspacePlugins) {
+                    if (plugin.deleted) {
+                        globalWorkspacePluginRegistry.unregisterPlugin(plugin.id);
+                    } else {
+                        globalWorkspacePluginRegistry.registerPlugin(plugin);
+                    }
+                    if (!plugin.deleted && plugin.manifest && plugin.manifest.associatedSchemas) {
+                        for (const s of plugin.manifest.associatedSchemas) {
+                            if (!dynamicSchemaRegistry.has(s.id)) {
+                                dynamicSchemaRegistry.register(s);
+                            }
+                        }
+                    }
+                }
+            }
+
             // Filter out messages we just wrote (echo suppression)
             const filteredMessages = (data.messages || []).filter(
                 (m: Message) => !recentlyWrittenMessageIds.has(m.id)
@@ -358,6 +411,8 @@ export const startRealtimeSync = (): (() => void) | null => {
                 messages: filteredMessages.length,
                 chatSessions: data.chatSessions?.length || 0,
                 conversationBranches: data.conversationBranches?.length || 0,
+                workspacePlugins: data.workspacePlugins?.length || 0,
+                dynamicSchemas: data.dynamicSchemas?.length || 0,
             });
 
             onRemoteDataChange({
@@ -367,6 +422,8 @@ export const startRealtimeSync = (): (() => void) | null => {
                 messages: filteredMessages,
                 chatSessions: data.chatSessions || [],
                 conversationBranches: data.conversationBranches || [],
+                workspacePlugins: data.workspacePlugins || [],
+                dynamicSchemas: data.dynamicSchemas || [],
                 settings: data.settings,
             });
         }
@@ -822,10 +879,33 @@ export const syncChatBranchesToCloud = async (branches: ConversationBranch[]): P
 export const syncWorkspacePluginToCloud = (plugin: WorkspacePlugin): void => {
     globalSyncCoordinator.enqueueMutation({
         entityKind: 'workspace_plugin',
-        op: 'upsert',
+        op: plugin.deleted ? 'delete' : 'upsert',
         entityId: plugin.id,
         data: plugin as unknown as Record<string, unknown>,
     });
+    const userId = syncUserId;
+    if (userId && canWriteWorkspace()) {
+        void saveWorkspacePlugins(userId, globalWorkspacePluginRegistry.listAllPluginsWithTombstones());
+        if (plugin.manifest && plugin.manifest.associatedSchemas && plugin.manifest.associatedSchemas.length > 0) {
+            void saveDynamicSchemas(userId, dynamicSchemaRegistry.listCustom(true));
+        }
+    }
+};
+
+/**
+ * Broadcasts and persists a dynamic schema definition to cloud storage.
+ */
+export const syncDynamicSchemaToCloud = (schema: SchemaDefinition): void => {
+    globalSyncCoordinator.enqueueMutation({
+        entityKind: 'dynamic_schema',
+        op: schema.deleted || schema.deleted_at ? 'delete' : 'upsert',
+        entityId: schema.id,
+        data: schema as unknown as Record<string, unknown>,
+    });
+    const userId = syncUserId;
+    if (userId && canWriteWorkspace()) {
+        void saveDynamicSchemas(userId, dynamicSchemaRegistry.listCustom(true));
+    }
 };
 
 /**

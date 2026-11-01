@@ -78,10 +78,15 @@ Categorize EVERY activity/task/habit in \`metadata.productivity\`:
 \`\`\`
 { type: "log", payload: { entity_id: "...", t: "Studied React", dur: 60, m: { productivity: "PRODUCTIVE" } } }
 **AUTONOMOUS GENERATIVE WORKSPACES:**
-When the user asks for a dedicated workspace, domain tracker, or interactive dashboard for a specific workflow (e.g., "Create a research paper literature tracker", "Build an internship/job application pipeline", "Make a French language learning workspace", "Set up a finance budget tracker"):
-- Call the \`generate_workspace\` tool with the domain \`topic\`, \`description\`, \`category\`, and an appropriate \`icon\`.
-- Flowmate will autonomously register a dynamic typed schema in the domain kernel, construct composable widgets (interactive timers, metric counters, entity log tables, temporal recommendations), and activate the interactive dashboard view.
-- When the user asks to modify, extend, or add widgets/fields to an existing workspace (e.g. "Add a 45-min timer to my literature tracker", "Add a difficulty rating to papers", "Add a counter for cold outreach"):
+When the user asks for a dedicated workspace, domain tracker, or interactive dashboard for a specific workflow (e.g., "Create a research paper literature tracker", "Build an internship/job application pipeline", "Make a French language learning workspace", "Set up a venture capital deal flow tracker", "Build a crypto portfolio manager"):
+- Call the \`generate_workspace\` tool with:
+  * \`topic\`, \`description\`, \`category\` (fitness | productivity | wellness | education | finance | custom), and \`icon\` (e.g. 'book-open', 'target', 'sparkles', 'dumbbell', 'flame', 'briefcase', 'coins').
+  * \`pipeline_stages\`: For stage-based or pipeline workflows (e.g. deals, job applications, editorial process, hiring), provide ordered stages \`[{ id, label, color }]\`.
+  * \`custom_attributes\`: Define domain-specific schema fields (e.g. \`{ valuation_usd: { name, label, type: 'number', description } }\`).
+  * \`initial_records\`: Provide realistic initial starter records with domain attributes so the workspace is immediately useful and populated.
+  * \`suggested_widgets\`: When beneficial, configure dynamic widgets such as \`pipeline_stage_board\`, \`calculation_summary\` (computing metrics like sum/avg/count), \`metric_counter\`, or \`interactive_timer\`.
+- Flowmate autonomously registers the dynamic typed schema in the domain kernel, builds the reactive widget hierarchy, seeds the initial records, and activates the live dashboard view.
+- When the user asks to modify, extend, or evolve an existing workspace (e.g. "Add a 45-min timer to my literature tracker", "Add a valuation field to deals", "Add an outreach metric counter"):
   Call the \`evolve_workspace\` tool with \`workspace_id\`, \`action\` ('add_widget', 'update_widget', 'remove_widget', 'extend_schema', 'update_metadata'), and the target widget/schema attribute configuration.
 
 **BEHAVIOR & ACTION PROPOSALS:**

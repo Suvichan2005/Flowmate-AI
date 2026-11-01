@@ -17,6 +17,8 @@ import {
   MetricCounterConfig,
   TemporalRecommendationConfig,
   CrossReferenceSummaryConfig,
+  PipelineStageBoardConfig,
+  CalculationSummaryConfig,
 } from '../services/workspaces/generativeDashboardTypes';
 import { computeTemporalRecommendation } from '../services/workspaces/temporalRecommendationEngine';
 import { generativeWorkspaceManager, CANONICAL_GYM_DASHBOARD_ID } from '../services/workspaces/workspaceManager';
@@ -43,6 +45,9 @@ import {
   Wand2,
   X,
   ChevronRight,
+  Columns3,
+  Calculator,
+  ArrowRight,
 } from 'lucide-react';
 import { WorkspacePlugin, globalWorkspacePluginRegistry } from '../services/workspaces/workspacePluginRegistry';
 import {
@@ -52,6 +57,7 @@ import {
   createJobApplicationWorkspace,
 } from '../services/workspaces/workspaceGenerator';
 import { AttributeDefinition } from '../services/kernel/types';
+import { syncWorkspacePluginToCloud } from '../services/syncManager';
 
 interface GenerativeDashboardViewProps {
   dashboardId?: string;
@@ -100,6 +106,35 @@ export const GenerativeDashboardView: React.FC<GenerativeDashboardViewProps> = (
       setActiveDashboard(plugin.manifest);
       setActiveDashboardIdInStore(plugin.id);
     }
+  };
+
+  const isCoreDashboard = (id: string) => [
+    CANONICAL_GYM_DASHBOARD_ID,
+    'dash-wellness-command',
+    'dash-deep-work-studio',
+  ].includes(id);
+
+  const handleDeleteWorkspace = (id: string, name: string) => {
+    const plugin = globalWorkspacePluginRegistry.getPlugin(id);
+    const confirmed = typeof window !== 'undefined'
+      ? window.confirm(`Delete "${name}" workspace from all synced devices?`)
+      : true;
+    if (!confirmed) return;
+
+    globalWorkspacePluginRegistry.unregisterPlugin(id);
+    if (plugin) {
+      try {
+        syncWorkspacePluginToCloud({ ...plugin, deleted: true, deletedAt: new Date().toISOString() });
+      } catch {
+        // Safe fallback
+      }
+    }
+    refreshPlugins();
+    const remaining = globalWorkspacePluginRegistry.listPlugins();
+    const nextDashboard = remaining[0]?.manifest || generativeWorkspaceManager.listDashboards()[0];
+    setActiveDashboard(nextDashboard);
+    setActiveDashboardIdInStore(nextDashboard.id);
+    addToast(`Removed "${name}" workspace`, 'info');
   };
 
   // Creation Modal State
@@ -256,20 +291,40 @@ export const GenerativeDashboardView: React.FC<GenerativeDashboardViewProps> = (
       <div className="flex items-center gap-2 overflow-x-auto pb-2 border-b border-slate-800/80 scrollbar-none">
         {workspacePlugins.map(p => {
           const isActive = p.id === activeDashboard.id;
+          const isCore = isCoreDashboard(p.id);
           return (
-            <button
+            <div
               key={p.id}
-              type="button"
-              onClick={() => handleSelectWorkspace(p.id)}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-all shadow-sm ${
+              className={`group flex items-center rounded-xl transition-all shadow-sm ${
                 isActive
-                  ? 'bg-indigo-600 text-white border border-indigo-400/50 shadow-indigo-600/30 ring-2 ring-indigo-400/30 font-semibold'
+                  ? 'bg-indigo-600 text-white border border-indigo-400/50 shadow-indigo-600/30 ring-2 ring-indigo-400/30'
                   : 'bg-slate-900/90 text-slate-300 hover:text-white hover:bg-slate-800 border border-slate-800 hover:border-slate-700'
               }`}
             >
-              <span className={isActive ? 'text-white' : 'text-slate-400'}>{renderIcon(p.icon)}</span>
-              <span>{p.name}</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => handleSelectWorkspace(p.id)}
+                className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium whitespace-nowrap"
+              >
+                <span className={isActive ? 'text-white' : 'text-slate-400'}>{renderIcon(p.icon)}</span>
+                <span className={isActive ? 'font-semibold' : ''}>{p.name}</span>
+              </button>
+              {!isCore && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteWorkspace(p.id, p.name);
+                  }}
+                  className={`pr-2.5 pl-1 py-1 text-slate-400 hover:text-rose-300 transition ${
+                    isActive ? 'text-indigo-200 hover:text-white' : 'opacity-0 group-hover:opacity-100'
+                  }`}
+                  title={`Delete ${p.name}`}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           );
         })}
 
@@ -299,6 +354,17 @@ export const GenerativeDashboardView: React.FC<GenerativeDashboardViewProps> = (
         </div>
 
         <div className="flex items-center gap-2.5">
+          {!isCoreDashboard(activeDashboard.id) && (
+            <button
+              type="button"
+              onClick={() => handleDeleteWorkspace(activeDashboard.id, activeDashboard.title)}
+              className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 transition shadow-sm"
+              title="Delete this workspace"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>Delete</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setShowEvolveModal(true)}
@@ -716,6 +782,25 @@ const GenericWidgetRenderer: React.FC<GenericWidgetRendererProps> = ({
             applyOperations={applyOperations}
             addToast={addToast}
           />
+        </div>
+      );
+
+    case 'pipeline_stage_board':
+      return (
+        <div className={`${colSpanClass}`}>
+          <PipelineStageBoardWidget
+            config={widget}
+            kernelEntities={kernelEntities}
+            applyOperations={applyOperations}
+            addToast={addToast}
+          />
+        </div>
+      );
+
+    case 'calculation_summary':
+      return (
+        <div className={`${colSpanClass}`}>
+          <CalculationSummaryWidget config={widget} kernelEntities={kernelEntities} />
         </div>
       );
 
@@ -1188,6 +1273,296 @@ const EntityLogListWidget: React.FC<{
           </table>
         </div>
       )}
+    </div>
+  );
+};
+
+/**
+ * 6. Pipeline Stage Board Widget (Kanban Stage Flow)
+ */
+const PipelineStageBoardWidget: React.FC<{
+  config: PipelineStageBoardConfig;
+  kernelEntities: Record<string, KernelEntity>;
+  applyOperations: (ops: Array<{ type: string; payload: Record<string, unknown> }>) => void;
+  addToast: (msg: string, type: 'info' | 'success' | 'error') => void;
+}> = ({ config, kernelEntities, applyOperations, addToast }) => {
+  const [quickAddStageId, setQuickAddStageId] = useState<string | null>(null);
+  const [quickAddTitle, setQuickAddTitle] = useState('');
+
+  const matchingEntities = useMemo(() => {
+    return Object.values(kernelEntities).filter(
+      e => e.schema_id === config.schemaId && !e.lifecycle?.deleted_at
+    );
+  }, [kernelEntities, config.schemaId]);
+
+  const stageColorClasses = (color?: string) => {
+    switch (color) {
+      case 'sky':
+        return { badge: 'bg-sky-500/10 text-sky-400 border-sky-500/20', dot: 'bg-sky-400' };
+      case 'indigo':
+        return { badge: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20', dot: 'bg-indigo-400' };
+      case 'emerald':
+        return { badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20', dot: 'bg-emerald-400' };
+      case 'amber':
+        return { badge: 'bg-amber-500/10 text-amber-400 border-amber-500/20', dot: 'bg-amber-400' };
+      case 'rose':
+        return { badge: 'bg-rose-500/10 text-rose-400 border-rose-500/20', dot: 'bg-rose-400' };
+      case 'purple':
+        return { badge: 'bg-purple-500/10 text-purple-400 border-purple-500/20', dot: 'bg-purple-400' };
+      default:
+        return { badge: 'bg-slate-800 text-slate-300 border-slate-700', dot: 'bg-slate-400' };
+    }
+  };
+
+  const handleAdvanceStage = (entity: KernelEntity, currentStageId: string) => {
+    const currentIdx = config.stages.findIndex(s => s.id.toLowerCase() === currentStageId.toLowerCase());
+    if (currentIdx >= 0 && currentIdx < config.stages.length - 1) {
+      const nextStage = config.stages[currentIdx + 1];
+      applyOperations([
+        {
+          type: 'update_entity',
+          payload: {
+            id: entity.id,
+            m: {
+              ...entity.attributes,
+              [config.stageField]: nextStage.id,
+            },
+          },
+        },
+      ]);
+      addToast(`Moved to ${nextStage.label}`, 'info');
+    }
+  };
+
+  const handleQuickAdd = (stageId: string) => {
+    if (!quickAddTitle.trim()) return;
+    const id = `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const attributesPayload: Record<string, unknown> = {
+      [config.cardFields.titleField]: quickAddTitle.trim(),
+      [config.stageField]: stageId,
+      logged_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+
+    applyOperations([
+      {
+        type: 'create_entity',
+        payload: {
+          id,
+          title: quickAddTitle.trim(),
+          schema_id: config.schemaId,
+          canonical_tags: [config.schemaId.split('/')[1] || 'item'],
+          m: attributesPayload,
+          attributes: attributesPayload,
+        },
+      },
+    ]);
+
+    addToast(`Added to ${config.stages.find(s => s.id === stageId)?.label || stageId}`, 'success');
+    setQuickAddTitle('');
+    setQuickAddStageId(null);
+  };
+
+  const handleDelete = (entityId: string) => {
+    applyOperations([{ type: 'delete_entity', payload: { id: entityId } }]);
+    addToast('Card removed', 'info');
+  };
+
+  return (
+    <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5 shadow-xl space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+          <span>{config.title}</span>
+          <span className="text-xs font-mono text-slate-500">({matchingEntities.length} active)</span>
+        </h3>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5 overflow-x-auto pb-2">
+        {config.stages.map((stage, idx) => {
+          const colors = stageColorClasses(stage.color);
+          const stageItems = matchingEntities.filter(e => {
+            const raw = String(e.attributes[config.stageField] || '').toLowerCase();
+            return raw === stage.id.toLowerCase() || raw === stage.label.toLowerCase();
+          });
+
+          return (
+            <div
+              key={stage.id}
+              className="flex flex-col rounded-xl bg-slate-950/70 border border-slate-800/80 p-3 min-w-[220px]"
+            >
+              {/* Stage Header */}
+              <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800/60">
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${colors.dot}`} />
+                  <span className="text-xs font-semibold text-slate-200">{stage.label}</span>
+                </div>
+                <span className="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded-md bg-slate-800/80 text-slate-400">
+                  {stageItems.length}
+                </span>
+              </div>
+
+              {/* Cards List */}
+              <div className="flex-1 space-y-2 min-h-[80px]">
+                {stageItems.map(entity => {
+                  const title = String(entity.attributes[config.cardFields.titleField] || entity.title || 'Untitled');
+                  const subtitle = config.cardFields.subtitleField ? String(entity.attributes[config.cardFields.subtitleField] || '') : '';
+                  const badge = config.cardFields.badgeField ? String(entity.attributes[config.cardFields.badgeField] || '') : '';
+                  const meta = config.cardFields.metaField ? String(entity.attributes[config.cardFields.metaField] || '') : '';
+                  const canAdvance = idx < config.stages.length - 1;
+
+                  return (
+                    <div
+                      key={entity.id}
+                      className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 hover:border-slate-700 transition shadow-sm space-y-1.5 group"
+                    >
+                      <div className="flex items-start justify-between gap-1">
+                        <span className="text-xs font-semibold text-slate-200 leading-snug line-clamp-2">{title}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(entity.id)}
+                          className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 p-0.5 rounded transition"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+
+                      {subtitle && <p className="text-[11px] text-slate-400 line-clamp-1">{subtitle}</p>}
+
+                      <div className="flex items-center justify-between pt-1">
+                        {badge ? (
+                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${colors.badge}`}>
+                            {badge}
+                          </span>
+                        ) : meta ? (
+                          <span className="text-[10px] text-slate-500 font-mono">{meta}</span>
+                        ) : <span />}
+
+                        {canAdvance && (
+                          <button
+                            type="button"
+                            onClick={() => handleAdvanceStage(entity, stage.id)}
+                            className="flex items-center gap-0.5 text-[10px] font-semibold text-indigo-400 hover:text-indigo-300 py-0.5 px-1.5 rounded bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/20 transition"
+                          >
+                            <span>Next</span>
+                            <ArrowRight size={10} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Quick Add Inline */}
+              {quickAddStageId === stage.id ? (
+                <div className="pt-2 space-y-1.5">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="Item title..."
+                    value={quickAddTitle}
+                    onChange={e => setQuickAddTitle(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleQuickAdd(stage.id);
+                      if (e.key === 'Escape') {
+                        setQuickAddStageId(null);
+                        setQuickAddTitle('');
+                      }
+                    }}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                  />
+                  <div className="flex items-center justify-end gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setQuickAddStageId(null)}
+                      className="px-2 py-0.5 text-[10px] text-slate-400 hover:text-slate-200"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickAdd(stage.id)}
+                      className="px-2.5 py-0.5 text-[10px] font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuickAddStageId(stage.id);
+                    setQuickAddTitle('');
+                  }}
+                  className="mt-2 py-1 text-[11px] font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-900 rounded-lg border border-dashed border-slate-800 hover:border-slate-700 transition flex items-center justify-center gap-1"
+                >
+                  <Plus size={12} />
+                  <span>Add card</span>
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * 7. Calculation Summary Widget (Dynamic Financial & Domain Aggregations)
+ */
+const CalculationSummaryWidget: React.FC<{
+  config: CalculationSummaryConfig;
+  kernelEntities: Record<string, KernelEntity>;
+}> = ({ config, kernelEntities }) => {
+  const matchingEntities = useMemo(() => {
+    return Object.values(kernelEntities).filter(
+      e => e.schema_id === config.schemaId && !e.lifecycle?.deleted_at
+    );
+  }, [kernelEntities, config.schemaId]);
+
+  const cards = useMemo(() => {
+    return config.calculations.map(calc => {
+      let val = 0;
+      if (calc.aggregation === 'count') {
+        val = matchingEntities.length;
+      } else if (calc.targetField) {
+        const nums = matchingEntities
+          .map(e => Number(e.attributes[calc.targetField!]))
+          .filter(n => !isNaN(n));
+        if (calc.aggregation === 'sum') {
+          val = nums.reduce((a, b) => a + b, 0);
+        } else if (calc.aggregation === 'avg') {
+          val = nums.length > 0 ? Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 10) / 10 : 0;
+        } else if (calc.aggregation === 'max') {
+          val = nums.length > 0 ? Math.max(...nums) : 0;
+        } else if (calc.aggregation === 'min') {
+          val = nums.length > 0 ? Math.min(...nums) : 0;
+        }
+      }
+      return {
+        ...calc,
+        displayValue: calc.aggregation === 'sum' && val >= 1000 ? val.toLocaleString() : String(val),
+      };
+    });
+  }, [matchingEntities, config.calculations]);
+
+  return (
+    <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5 shadow-xl space-y-3 h-full">
+      <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{config.title}</div>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {cards.map(card => (
+          <div key={card.id} className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-1">
+            <span className="text-[11px] font-medium text-slate-400">{card.label}</span>
+            <div className="flex items-baseline gap-1">
+              {card.prefix && <span className="text-sm font-semibold text-slate-400">{card.prefix}</span>}
+              <span className="text-xl font-bold text-slate-100 font-mono tracking-tight">{card.displayValue}</span>
+              {card.unit && <span className="text-xs text-slate-400">{card.unit}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };

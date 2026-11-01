@@ -1,7 +1,7 @@
-export type SyncSnapshotSource = 'entities' | 'relationships' | 'config' | 'messages' | 'chatSessions' | 'chatBranches';
+export type SyncSnapshotSource = 'entities' | 'relationships' | 'config' | 'messages' | 'chatSessions' | 'chatBranches' | 'workspaces' | 'schemas';
 export type SyncSnapshotMetadata = { fromCache: boolean; hasPendingWrites: boolean };
 
-const SOURCES: SyncSnapshotSource[] = ['entities', 'relationships', 'config', 'messages', 'chatSessions', 'chatBranches'];
+const SOURCES: SyncSnapshotSource[] = ['entities', 'relationships', 'config', 'messages', 'chatSessions', 'chatBranches', 'workspaces', 'schemas'];
 
 /** Combines per-query Firestore metadata only after every workspace stream has emitted once. */
 export function createSyncSnapshotMetadataAggregator(

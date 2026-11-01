@@ -6,6 +6,7 @@ import { useStore } from '../store';
 import { globalWorkspacePluginRegistry } from '../services/workspaces/workspacePluginRegistry';
 import { dynamicSchemaRegistry } from '../services/kernel/dynamicSchemaRegistry';
 import { globalSyncCoordinator } from '../services/sync/syncCoordinator';
+import { generateWorkspaceFromPrompt } from '../services/workspaces/workspaceGenerator';
 
 describe('GenerativeDashboardView — Switcher, Generation & Evolution UI', () => {
   beforeEach(() => {
@@ -64,7 +65,7 @@ describe('GenerativeDashboardView — Switcher, Generation & Evolution UI', () =
 
     // Verify the newly generated workspace is registered and active
     expect(screen.getByRole('heading', { name: 'Cryptocurrency Portfolio Tracker' })).toBeInTheDocument();
-    expect(screen.getByText('Cryptocurrency Portfolio Tracker Focus Timer')).toBeInTheDocument();
+    expect(screen.getByText('Portfolio Return Summary')).toBeInTheDocument();
 
     // Verify cross-device sync mutation was broadcast
     expect(enqueueSpy).toHaveBeenCalledWith(
@@ -186,5 +187,39 @@ describe('GenerativeDashboardView — Switcher, Generation & Evolution UI', () =
     expect(globalWorkspacePluginRegistry.getPlugin('dash-remote-quantum-computing')).toBeDefined();
     // Verify remote schema registered in dynamic schema registry
     expect(dynamicSchemaRegistry.has('user/quantum_experiment')).toBe(true);
+  });
+
+  it('deletes a custom workspace, marks tombstone, and broadcasts delete mutation', () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const enqueueSpy = vi.spyOn(globalSyncCoordinator, 'enqueueMutation');
+    // Register custom workspace
+    const customWorkspace = generateWorkspaceFromPrompt({
+      topic: 'Podcast Audio Studio',
+      category: 'custom',
+    });
+    expect(globalWorkspacePluginRegistry.getPlugin(customWorkspace.id)).toBeDefined();
+
+    render(<GenerativeDashboardView dashboardId={customWorkspace.id} />);
+
+    // Click delete workspace button
+    const deleteBtn = screen.getByTitle('Delete this workspace');
+    fireEvent.click(deleteBtn);
+
+    // Verify workspace is unregistered from active list
+    expect(globalWorkspacePluginRegistry.getPlugin(customWorkspace.id)).toBeUndefined();
+    // Verify tombstone is recorded in registry
+    const tombstones = globalWorkspacePluginRegistry.listAllPluginsWithTombstones();
+    const deletedPlugin = tombstones.find(p => p.id === customWorkspace.id);
+    expect(deletedPlugin?.deleted).toBe(true);
+    expect(deletedPlugin?.deletedAt).toBeDefined();
+
+    // Verify deletion mutation broadcast
+    expect(enqueueSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityKind: 'workspace_plugin',
+        op: 'delete',
+        entityId: customWorkspace.id,
+      })
+    );
   });
 });

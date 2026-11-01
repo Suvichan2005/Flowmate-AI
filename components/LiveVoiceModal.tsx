@@ -170,6 +170,11 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose, onFallbackToCh
   }, [initManager]);
 
   useEffect(() => {
+    const handleGesture = () => {
+      void managerRef.current?.resumeAudio();
+    };
+    window.addEventListener("click", handleGesture, { once: true });
+    window.addEventListener("touchstart", handleGesture, { once: true });
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') handleClose();
     };
@@ -211,6 +216,8 @@ const LiveVoiceModal: React.FC<LiveVoiceModalProps> = ({ onClose, onFallbackToCh
     <div 
       className="w-full bg-slate-900/95 border border-indigo-500/30 rounded-2xl p-3 shadow-xl flex flex-col gap-2.5 backdrop-blur-md animate-fade-in relative overflow-hidden"
       data-testid="live-voice-modal"
+      onClick={() => void managerRef.current?.resumeAudio()}
+      onTouchStart={() => void managerRef.current?.resumeAudio()}
     >
       {/* Background ambient glow */}
       <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/5 via-sky-500/5 to-purple-500/5 pointer-events-none" />

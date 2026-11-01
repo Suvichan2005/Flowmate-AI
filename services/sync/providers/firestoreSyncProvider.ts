@@ -20,6 +20,8 @@ import {
   saveAttendanceData,
   saveChatSessions,
   saveChatBranches,
+  saveWorkspacePlugins,
+  saveDynamicSchemas,
   deleteChannelMessages,
   syncEntities,
   syncRelationships,
@@ -77,6 +79,8 @@ export class FirestoreSyncProvider implements SyncStorageProvider {
           holidays: data.holidays || [],
           attendanceLogs: data.attendanceLogs || [],
         },
+        workspacePlugins: data.workspacePlugins || [],
+        dynamicSchemas: data.dynamicSchemas || [],
       };
     } catch (err: unknown) {
       if (err instanceof Error && (err.message.includes('ERR_BLOCKED_BY_CLIENT') || err.message.includes('unavailable'))) {
@@ -95,6 +99,8 @@ export class FirestoreSyncProvider implements SyncStorageProvider {
         relationships: snapshot.relationships,
         universalTags: snapshot.universalTags,
         settings: snapshot.settings,
+        workspacePlugins: snapshot.workspacePlugins || [],
+        dynamicSchemas: snapshot.dynamicSchemas || [],
       });
 
       if (!ok) return false;
@@ -111,6 +117,12 @@ export class FirestoreSyncProvider implements SyncStorageProvider {
       }
       if (snapshot.attendance.subjects.length > 0 || snapshot.attendance.attendanceLogs.length > 0) {
         await saveAttendanceData(this.userId, snapshot.attendance);
+      }
+      if (snapshot.workspacePlugins && snapshot.workspacePlugins.length > 0) {
+        await saveWorkspacePlugins(this.userId, snapshot.workspacePlugins);
+      }
+      if (snapshot.dynamicSchemas && snapshot.dynamicSchemas.length > 0) {
+        await saveDynamicSchemas(this.userId, snapshot.dynamicSchemas);
       }
 
       return true;

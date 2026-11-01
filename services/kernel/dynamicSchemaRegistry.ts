@@ -35,8 +35,8 @@ export class DynamicSchemaRegistry {
       throw new Error(`Dynamic schema must start with 'user/' or 'custom/'. Got: "${schema.id}"`);
     }
 
-    // Register into domain kernel registry if available
-    if (this.globalRegistry && !this.globalRegistry.get(schema.id)) {
+    // Register or update into domain kernel registry if available
+    if (this.globalRegistry && !schema.deleted && !schema.deleted_at) {
       this.globalRegistry.register(schema);
     }
 
@@ -44,25 +44,68 @@ export class DynamicSchemaRegistry {
     this.customSchemas.set(schema.id, structuredClone(schema));
   }
 
-  get(id: string): SchemaDefinition | undefined {
-    return this.customSchemas.get(id) || this.globalRegistry?.get(id);
+  unregister(id: string): boolean {
+    const existing = this.customSchemas.get(id);
+    if (!existing) return false;
+    const now = new Date().toISOString();
+    const updated: SchemaDefinition = {
+      ...existing,
+      deleted: true,
+      deleted_at: now,
+      updated_at: now,
+    };
+    this.customSchemas.set(id, updated);
+    return true;
   }
 
-  listCustom(): SchemaDefinition[] {
-    return Array.from(this.customSchemas.values()).map(s => structuredClone(s));
+  get(id: string): SchemaDefinition | undefined {
+    const custom = this.customSchemas.get(id);
+    if (custom) {
+      if (custom.deleted || custom.deleted_at) return undefined;
+      return structuredClone(custom);
+    }
+    return this.globalRegistry?.get(id);
+  }
+
+  listCustom(includeDeleted = false): SchemaDefinition[] {
+    let result = Array.from(this.customSchemas.values());
+    if (!includeDeleted) {
+      result = result.filter(s => !s.deleted && !s.deleted_at);
+    }
+    return result.map(s => structuredClone(s));
   }
 
   has(id: string): boolean {
-    return this.customSchemas.has(id) || !!this.globalRegistry?.get(id);
+    const custom = this.customSchemas.get(id);
+    if (custom) {
+      return !custom.deleted && !custom.deleted_at;
+    }
+    return Boolean(this.globalRegistry?.get(id));
   }
 
   /**
    * Loads serialized dynamic schemas (e.g. from local storage or cloud sync).
+   * Intelligently merges versions, applying newer schema definitions and honoring tombstones.
    */
   loadPersistedSchemas(schemas: SchemaDefinition[]): void {
     for (const schema of schemas) {
-      if (!this.has(schema.id)) {
+      if (schema.deleted || schema.deleted_at) {
+        this.unregister(schema.id);
+        continue;
+      }
+
+      const existing = this.customSchemas.get(schema.id);
+      if (!existing) {
         this.register(schema);
+      } else {
+        const existingVersion = existing.version || 0;
+        const incomingVersion = schema.version || 0;
+        const existingTime = new Date(existing.updated_at || existing.created_at).getTime();
+        const incomingTime = new Date(schema.updated_at || schema.created_at).getTime();
+
+        if (incomingVersion > existingVersion || (incomingVersion === existingVersion && incomingTime > existingTime)) {
+          this.register(schema);
+        }
       }
     }
   }

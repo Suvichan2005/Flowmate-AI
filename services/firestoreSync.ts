@@ -48,6 +48,8 @@ import { MODEL_PREFERENCE_FIELDS, stripRemovedLocationSettings } from './modelPr
 import { createSnapshotDeduper } from './sync/snapshotDeduper';
 import { createSyncSnapshotMetadataAggregator } from './sync/snapshotMetadata';
 import { mergeConversationBranches, sameConversationBranches } from './chatBranchSync';
+import { WorkspacePlugin } from './workspaces/workspacePluginRegistry';
+import { SchemaDefinition } from './kernel/types';
 export { mergeCloudSettings, stripRemovedLocationSettings } from './modelPreferenceSync';
 
 export interface AccountWorkspaceSummary {
@@ -167,6 +169,8 @@ export interface UserData {
     classSchedule: ClassSchedule[];
     holidays: Holiday[];
     attendanceLogs: AttendanceLog[];
+    workspacePlugins?: WorkspacePlugin[];
+    dynamicSchemas?: SchemaDefinition[];
     lastSyncedAt: Timestamp | null;
     syncMetadata?: { fromCache: boolean; hasPendingWrites: boolean };
 }
@@ -182,6 +186,8 @@ interface ActiveListeners {
     messages: Unsubscribe | null;
     chatSessions: Unsubscribe | null;
     chatBranches: Unsubscribe | null;
+    workspaces: Unsubscribe | null;
+    schemas: Unsubscribe | null;
 }
 
 const listeners: ActiveListeners = {
@@ -191,6 +197,8 @@ const listeners: ActiveListeners = {
     messages: null,
     chatSessions: null,
     chatBranches: null,
+    workspaces: null,
+    schemas: null,
 };
 
 /**
@@ -376,6 +384,138 @@ export function subscribeToChatBranches(
     return unsub;
 }
 
+/** Subscribe to cross-device workspace plugins. */
+export function subscribeToWorkspacePlugins(
+    userId: string,
+    onUpdate: (plugins: WorkspacePlugin[]) => void,
+    onMetadata?: (metadata: SnapshotMetadata) => void,
+): Unsubscribe {
+    if (!isFirebaseConfigured() || !db) return () => {};
+
+    listeners.workspaces?.();
+    const unsub = onSnapshot(metaDoc(userId, 'workspaces'), { includeMetadataChanges: true }, snap => {
+        onMetadata?.(snap.metadata);
+        const plugins = snap.exists() ? snap.data().plugins : [];
+        if (Array.isArray(plugins)) onUpdate(plugins as WorkspacePlugin[]);
+    }, error => console.error('[FirestoreSync] Workspace plugins listener error:', error));
+
+    listeners.workspaces = unsub;
+    return unsub;
+}
+
+/** Subscribe to cross-device dynamic schemas. */
+export function subscribeToDynamicSchemas(
+    userId: string,
+    onUpdate: (schemas: SchemaDefinition[]) => void,
+    onMetadata?: (metadata: SnapshotMetadata) => void,
+): Unsubscribe {
+    if (!isFirebaseConfigured() || !db) return () => {};
+
+    listeners.schemas?.();
+    const unsub = onSnapshot(metaDoc(userId, 'schemas'), { includeMetadataChanges: true }, snap => {
+        onMetadata?.(snap.metadata);
+        const schemas = snap.exists() ? snap.data().schemas : [];
+        if (Array.isArray(schemas)) onUpdate(schemas as SchemaDefinition[]);
+    }, error => console.error('[FirestoreSync] Dynamic schemas listener error:', error));
+
+    listeners.schemas = unsub;
+    return unsub;
+}
+
+/**
+ * Merges local and remote workspace plugins with deterministic tombstone resolution.
+ */
+export const mergeWorkspacePlugins = (
+    local: WorkspacePlugin[],
+    remote: WorkspacePlugin[],
+): WorkspacePlugin[] => {
+    const map = new Map<string, WorkspacePlugin>();
+    remote.forEach(p => map.set(p.id, p));
+    local.forEach(localPlugin => {
+        const remotePlugin = map.get(localPlugin.id);
+        if (!remotePlugin) {
+            map.set(localPlugin.id, localPlugin);
+        } else {
+            const localDeleted = Boolean(localPlugin.deleted);
+            const remoteDeleted = Boolean(remotePlugin.deleted);
+            const localTime = new Date(localPlugin.deletedAt || localPlugin.updatedAt || localPlugin.createdAt).getTime();
+            const remoteTime = new Date(remotePlugin.deletedAt || remotePlugin.updatedAt || remotePlugin.createdAt).getTime();
+
+            if (localDeleted && !remoteDeleted) {
+                if (localTime >= remoteTime) {
+                    map.set(localPlugin.id, localPlugin);
+                } else {
+                    map.set(localPlugin.id, remotePlugin);
+                }
+            } else if (!localDeleted && remoteDeleted) {
+                if (remoteTime >= localTime) {
+                    map.set(localPlugin.id, remotePlugin);
+                } else {
+                    map.set(localPlugin.id, localPlugin);
+                }
+            } else {
+                if (localTime >= remoteTime) {
+                    map.set(localPlugin.id, localPlugin);
+                } else {
+                    map.set(localPlugin.id, remotePlugin);
+                }
+            }
+        }
+    });
+    return Array.from(map.values());
+};
+
+/**
+ * Merges local and remote dynamic schemas with schema version evolution and tombstone preservation.
+ */
+export const mergeDynamicSchemas = (
+    local: SchemaDefinition[],
+    remote: SchemaDefinition[],
+): SchemaDefinition[] => {
+    const map = new Map<string, SchemaDefinition>();
+    remote.forEach(s => map.set(s.id, s));
+    local.forEach(localSchema => {
+        const remoteSchema = map.get(localSchema.id);
+        if (!remoteSchema) {
+            map.set(localSchema.id, localSchema);
+        } else {
+            const localDeleted = Boolean(localSchema.deleted || localSchema.deleted_at);
+            const remoteDeleted = Boolean(remoteSchema.deleted || remoteSchema.deleted_at);
+            const localTime = new Date(localSchema.deleted_at || localSchema.updated_at || localSchema.created_at).getTime();
+            const remoteTime = new Date(remoteSchema.deleted_at || remoteSchema.updated_at || remoteSchema.created_at).getTime();
+
+            if (localDeleted && !remoteDeleted) {
+                if (localTime >= remoteTime) {
+                    map.set(localSchema.id, localSchema);
+                } else {
+                    map.set(localSchema.id, remoteSchema);
+                }
+            } else if (!localDeleted && remoteDeleted) {
+                if (remoteTime >= localTime) {
+                    map.set(localSchema.id, remoteSchema);
+                } else {
+                    map.set(localSchema.id, localSchema);
+                }
+            } else {
+                const localVersion = localSchema.version || 0;
+                const remoteVersion = remoteSchema.version || 0;
+                if (localVersion > remoteVersion) {
+                    map.set(localSchema.id, localSchema);
+                } else if (remoteVersion > localVersion) {
+                    map.set(localSchema.id, remoteSchema);
+                } else {
+                    if (localTime >= remoteTime) {
+                        map.set(localSchema.id, localSchema);
+                    } else {
+                        map.set(localSchema.id, remoteSchema);
+                    }
+                }
+            }
+        }
+    });
+    return Array.from(map.values());
+};
+
 /**
  * Combined subscription for all user data.
  * Fires onDataChange whenever any subcollection changes.
@@ -393,6 +533,8 @@ export const subscribeToUserData = (
     let currentMessages: Message[] = [];
     let currentChatSessions: ChatSession[] = [];
     let currentChatBranches: ConversationBranch[] = [];
+    let currentWorkspacePlugins: WorkspacePlugin[] = [];
+    let currentDynamicSchemas: SchemaDefinition[] = [];
     let currentSettings: Partial<UserSettings> | undefined;
     const shouldNotify = createSnapshotDeduper<{
         entities: Entity[];
@@ -401,6 +543,8 @@ export const subscribeToUserData = (
         messages: Message[];
         chatSessions: ChatSession[];
         conversationBranches: ConversationBranch[];
+        workspacePlugins: WorkspacePlugin[];
+        dynamicSchemas: SchemaDefinition[];
         settings: Partial<UserSettings> | undefined;
     }>();
     const updateMetadata = createSyncSnapshotMetadataAggregator(metadata => onSyncMetadataChange?.(metadata));
@@ -413,6 +557,8 @@ export const subscribeToUserData = (
             messages: currentMessages,
             chatSessions: currentChatSessions,
             conversationBranches: currentChatBranches,
+            workspacePlugins: currentWorkspacePlugins,
+            dynamicSchemas: currentDynamicSchemas,
             settings: currentSettings,
         };
         if (!shouldNotify(snapshot)) return;
@@ -450,6 +596,16 @@ export const subscribeToUserData = (
         notify();
     }, metadata => updateMetadata('chatBranches', metadata));
 
+    const unsub7 = subscribeToWorkspacePlugins(userId, (plugins) => {
+        currentWorkspacePlugins = plugins;
+        notify();
+    }, metadata => updateMetadata('workspaces', metadata));
+
+    const unsub8 = subscribeToDynamicSchemas(userId, (schemas) => {
+        currentDynamicSchemas = schemas;
+        notify();
+    }, metadata => updateMetadata('schemas', metadata));
+
     return () => {
         unsub1();
         unsub2();
@@ -457,6 +613,8 @@ export const subscribeToUserData = (
         unsub4();
         unsub5();
         unsub6();
+        unsub7();
+        unsub8();
     };
 };
 
@@ -568,7 +726,31 @@ export const loadUserData = async (userId: string, source: 'default' | 'server' 
             console.warn('[FirestoreSync] Chat branches load failed:', e);
         }
 
-        console.log(`[FirestoreSync] Loaded: ${entities.length} entities, ${relationships.length} rels, ${messages.length} msgs, ${chatSessions.length} sessions, ${conversationBranches.length} branches`);
+                // Load workspaces
+        let workspacePlugins: WorkspacePlugin[] = [];
+        try {
+            const workspacesSnap = await readDoc(metaDoc(userId, 'workspaces'));
+            readMetadata.push(workspacesSnap.metadata);
+            if (workspacesSnap.exists() && Array.isArray(workspacesSnap.data().plugins)) {
+                workspacePlugins = workspacesSnap.data().plugins as WorkspacePlugin[];
+            }
+        } catch (e) {
+            console.warn('[FirestoreSync] Workspace plugins load failed:', e);
+        }
+
+        // Load schemas
+        let dynamicSchemas: SchemaDefinition[] = [];
+        try {
+            const schemasSnap = await readDoc(metaDoc(userId, 'schemas'));
+            readMetadata.push(schemasSnap.metadata);
+            if (schemasSnap.exists() && Array.isArray(schemasSnap.data().schemas)) {
+                dynamicSchemas = schemasSnap.data().schemas as SchemaDefinition[];
+            }
+        } catch (e) {
+            console.warn('[FirestoreSync] Dynamic schemas load failed:', e);
+        }
+
+        console.log(`[FirestoreSync] Loaded: ${entities.length} entities, ${relationships.length} rels, ${messages.length} msgs, ${chatSessions.length} sessions, ${conversationBranches.length} branches, ${workspacePlugins.length} workspaces, ${dynamicSchemas.length} schemas`);
 
         return {
             entities,
@@ -583,6 +765,8 @@ export const loadUserData = async (userId: string, source: 'default' | 'server' 
             classSchedule,
             holidays,
             attendanceLogs,
+            workspacePlugins,
+            dynamicSchemas,
             lastSyncedAt: configData?.lastSyncedAt || null,
             syncMetadata: {
                 fromCache: readMetadata.some(metadata => metadata.fromCache),
@@ -947,6 +1131,72 @@ export async function saveChatBranches(userId: string, branches: ConversationBra
 }
 
 /**
+ * Save workspace plugins to meta/workspaces document.
+ */
+export async function saveWorkspacePlugins(userId: string, plugins: WorkspacePlugin[]): Promise<boolean> {
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
+
+    const ref = metaDoc(userId, 'workspaces');
+    try {
+        await runTransaction(db, async transaction => {
+            const snapshot = await transaction.get(ref);
+            const remote = snapshot.exists() && Array.isArray(snapshot.data().plugins)
+                ? snapshot.data().plugins as WorkspacePlugin[]
+                : [];
+            const merged = mergeWorkspacePlugins(plugins, remote);
+            transaction.set(ref, { plugins: sanitizeForFirestore(merged), updatedAt: serverTimestamp() }, { merge: true });
+        });
+        return true;
+    } catch (_error) {
+        try {
+            const snapshot = await getDocFromServer(ref).catch(() => getDoc(ref));
+            const remote = snapshot && snapshot.exists() && Array.isArray(snapshot.data()?.plugins)
+                ? snapshot.data()!.plugins as WorkspacePlugin[]
+                : [];
+            const merged = mergeWorkspacePlugins(plugins, remote);
+            await setDoc(ref, { plugins: sanitizeForFirestore(merged), updatedAt: serverTimestamp() }, { merge: true });
+            return true;
+        } catch (fallbackError) {
+            console.warn('[FirestoreSync] Workspace plugins fallback save failed:', fallbackError);
+            return false;
+        }
+    }
+}
+
+/**
+ * Save dynamic schemas to meta/schemas document.
+ */
+export async function saveDynamicSchemas(userId: string, schemas: SchemaDefinition[]): Promise<boolean> {
+    if (isDemoSyncBlocked() || !isFirebaseConfigured() || !db) return false;
+
+    const ref = metaDoc(userId, 'schemas');
+    try {
+        await runTransaction(db, async transaction => {
+            const snapshot = await transaction.get(ref);
+            const remote = snapshot.exists() && Array.isArray(snapshot.data().schemas)
+                ? snapshot.data().schemas as SchemaDefinition[]
+                : [];
+            const merged = mergeDynamicSchemas(schemas, remote);
+            transaction.set(ref, { schemas: sanitizeForFirestore(merged), updatedAt: serverTimestamp() }, { merge: true });
+        });
+        return true;
+    } catch (_error) {
+        try {
+            const snapshot = await getDocFromServer(ref).catch(() => getDoc(ref));
+            const remote = snapshot && snapshot.exists() && Array.isArray(snapshot.data()?.schemas)
+                ? snapshot.data()!.schemas as SchemaDefinition[]
+                : [];
+            const merged = mergeDynamicSchemas(schemas, remote);
+            await setDoc(ref, { schemas: sanitizeForFirestore(merged), updatedAt: serverTimestamp() }, { merge: true });
+            return true;
+        } catch (fallbackError) {
+            console.warn('[FirestoreSync] Dynamic schemas fallback save failed:', fallbackError);
+            return false;
+        }
+    }
+}
+
+/**
  * Full save  -  writes all entities, relationships, and messages to subcollections.
  * Used for initial migration or full sync.
  */
@@ -965,6 +1215,8 @@ export const saveUserData = async (
         classSchedule?: ClassSchedule[];
         holidays?: Holiday[];
         attendanceLogs?: AttendanceLog[];
+        workspacePlugins?: WorkspacePlugin[];
+        dynamicSchemas?: SchemaDefinition[];
     },
 ): Promise<boolean> => {
     if (isDemoSyncBlocked()) {

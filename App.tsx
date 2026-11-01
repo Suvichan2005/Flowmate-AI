@@ -52,6 +52,9 @@ import OnboardingFlow from './components/OnboardingFlow';
 import WelcomeLanding from './components/WelcomeLanding';
 import { buildOnboardingChatDraft, hasCompletedOnboarding, skipOnboarding } from './services/onboardingProfile';
 import { getManagedAiLimitCopy, type ManagedAiLimitCode } from './services/ai/managedAiLimitCopy';
+import { dynamicSchemaRegistry } from './services/kernel/dynamicSchemaRegistry';
+import { globalWorkspacePluginRegistry } from './services/workspaces/workspacePluginRegistry';
+import { SchemaDefinition } from './services/kernel/types';
 
 // Helper to safely load dynamic chunks across deployments
 function lazyWithRetry<T extends React.ComponentType<any>>(
@@ -966,6 +969,20 @@ const App: React.FC = () => {
             ...(remoteData.holidays?.length ? { holidays: remoteData.holidays } : {}),
             ...(remoteData.attendanceLogs?.length ? { attendanceLogs: remoteData.attendanceLogs } : {}),
           });
+
+          if (remoteData.dynamicSchemas?.length) {
+            dynamicSchemaRegistry.loadPersistedSchemas(remoteData.dynamicSchemas);
+            const customMap: Record<string, SchemaDefinition> = {};
+            for (const s of dynamicSchemaRegistry.listCustom()) {
+              customMap[s.id] = s;
+            }
+            useStore.setState(s => ({ schemas: { ...s.schemas, ...customMap } }));
+          }
+          if (remoteData.workspacePlugins?.length) {
+            for (const plugin of remoteData.workspacePlugins) {
+              globalWorkspacePluginRegistry.registerPlugin(plugin);
+            }
+          }
 
           // Replay identity-local chat outbox only after the server snapshot has
           // been reconciled. A missing remote message is safe to append by ID;

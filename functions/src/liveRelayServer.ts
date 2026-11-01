@@ -40,7 +40,7 @@ const syncSockets = new WebSocketServer({ noServer: true, maxPayload: 524_288 })
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const uidRef = (uid: string) => createHash('sha256').update(uid).digest('hex').slice(0, 20);
 const now = () => Date.now();
-const allowedOrigins = () => new Set((process.env.FLOWMATE_ALLOWED_ORIGINS || 'https://flowmate-ai.web.app,https://flowmate-ai.firebaseapp.com,https://flowmate-ai--managed-ai-preview-8jatmmwd.web.app,http://localhost:5173,http://127.0.0.1:5173').split(',').map(value => value.trim()).filter(Boolean));
+const allowedOrigins = () => new Set((process.env.FLOWMATE_ALLOWED_ORIGINS || 'https://flowmate-ai.web.app,https://flowmate-ai.firebaseapp.com,https://flowmate-ai--managed-ai-preview-8jatmmwd.web.app,http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173').split(',').map(value => value.trim()).filter(Boolean));
 
 interface Identity { uid: string; email?: string; allowance: 'guest' | 'account'; privileged: boolean; }
 interface Ticket { uid: string; sessionId: string; origin: string; model: string; reasoningLevel: string; allowance: 'guest' | 'account'; privileged: boolean; setupHash: string; }

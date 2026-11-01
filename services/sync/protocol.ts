@@ -23,6 +23,8 @@ import {
   TagDefinition,
   UserSettings,
 } from '../../types';
+import { WorkspacePlugin } from '../workspaces/workspacePluginRegistry';
+import { SchemaDefinition } from '../kernel/types';
 
 export type SyncStorageBackend = 'firestore' | 'googledrive' | 'local_vault';
 
@@ -41,7 +43,8 @@ export type SyncEntityKind =
   | 'settings'
   | 'attendance'
   | 'food_logs'
-  | 'workspace_plugin';
+  | 'workspace_plugin'
+  | 'dynamic_schema';
 
 export type SyncOperationType = 'upsert' | 'delete';
 
@@ -84,6 +87,8 @@ export interface FullWorkspaceSnapshot {
     readonly holidays: Holiday[];
     readonly attendanceLogs: AttendanceLog[];
   };
+  readonly workspacePlugins?: WorkspacePlugin[];
+  readonly dynamicSchemas?: SchemaDefinition[];
 }
 
 export interface SyncStatusReport {

@@ -358,13 +358,13 @@ export const queryRelationshipsTool: FunctionDeclaration = {
 export const generateWorkspaceTool: FunctionDeclaration = {
   name: "generate_workspace",
   description:
-    "Autonomously generate and register a dedicated workspace, custom schema, and tailored dashboard widgets for any domain or workflow requested by the user (e.g. Research Paper Literature Reviews, Job & Internship Applications, Language Learning, Personal Finance, Habit Sprints).",
+    "Autonomously generate and register a dedicated workspace, custom schema, pipeline stage boards, and tailored dashboard widgets for any domain or workflow requested by the user (e.g. Research Paper Literature Reviews, Job & Internship Applications, Venture Capital Deal Flow, Language Learning, Personal Finance, Habit Sprints).",
   parameters: {
     type: Type.OBJECT,
     properties: {
       topic: {
         type: Type.STRING,
-        description: "Domain or topic for the workspace (e.g. 'Research Paper Literature Review', 'Job Application Pipeline', 'French Language Learning')",
+        description: "Domain or topic for the workspace (e.g. 'Research Paper Literature Review', 'Job Application Pipeline', 'Venture Capital Deal Flow', 'French Language Learning')",
       },
       description: {
         type: Type.STRING,
@@ -377,7 +377,43 @@ export const generateWorkspaceTool: FunctionDeclaration = {
       },
       icon: {
         type: Type.STRING,
-        description: "Icon name (e.g. 'book-open', 'target', 'sparkles', 'dumbbell', 'flame')",
+        description: "Icon name (e.g. 'book-open', 'target', 'sparkles', 'dumbbell', 'flame', 'briefcase', 'coins')",
+      },
+      pipeline_stages: {
+        type: Type.ARRAY,
+        description: "Optional ordered pipeline stages for stage-based or kanban workflows (e.g. [{ id: 'sourcing', label: 'Sourcing', color: 'sky' }, { id: 'due_diligence', label: 'Due Diligence', color: 'amber' }, { id: 'term_sheet', label: 'Term Sheet', color: 'emerald' }])",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING, description: "Unique stage identifier" },
+            label: { type: Type.STRING, description: "Display label for the stage" },
+            color: { type: Type.STRING, enum: ["sky", "indigo", "emerald", "amber", "rose", "purple", "slate"], description: "Badge color" },
+          },
+          required: ["id", "label"],
+        },
+      },
+      custom_attributes: {
+        type: Type.OBJECT,
+        description: "Optional custom schema attribute definitions: { [attributeName]: { name, label, type: 'string'|'number'|'boolean'|'date', description, required?: boolean, default_value?: any } }",
+      },
+      suggested_widgets: {
+        type: Type.ARRAY,
+        description: "Optional custom dashboard widget configurations (e.g. pipeline_stage_board, calculation_summary, metric_counter, interactive_timer)",
+        items: {
+          type: Type.OBJECT,
+        },
+      },
+      initial_records: {
+        type: Type.ARRAY,
+        description: "Optional realistic starter records to immediately populate into the workspace upon creation: array of { title: string, attributes?: object }",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING, description: "Record title" },
+            attributes: { type: Type.OBJECT, description: "Domain attributes matching the workspace schema" },
+          },
+          required: ["title"],
+        },
       },
     },
     required: ["topic"],
@@ -402,7 +438,7 @@ export const evolveWorkspaceTool: FunctionDeclaration = {
       },
       widget: {
         type: Type.OBJECT,
-        description: "Widget configuration to add or update (type: 'interactive_timer' | 'metric_counter' | 'entity_log_list' | 'temporal_recommendation' | 'cross_reference_summary', title, etc.)",
+        description: "Widget configuration to add or update (type: 'interactive_timer' | 'metric_counter' | 'entity_log_list' | 'temporal_recommendation' | 'cross_reference_summary' | 'pipeline_stage_board' | 'calculation_summary', title, etc.)",
       },
       widget_id: {
         type: Type.STRING,

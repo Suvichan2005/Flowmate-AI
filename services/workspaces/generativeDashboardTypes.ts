@@ -11,7 +11,9 @@ export type WidgetType =
   | 'interactive_timer'
   | 'metric_counter'
   | 'cross_reference_summary'
-  | 'quick_stat_grid';
+  | 'quick_stat_grid'
+  | 'pipeline_stage_board'
+  | 'calculation_summary';
 
 export interface BaseWidgetConfig {
   id: string;
@@ -82,13 +84,45 @@ export interface QuickStatGridConfig extends BaseWidgetConfig {
   }>;
 }
 
+export interface PipelineStageBoardConfig extends BaseWidgetConfig {
+  type: 'pipeline_stage_board';
+  schemaId: string;
+  stageField: string;
+  stages: Array<{
+    id: string;
+    label: string;
+    color?: 'sky' | 'indigo' | 'emerald' | 'amber' | 'rose' | 'purple' | 'slate';
+  }>;
+  cardFields: {
+    titleField: string;
+    subtitleField?: string;
+    badgeField?: string;
+    metaField?: string;
+  };
+}
+
+export interface CalculationSummaryConfig extends BaseWidgetConfig {
+  type: 'calculation_summary';
+  schemaId: string;
+  calculations: Array<{
+    id: string;
+    label: string;
+    aggregation: 'count' | 'sum' | 'avg' | 'min' | 'max';
+    targetField?: string;
+    unit?: string;
+    prefix?: string;
+  }>;
+}
+
 export type DashboardWidgetConfig =
   | TemporalRecommendationConfig
   | EntityLogListConfig
   | InteractiveTimerConfig
   | MetricCounterConfig
   | CrossReferenceSummaryConfig
-  | QuickStatGridConfig;
+  | QuickStatGridConfig
+  | PipelineStageBoardConfig
+  | CalculationSummaryConfig;
 
 export interface DashboardManifest {
   id: string;

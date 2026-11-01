@@ -135,6 +135,110 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+// Convert Float32 (Web Audio) to Int16 (PCM) with hardware-rate adaptive resampling
+export class AudioResampler {
+  private phase = 0;
+  private lastSample = 0;
+
+  constructor(
+    public readonly inputRate: number,
+    public readonly targetRate: number = 16000
+  ) {}
+
+  public reset(): void {
+    this.phase = 0;
+    this.lastSample = 0;
+  }
+
+  public resample(input: Float32Array): Int16Array {
+    if (!this.inputRate || this.inputRate === this.targetRate) {
+      const output = new Int16Array(input.length);
+      for (let i = 0; i < input.length; i++) {
+        const s = Math.max(-1, Math.min(1, input[i]));
+        output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      return output;
+    }
+
+    const ratio = this.inputRate / this.targetRate;
+    const samplesNeeded = input.length - this.phase;
+    if (samplesNeeded <= 0) {
+      this.phase -= input.length;
+      return new Int16Array(0);
+    }
+
+    const outputLength = Math.max(1, Math.floor(samplesNeeded / ratio));
+    const output = new Int16Array(outputLength);
+
+    let inIdx = this.phase;
+    for (let i = 0; i < outputLength; i++) {
+      const lower = Math.floor(inIdx);
+      const frac = inIdx - lower;
+      const s0 = lower < 0 ? this.lastSample : input[lower];
+      const s1 = lower + 1 < input.length ? input[lower + 1] : input[input.length - 1];
+      const interpolated = s0 + frac * (s1 - s0);
+      const s = Math.max(-1, Math.min(1, interpolated));
+      output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      inIdx += ratio;
+    }
+
+    this.lastSample = input[input.length - 1];
+    this.phase = inIdx - input.length;
+    return output;
+  }
+}
+
+export function resampleAndConvertPCM(input: Float32Array, inputRate: number, targetRate = 16000): ArrayBuffer {
+  const resampler = new AudioResampler(inputRate, targetRate);
+  const pcm16 = resampler.resample(input);
+  return pcm16.buffer;
+}
+
+/**
+ * Safely composes Gemini Live system instruction adhering to server-side length limits.
+ * Prioritizes core architecture directives and tool execution contracts, gracefully
+ * budgeting dynamic temporal/memory context so critical operational guidelines are never truncated.
+ */
+export function buildBoundedLiveSystemInstruction(
+  coreDirective: string,
+  dynamicContexts: string[],
+  _softLimit = 3500,
+  hardLimit = 3800
+): string {
+  const trimmedCore = coreDirective.trim();
+  if (trimmedCore.length >= hardLimit) {
+    return trimmedCore.slice(0, hardLimit);
+  }
+
+  const budgetRemaining = hardLimit - trimmedCore.length - 2;
+  if (budgetRemaining <= 0) {
+    return trimmedCore;
+  }
+
+  let accumulatedContext = '';
+  for (const ctx of dynamicContexts) {
+    const trimmedCtx = ctx.trim();
+    if (!trimmedCtx) continue;
+
+    const available = hardLimit - trimmedCore.length - accumulatedContext.length - 4;
+    if (available <= 50) break;
+
+    if (trimmedCtx.length <= available) {
+      accumulatedContext += (accumulatedContext ? '\n\n' : '') + trimmedCtx;
+    } else {
+      const truncated = trimmedCtx.slice(0, Math.max(0, available - 3)) + '...';
+      accumulatedContext += (accumulatedContext ? '\n\n' : '') + truncated;
+      break;
+    }
+  }
+
+  if (!accumulatedContext) {
+    return trimmedCore;
+  }
+
+  return `${accumulatedContext}\n\n${trimmedCore}`;
+}
+
 // Convert Float32 (Web Audio) to Int16 (PCM)
 function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
   const output = new Int16Array(input.length);
@@ -381,6 +485,7 @@ export class LiveManager {
   private session: Session | null = null;
   private stream: MediaStream | null = null;
   private activeAudioSources: AudioBufferSourceNode[] = [];
+  private audioResampler: AudioResampler | null = null;
   
   // Public Analyser for UI Visualization
   public analyser: AnalyserNode | null = null;
@@ -517,6 +622,7 @@ export class LiveManager {
     this.source = null;
     this.stream?.getTracks().forEach(track => track.stop());
     this.stream = null;
+    this.audioResampler = null;
   }
 
   async connect() {
@@ -555,17 +661,26 @@ export class LiveManager {
         ? `\nImportant User Instructions:\n${settings.custom_instructions}` 
         : "";
       
-      const systemInstructionText = `${voiceContextSummary}
-
-${getOptedInOnboardingContext(useStore.getState().currentUser?.uid || 'guest')}
-
-DOMAIN ARCHITECTURE & CAPABILITIES:
+      const coreInstruction = `DOMAIN ARCHITECTURE & CAPABILITIES:
 - Calendar & Scheduling: Flowmate's calendar and daily schedule use EVENT entities. For events, meetings, or time blocks the user asks to schedule, invoke the \`schedule_event\` tool with ISO 8601 \`start_time\` and \`end_time\` in the user's configured timezone from context. Ask if a required time or timezone is unclear.
 - Actions & Operations: Tool calls generate interactive confirmation previews on the user's screen before persisting changes. User authority is strictly preserved.
 - Contexts & Projects: Domains or broad life areas (e.g., Work, Academics, Club) are CONTEXT entities. Specific initiatives with deliverables are PROJECT entities.
 - Activity Logging: Track habits and tasks with \`log_activity\` including duration and productivity classification (PRODUCTIVE, NEUTRAL, UNPRODUCTIVE).
 - Memory & Preferences: When user states preferences, routines, or durable facts, invoke \`propose_memory_update\` to stage for user confirmation.
 ${customInst}`;
+
+      const dynamicContexts = [
+        voiceContextSummary,
+        getOptedInOnboardingContext(useStore.getState().currentUser?.uid || 'guest'),
+      ];
+
+      // Safely budget dynamic context while preserving core architecture contracts intact
+      const systemInstructionText = buildBoundedLiveSystemInstruction(
+        coreInstruction,
+        dynamicContexts,
+        3500,
+        3800
+      );
 
       if (hasAiApiKey()) {
         const availableModels = await getByokLiveModelOptions();
@@ -671,11 +786,18 @@ ${customInst}`;
     // Create Processor
     this.processor = this.inputContext.createScriptProcessor(4096, 1, 1);
 
+    const actualSampleRate = this.inputContext.sampleRate || 16000;
+    this.audioResampler = new AudioResampler(actualSampleRate, 16000);
+
     this.processor.onaudioprocess = (e) => {
       if (!this.session) return;
       const inputData = e.inputBuffer.getChannelData(0);
-      const pcm16 = floatTo16BitPCM(inputData);
-      const uint8 = new Uint8Array(pcm16);
+      const currentRate = this.inputContext?.sampleRate || 16000;
+      if (!this.audioResampler || this.audioResampler.inputRate !== currentRate) {
+        this.audioResampler = new AudioResampler(currentRate, 16000);
+      }
+      const pcm16 = this.audioResampler.resample(inputData);
+      const uint8 = new Uint8Array(pcm16.buffer, pcm16.byteOffset, pcm16.byteLength);
       const base64 = bytesToBase64(uint8);
 
       try {
@@ -757,6 +879,15 @@ ${customInst}`;
 
   public getUserTurnBuffer(): string {
     return this.userTurnBuffer;
+  }
+
+  public async resumeAudio(): Promise<void> {
+    if (this.inputContext && this.inputContext.state === 'suspended') {
+      await this.inputContext.resume();
+    }
+    if (this.outputContext && this.outputContext.state === 'suspended') {
+      await this.outputContext.resume();
+    }
   }
 
   public getModelTurnBuffer(): string {

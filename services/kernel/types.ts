@@ -110,6 +110,8 @@ export interface SchemaDefinition {
   privacy_tier: PrivacyTier;
   created_at: string;
   updated_at: string;
+  deleted?: boolean;
+  deleted_at?: string | null;
 }
 
 export interface AttributeDefinition {
