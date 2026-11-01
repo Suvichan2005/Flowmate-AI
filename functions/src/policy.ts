@@ -91,6 +91,7 @@ const ALLOWED_TOOLS = new Set([
   'read_calendar', 'search_entities', 'lookup_food_history', 'get_productivity_stats',
   'lookup_goals', 'lookup_habits', 'search_memory',
   'get_relevant_context', 'propose_memory_update', 'apply_changes',
+  'generate_workspace', 'evolve_workspace',
 ]);
 
 export const isAllowedManagedTool = (name: string): boolean => ALLOWED_TOOLS.has(name);

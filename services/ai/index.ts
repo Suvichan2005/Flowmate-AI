@@ -48,7 +48,7 @@ import { getOptedInOnboardingContext } from '../onboardingProfile';
 
 // These legacy tools directly mutate local state. Managed AI receives only
 // read-only tools and apply_changes, which remains behind the existing review UI.
-const MANAGED_BLOCKED_MUTATION_TOOLS = new Set(['configure_commitment', 'record_commitment_evidence']);
+const MANAGED_BLOCKED_MUTATION_TOOLS = new Set(['configure_commitment', 'record_commitment_evidence', 'generate_workspace', 'evolve_workspace']);
 const MANAGED_AI_TOOLS = ACTIVE_AI_TOOLS.map(tool => ({
   ...tool,
   functionDeclarations: tool.functionDeclarations?.filter(declaration => !MANAGED_BLOCKED_MUTATION_TOOLS.has(declaration.name)),

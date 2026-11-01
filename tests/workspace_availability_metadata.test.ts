@@ -28,7 +28,7 @@ describe('workspace sync status evidence', () => {
   it('waits for every stream and reports cache-to-server metadata changes without data edits', () => {
     const updates: Array<{ fromCache: boolean; hasPendingWrites: boolean }> = [];
     const update = createSyncSnapshotMetadataAggregator(metadata => updates.push(metadata));
-    const sources = ['entities', 'relationships', 'config', 'messages', 'chatSessions', 'chatBranches'] as const;
+    const sources = ['entities', 'relationships', 'config', 'messages', 'chatSessions', 'chatBranches', 'workspaces', 'schemas'] as const;
     sources.forEach(source => update(source, { fromCache: true, hasPendingWrites: false }));
     expect(updates).toEqual([{ fromCache: true, hasPendingWrites: false }]);
 
@@ -39,6 +39,8 @@ describe('workspace sync status evidence', () => {
     update('config', { fromCache: false, hasPendingWrites: false });
     update('chatSessions', { fromCache: false, hasPendingWrites: false });
     update('chatBranches', { fromCache: false, hasPendingWrites: false });
+    update('workspaces', { fromCache: false, hasPendingWrites: false });
+    update('schemas', { fromCache: false, hasPendingWrites: false });
     expect(updates.at(-1)).toEqual({ fromCache: false, hasPendingWrites: false });
   });
 

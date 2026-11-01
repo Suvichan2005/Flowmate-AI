@@ -85,7 +85,7 @@ export function summarizeWorkspaceStorageSnapshot(identity: string, defaultSetti
                 && !(session as { deleted?: unknown }).deleted)).length
             : 0;
         const realFoodLogs = Array.isArray(state.foodLogs) ? state.foodLogs.length : 0;
-        const otherArrayKeys = ['subjects', 'classSchedule', 'holidays', 'attendanceLogs', 'auditLogs', 'syncQueue'];
+        const otherArrayKeys = ['foodLogs', 'subjects', 'classSchedule', 'holidays', 'attendanceLogs', 'auditLogs', 'syncQueue'];
         const otherArrayCount = otherArrayKeys.reduce((total, key) => total + (Array.isArray(state[key]) ? (state[key] as unknown[]).length : 0), 0);
         const branchValues = state.branches && typeof state.branches === 'object' ? Object.values(state.branches as Record<string, unknown>) : [];
         const customBranches = branchValues.filter(branch => branch && typeof branch === 'object'

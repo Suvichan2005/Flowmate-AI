@@ -393,24 +393,48 @@ export const generateWorkspaceTool: FunctionDeclaration = {
         },
       },
       custom_attributes: {
-        type: Type.OBJECT,
-        description: "Optional custom schema attribute definitions: { [attributeName]: { name, label, type: 'string'|'number'|'boolean'|'date', description, required?: boolean, default_value?: any } }",
+        type: Type.ARRAY,
+        description: "Optional custom schema attribute definitions",
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING, description: "Attribute identifier name (e.g. 'company', 'deal_size')" },
+            label: { type: Type.STRING, description: "Display label for the attribute" },
+            type: { type: Type.STRING, enum: ["string", "number", "boolean", "date"], description: "Data type" },
+            description: { type: Type.STRING, description: "Field description" },
+            required: { type: Type.BOOLEAN, description: "Whether this attribute is mandatory" },
+            default_value: { type: Type.STRING, description: "Default value if applicable (as string or number)" },
+          },
+          required: ["name", "label", "type"],
+        },
       },
       suggested_widgets: {
         type: Type.ARRAY,
         description: "Optional custom dashboard widget configurations (e.g. pipeline_stage_board, calculation_summary, metric_counter, interactive_timer)",
         items: {
           type: Type.OBJECT,
+          properties: {
+            id: { type: Type.STRING, description: "Widget identifier" },
+            type: {
+              type: Type.STRING,
+              enum: ["pipeline_stage_board", "calculation_summary", "metric_counter", "interactive_timer", "entity_log_list", "temporal_recommendation", "cross_reference_summary"],
+              description: "Widget type",
+            },
+            title: { type: Type.STRING, description: "Widget title" },
+            gridSpan: { type: Type.NUMBER, description: "Grid column span (1 to 4)" },
+          },
+          required: ["type", "title"],
         },
       },
       initial_records: {
         type: Type.ARRAY,
-        description: "Optional realistic starter records to immediately populate into the workspace upon creation: array of { title: string, attributes?: object }",
+        description: "Optional realistic starter records to immediately populate into the workspace upon creation: array of { title: string }",
         items: {
           type: Type.OBJECT,
           properties: {
             title: { type: Type.STRING, description: "Record title" },
-            attributes: { type: Type.OBJECT, description: "Domain attributes matching the workspace schema" },
+            stage: { type: Type.STRING, description: "Optional initial pipeline stage identifier" },
+            notes: { type: Type.STRING, description: "Optional initial notes" },
           },
           required: ["title"],
         },
@@ -438,7 +462,17 @@ export const evolveWorkspaceTool: FunctionDeclaration = {
       },
       widget: {
         type: Type.OBJECT,
-        description: "Widget configuration to add or update (type: 'interactive_timer' | 'metric_counter' | 'entity_log_list' | 'temporal_recommendation' | 'cross_reference_summary' | 'pipeline_stage_board' | 'calculation_summary', title, etc.)",
+        description: "Widget configuration to add or update",
+        properties: {
+          id: { type: Type.STRING, description: "Widget identifier" },
+          type: {
+            type: Type.STRING,
+            enum: ["pipeline_stage_board", "calculation_summary", "metric_counter", "interactive_timer", "entity_log_list", "temporal_recommendation", "cross_reference_summary"],
+            description: "Widget type",
+          },
+          title: { type: Type.STRING, description: "Widget title" },
+          gridSpan: { type: Type.NUMBER, description: "Grid column span (1 to 4)" },
+        },
       },
       widget_id: {
         type: Type.STRING,
@@ -446,7 +480,13 @@ export const evolveWorkspaceTool: FunctionDeclaration = {
       },
       schema_attribute: {
         type: Type.OBJECT,
-        description: "New attribute definition to add to the associated schema (name, type, label, description)",
+        description: "New attribute definition to add to the associated schema",
+        properties: {
+          name: { type: Type.STRING, description: "Attribute identifier name" },
+          label: { type: Type.STRING, description: "Display label" },
+          type: { type: Type.STRING, enum: ["string", "number", "boolean", "date"], description: "Data type" },
+          description: { type: Type.STRING, description: "Attribute description" },
+        },
       },
       title: { type: Type.STRING, description: "Updated workspace title" },
       description: { type: Type.STRING, description: "Updated workspace description" },
@@ -463,8 +503,6 @@ export const FLOWMATE_TOOLS: Tool[] = [
       queryCommitmentTool,
       configureCommitmentTool,
       recordCommitmentEvidenceTool,
-      generateWorkspaceTool,
-      evolveWorkspaceTool,
       readCalendarTool,
       searchEntitiesTool,
       lookupFoodHistoryTool,
