@@ -821,9 +821,10 @@ const App: React.FC = () => {
 
   // Auto-resize textarea
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + 'px';
+    const el = chatInputRef.current || textareaRef.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 120) + 'px';
     }
   }, [input]);
 
@@ -859,21 +860,35 @@ const App: React.FC = () => {
             const { messageId, text, isStreaming, branchId, channelId } = remoteData.chatStreaming;
             const currentState = useStore.getState();
             const messageExists = (currentState.messages || []).some(m => m.id === messageId);
-            if (!messageExists && isStreaming) {
+            const targetBranchId = branchId || currentState.activeBranchId || 'b_main_general';
+            if (!messageExists) {
               const streamMsg: Message = {
                 id: messageId,
                 role: 'assistant',
                 text,
                 channelId: channelId || currentState.activeSessionId || 'general',
-                branch_id: branchId || currentState.activeBranchId || 'b_main_general',
-                status: 'streaming',
+                branch_id: targetBranchId,
+                status: isStreaming ? 'streaming' : 'completed',
                 created_at: new Date().toISOString()
               };
               useStore.setState(s => ({
-                messages: [...(s.messages || []), streamMsg]
+                messages: [...(s.messages || []), streamMsg],
+                branches: s.branches.map(b => b.id === targetBranchId
+                  ? { ...b, head_message_id: messageId, updated_at: new Date().toISOString() }
+                  : b)
               }));
-            } else if (messageExists) {
+            } else {
               currentState.updateMessageText(messageId, text);
+              if (!isStreaming) {
+                useStore.setState(s => ({
+                  messages: s.messages.map(m => m.id === messageId
+                    ? { ...m, text, status: 'completed' as const }
+                    : m),
+                  branches: s.branches.map(b => b.id === targetBranchId
+                    ? { ...b, head_message_id: messageId, updated_at: new Date().toISOString() }
+                    : b)
+                }));
+              }
             }
             currentState.setIsStreaming(Boolean(isStreaming), isStreaming ? messageId : null);
             return;
@@ -1570,7 +1585,8 @@ const App: React.FC = () => {
         });
       } finally {
         setLoading(false);
-        if (!useStore.getState().isDemoMode) {
+        const finalState = useStore.getState();
+        if (!finalState.isDemoMode) {
           globalSyncCoordinator.enqueueMutation({
             entityKind: 'chat_streaming',
             op: 'upsert',
@@ -1583,6 +1599,15 @@ const App: React.FC = () => {
               channelId,
             } as unknown as Record<string, unknown>,
           });
+          const completedMessage = (finalState.messages || []).find(m => m.id === assistantMessageId);
+          if (completedMessage) {
+            void syncMessage(completedMessage).catch(error =>
+              console.warn('[App] Assistant message cloud sync failed:', error)
+            );
+            void syncChatBranchesToCloud(finalState.branches || []).catch(error =>
+              console.warn('[App] Chat branch head cloud sync failed:', error)
+            );
+          }
         }
       }
     };
@@ -2678,21 +2703,41 @@ const App: React.FC = () => {
           if (event.target === event.currentTarget) event.preventDefault();
         }}>
           <section role="dialog" aria-modal="true" aria-labelledby="legacy-workspace-title" className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-400">Account Sync &amp; Migration</p>
-            <h2 id="legacy-workspace-title" className="mt-2 text-xl font-semibold text-slate-100">Sync your offline work</h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-400">Cross-Device Workspace Sync</p>
+            <h2 id="legacy-workspace-title" className="mt-2 text-xl font-semibold text-slate-100">Connect this device to your cloud account</h2>
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              You created local content before signing in ({legacyWorkspaceRecovery.entities} items, {legacyWorkspaceRecovery.messages} chat messages, {legacyWorkspaceRecovery.chatSessions} conversations). How would you like to handle your data?
+              You are signing into Flowmate on this device. You have local content created while signed out ({legacyWorkspaceRecovery.entities} items, {legacyWorkspaceRecovery.messages} chat messages).
             </p>
             <p className="mt-2 text-sm leading-6 text-slate-400">
-              You can merge your offline items directly into your account so they sync across all your devices, or discard them to load your authoritative cloud workspace.
+              Choose how you would like to handle your data across your devices:
             </p>
-            <div className="mt-6 flex flex-wrap justify-end gap-3">
-              <button type="button" onClick={async () => {
-                const result = await signOut();
-                if (result.error) addToast('Could not cancel sign-in. Please try again.', 'error');
-              }} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Cancel Sign-In</button>
-              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800">Discard Local &amp; Load Cloud</button>
-              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(true)} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 shadow-sm shadow-emerald-500/20">Merge with Cloud Workspace (Recommended)</button>
+            <div className="mt-6 flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => resolveLegacyWorkspaceChoice(false)}
+                className="w-full text-left rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 p-4 transition shadow-sm shadow-emerald-600/20"
+              >
+                <div className="font-semibold text-sm">Load Cloud &amp; Live Sync (Recommended)</div>
+                <div className="text-xs text-slate-900/80 mt-0.5">Load your existing cloud workspace from your other devices and enable live cross-device sync.</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => resolveLegacyWorkspaceChoice(true)}
+                className="w-full text-left rounded-xl border border-slate-700 hover:border-slate-600 bg-slate-800/60 hover:bg-slate-800 text-slate-200 p-4 transition"
+              >
+                <div className="font-semibold text-sm">Merge Offline Items into Cloud</div>
+                <div className="text-xs text-slate-400 mt-0.5">Upload and combine the items created on this device into your cloud account.</div>
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const result = await signOut();
+                  if (result.error) addToast('Could not cancel sign-in. Please try again.', 'error');
+                }}
+                className="w-full text-center rounded-lg py-2.5 text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 transition"
+              >
+                Stay in Offline Guest Mode (Cancel Sign-In)
+              </button>
             </div>
           </section>
         </div>

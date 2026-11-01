@@ -1282,8 +1282,18 @@ export const useStore = create<FlowmateState>()(
                     activeBranchId: activeBranch!.id
                 }));
 
-                // Write-through message to Firestore (fire and forget — no debounce)
+                // Broadcast new message immediately over realtime WebSocket relay & persist to Firestore
                 if (!get().isDemoMode) {
+                    try {
+                        globalSyncCoordinator.enqueueMutation({
+                            entityKind: 'message',
+                            op: 'upsert',
+                            entityId: newMessage.id,
+                            data: newMessage as unknown as Record<string, unknown>,
+                        });
+                    } catch {
+                        // Safe fallback if coordinator inactive
+                    }
                     syncMessage(newMessage).catch((err) =>
                         console.warn('[Store] Message sync failed:', err)
                     );

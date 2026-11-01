@@ -152,6 +152,7 @@ type OnRemoteDataChange = (data: {
 let onSyncStatusChange: OnSyncStatusChange | null = null;
 let onRemoteDataChange: OnRemoteDataChange | null = null;
 let onSyncMetadataChange: OnSyncMetadataChange | null = null;
+let unsubscribeRemoteMutation: (() => void) | null = null;
 
 const canWriteWorkspace = (): boolean => Boolean(
     syncUserId && workspaceCloudSyncEnabled && cloudBaselineReady &&
@@ -210,7 +211,11 @@ export const initializeSync = (
     workspaceCloudSyncEnabled = hasWorkspaceCloudSyncConsent;
     cloudBaselineReady = false;
     globalSyncCoordinator.initialize(userId);
-    globalSyncCoordinator.onRemoteMutation(mutation => {
+    if (unsubscribeRemoteMutation) {
+        unsubscribeRemoteMutation();
+        unsubscribeRemoteMutation = null;
+    }
+    unsubscribeRemoteMutation = globalSyncCoordinator.onRemoteMutation(mutation => {
         if (!onRemoteDataChange || isDemoModeActive) return;
         if (mutation.entityKind === 'chat_draft' && mutation.data) {
             const draft = mutation.data as { branchId: string; text: string; attachment?: string | null };
@@ -948,6 +953,11 @@ export const cleanupSync = () => {
     workspaceCloudSyncEnabled = false;
     onSyncStatusChange = null;
     onRemoteDataChange = null;
+    if (unsubscribeRemoteMutation) {
+        unsubscribeRemoteMutation();
+        unsubscribeRemoteMutation = null;
+    }
+    globalSyncCoordinator.disconnect();
     isSyncing = false;
     console.log('[SyncManager] Cleaned up');
 };

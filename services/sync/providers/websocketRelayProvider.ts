@@ -146,7 +146,7 @@ export class WebSocketRelayProvider implements SyncRelayProvider {
             this.updateState('connected', Math.max(0, this.activePeerCount - 1));
           } else if (record.type === 'sync_envelope') {
             const envelope = record.envelope as SyncEnvelope | undefined;
-            if (envelope && envelope.senderDeviceId !== this.deviceId) {
+            if (envelope && (envelope.senderDeviceId !== this.deviceId || (envelope.senderTabId && envelope.senderTabId !== this.tabId))) {
               this.notifyEnvelopeListeners(envelope);
             }
           }

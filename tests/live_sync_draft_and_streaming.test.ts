@@ -81,4 +81,18 @@ describe('Live Chat Draft and Streaming Synchronization', () => {
 
     expect(relayBroadcastSpy).toHaveBeenCalledTimes(2);
   });
+
+  it('broadcasts newly added user messages immediately via sync coordinator', () => {
+    const enqueueSpy = vi.spyOn(globalSyncCoordinator, 'enqueueMutation');
+    const msgId = useStore.getState().addMessage('user', 'Instant test message from laptop');
+
+    expect(msgId).toBeTruthy();
+    expect(enqueueSpy).toHaveBeenCalled();
+    const messageCall = enqueueSpy.mock.calls.find(call => call[0].entityKind === 'message');
+    expect(messageCall).toBeDefined();
+    expect(messageCall![0].entityId).toBe(msgId);
+    const payload = messageCall![0].data as { id: string; text: string; role: string };
+    expect(payload.text).toBe('Instant test message from laptop');
+    expect(payload.role).toBe('user');
+  });
 });

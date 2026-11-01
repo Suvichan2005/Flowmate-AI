@@ -249,6 +249,25 @@ function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
   return output.buffer;
 }
 
+// Helper to create AudioContext with resilient fallback for Safari/WebKit/Android
+function createSafeAudioContext(preferredSampleRate?: number): AudioContext {
+  type WindowWithWebkitAudio = Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
+  const win = typeof window !== 'undefined' ? (window as WindowWithWebkitAudio) : ({} as WindowWithWebkitAudio);
+  const AudioCtx = (typeof window !== 'undefined' ? window.AudioContext : undefined) || win.webkitAudioContext;
+  if (!AudioCtx) {
+    throw new Error('Web Audio API is not supported in this browser environment');
+  }
+  if (typeof preferredSampleRate === 'number' && preferredSampleRate > 0) {
+    try {
+      return new AudioCtx({ sampleRate: preferredSampleRate });
+    } catch {
+      // Fallback for Safari/WebKit/Android WebViews where custom sample rates throw NotSupportedError
+      return new AudioCtx();
+    }
+  }
+  return new AudioCtx();
+}
+
 // Convert Int16 (PCM) to Float32 (Web Audio) safely using DataView
 function pcmToAudioBuffer(
   data: Uint8Array, 
@@ -691,15 +710,8 @@ ${customInst}`;
       }
       
       // 1. Audio Setup (ZERO any)
-      type WindowWithWebkitAudio = Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
-      const win = window as WindowWithWebkitAudio;
-      const AudioCtx = window.AudioContext || win.webkitAudioContext;
-      if (!AudioCtx) {
-        throw new Error('Web Audio API is not supported in this browser environment');
-      }
-
-      this.inputContext = new AudioCtx({ sampleRate: 16000 });
-      this.outputContext = new AudioCtx({ sampleRate: 24000 });
+      this.inputContext = createSafeAudioContext(16000);
+      this.outputContext = createSafeAudioContext(24000);
       
       if (this.inputContext.state === 'suspended') {
         await this.inputContext.resume();
@@ -939,6 +951,9 @@ ${customInst}`;
     if (msg.serverContent?.modelTurn?.parts) {
       for (const part of msg.serverContent.modelTurn.parts) {
         if (part.inlineData?.data && this.outputContext) {
+          if (this.outputContext.state === 'suspended') {
+            void this.outputContext.resume();
+          }
           const bytes = base64ToBytes(part.inlineData.data);
           const buffer = pcmToAudioBuffer(bytes, this.outputContext, 24000);
           
