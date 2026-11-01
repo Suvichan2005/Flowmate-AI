@@ -355,6 +355,35 @@ export const queryRelationshipsTool: FunctionDeclaration = {
   },
 };
 
+export const generateWorkspaceTool: FunctionDeclaration = {
+  name: "generate_workspace",
+  description:
+    "Autonomously generate and register a dedicated workspace, custom schema, and tailored dashboard widgets for any domain or workflow requested by the user (e.g. Research Paper Literature Reviews, Job & Internship Applications, Language Learning, Personal Finance, Habit Sprints).",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      topic: {
+        type: Type.STRING,
+        description: "Domain or topic for the workspace (e.g. 'Research Paper Literature Review', 'Job Application Pipeline', 'French Language Learning')",
+      },
+      description: {
+        type: Type.STRING,
+        description: "Detailed description of what this workspace tracks and manages",
+      },
+      category: {
+        type: Type.STRING,
+        enum: ["fitness", "productivity", "wellness", "education", "finance", "custom"],
+        description: "Primary category for the workspace",
+      },
+      icon: {
+        type: Type.STRING,
+        description: "Icon name (e.g. 'book-open', 'target', 'sparkles', 'dumbbell', 'flame')",
+      },
+    },
+    required: ["topic"],
+  },
+};
+
 export const FLOWMATE_TOOLS: Tool[] = [
   {
     functionDeclarations: [
@@ -363,6 +392,7 @@ export const FLOWMATE_TOOLS: Tool[] = [
       queryCommitmentTool,
       configureCommitmentTool,
       recordCommitmentEvidenceTool,
+      generateWorkspaceTool,
       readCalendarTool,
       searchEntitiesTool,
       lookupFoodHistoryTool,
@@ -383,6 +413,7 @@ export const ACTIVE_AI_TOOLS: Tool[] = [
       queryCommitmentTool,
       configureCommitmentTool,
       recordCommitmentEvidenceTool,
+      generateWorkspaceTool,
       searchMemoryTool,
       getRelevantContextTool,
       proposeMemoryUpdateTool,

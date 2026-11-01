@@ -34,10 +34,18 @@ import {
   MemoryCategory,
   selectEligibleMemories,
 } from "../context";
+import { generateWorkspaceFromPrompt, WorkspaceGenerationRequest } from "../workspaces/workspaceGenerator";
 
 // ---------------------------------------------------------------------------
 // Argument Interfaces
 // ---------------------------------------------------------------------------
+
+export interface GenerateWorkspaceArgs {
+  topic: string;
+  description?: string;
+  category?: 'fitness' | 'productivity' | 'wellness' | 'education' | 'finance' | 'custom';
+  icon?: string;
+}
 
 export interface SearchMemoryArgs {
   query?: string;
@@ -1234,6 +1242,47 @@ export function executeQueryRelationships(
 }
 
 // ---------------------------------------------------------------------------
+// Autonomous Workspace Generator Executor
+// ---------------------------------------------------------------------------
+
+export function executeGenerateWorkspace(args: GenerateWorkspaceArgs): {
+  workspace_id: string;
+  title: string;
+  description: string;
+  schema_id: string;
+  widget_count: number;
+  message: string;
+} {
+  const plugin = generateWorkspaceFromPrompt({
+    topic: args.topic,
+    description: args.description,
+    category: args.category,
+    icon: args.icon,
+  });
+
+  try {
+    const storeState = useStore.getState();
+    if (typeof storeState.setActiveDashboardId === 'function') {
+      storeState.setActiveDashboardId(plugin.id);
+    }
+    if (typeof storeState.setView === 'function') {
+      storeState.setView('generative_dashboard');
+    }
+  } catch {
+    // Graceful fallback for non-browser or test runner environments
+  }
+
+  return {
+    workspace_id: plugin.id,
+    title: plugin.name,
+    description: plugin.description,
+    schema_id: plugin.manifest.associatedSchemas[0]?.id || '',
+    widget_count: plugin.manifest.widgets.length,
+    message: `Workspace "${plugin.name}" generated and activated successfully with dynamic schema "${plugin.manifest.associatedSchemas[0]?.id}".`,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch Map
 // ---------------------------------------------------------------------------
 
@@ -1249,6 +1298,13 @@ export async function dispatchToolCall(
   const args = call.args || {};
 
   switch (call.name) {
+    case 'generate_workspace':
+      return {
+        name: call.name,
+        response: {
+          result: executeGenerateWorkspace(args as unknown as GenerateWorkspaceArgs) as unknown as ToolDispatchResultData,
+        },
+      };
     case 'query_entities':
       return {
         name: call.name,

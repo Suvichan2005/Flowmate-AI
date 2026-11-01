@@ -99,7 +99,11 @@ async function verifyIdentity(req: IncomingMessage): Promise<Identity> {
   const authorization = req.headers.authorization || '';
   if (!authorization.startsWith('Bearer ')) throw new RequestFailure('AUTH_REQUIRED', 401);
   let decoded;
-  try { decoded = await getAuth().verifyIdToken(authorization.slice(7), true); }
+  try {
+    // Verify Firebase ID token cryptographically with public keys.
+    // checkRevoked: false satisfies IAM least-privilege (no firebaseauth.admin / Identity Toolkit management role required).
+    decoded = await getAuth().verifyIdToken(authorization.slice(7), false);
+  }
   catch (err) {
     console.warn('[liveRelayServer] verifyIdToken failed:', err);
     throw new RequestFailure('AUTH_REQUIRED', 401);

@@ -17,7 +17,7 @@ export function computeTemporalRecommendation(
 ): TemporalRecommendationResult {
   // Filter entities matching the target schema
   const matching = Object.values(entities)
-    .filter(e => e.schema_id === config.targetSchemaId && e.lifecycle.deleted_at === null)
+    .filter(e => e.schema_id === config.targetSchemaId && !e.lifecycle?.deleted_at)
     .sort((a, b) => {
       const aTime = extractEntityTimestamp(a);
       const bTime = extractEntityTimestamp(b);
