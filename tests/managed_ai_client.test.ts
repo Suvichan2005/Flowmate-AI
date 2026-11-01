@@ -145,4 +145,30 @@ describe('managed AI browser client', () => {
     await expect(generateManagedContent([], { systemInstruction: 'x' }, 'turn_0000000000000002', 'call_00000000000002'))
       .rejects.toMatchObject({ code: 'GUEST_TURN_ALLOWANCE_EXHAUSTED', status: 402 });
   });
+  it('silently refreshes the ID token and retries when a request encounters 401', async () => {
+    vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'flowmate-ai');
+    vi.stubEnv('VITE_MANAGED_AI_ENDPOINT', 'https://asia-south1-flowmate-ai.cloudfunctions.net/managedGemini');
+    const getIdToken = vi.fn()
+      .mockResolvedValueOnce('stale-token')
+      .mockResolvedValueOnce('refreshed-token');
+    mocked.user = { emailVerified: true, getIdToken };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: { code: 'AUTH_REQUIRED' } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ candidates: [{ content: { parts: [{ text: 'retried successfully' }] } }] }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await generateManagedContent([], {}, 'turn_retry', 'call_retry');
+    expect(result.candidates).toHaveLength(1);
+    expect(getIdToken).toHaveBeenCalledWith(false);
+    expect(getIdToken).toHaveBeenCalledWith(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

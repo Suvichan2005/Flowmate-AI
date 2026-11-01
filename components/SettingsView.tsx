@@ -139,6 +139,9 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void; onRequestAuth?: ()
   }), [currentUser?.uid]);
 
   const disableWorkspaceCloudSync = () => {
+    if (currentUser) {
+      try { window.localStorage.setItem(`flowmate:privacy:workspace-cloud:disabled:${encodeURIComponent(currentUser.uid)}`, 'true'); } catch {}
+    }
     if (!currentUser || !setWorkspaceCloudSyncConsentForUser(currentUser.uid, false)) {
       setWorkspaceSyncMessage('Could not save this privacy choice. Your workspace remains local until consent can be saved.');
       return;
@@ -149,6 +152,7 @@ const SettingsView: React.FC<{ onShowOnboarding?: () => void; onRequestAuth?: ()
 
   const enableWorkspaceCloudSync = () => {
     if (!currentUser || !workspaceSyncConsentAcknowledged) return;
+    try { window.localStorage.removeItem(`flowmate:privacy:workspace-cloud:disabled:${encodeURIComponent(currentUser.uid)}`); } catch {}
     if (!setWorkspaceCloudSyncConsentForUser(currentUser.uid, true)) {
       setWorkspaceSyncMessage('Could not save this privacy choice. Cloud sync remains off.');
       return;

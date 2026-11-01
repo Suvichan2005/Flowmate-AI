@@ -567,4 +567,4 @@ export interface AttendanceLog {
 }
 
 // Full ViewType (all views, controlled by feature toggles)
-export type ViewType = 'dashboard' | 'chat' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'analytics' | 'settings' | 'schedules' | 'food' | 'attendance';
+export type ViewType = 'dashboard' | 'chat' | 'chat_graph' | 'goals' | 'projects' | 'knowledge' | 'calendar' | 'analytics' | 'settings' | 'schedules' | 'food' | 'attendance' | 'generative_dashboard';

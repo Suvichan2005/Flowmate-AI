@@ -1,3 +1,4 @@
+import { isLegacySyntheticEntity } from '../legacySyntheticEntity';
 // Async Storage Adapter for Zustand
 // Wraps localStorage in the StateStorage interface for Zustand persist middleware with monotonic multi-tab reconciliation
 
@@ -57,17 +58,19 @@ export function readWorkspaceStorageSnapshot(identity: string): string | null {
     } catch { return null; }
 }
 
-export function summarizeWorkspaceStorageSnapshot(identity: string, defaultSettings?: unknown): { entities: number; relationships: number; messages: number; chatSessions: number; otherItems: number; preferencesChanged: boolean; hasContent: boolean } {
+export function summarizeWorkspaceStorageSnapshot(identity: string, defaultSettings?: unknown): { entities: number; relationships: number; messages: number; chatSessions: number; otherItems: number; preferencesChanged: boolean; hasContent: boolean; hasRealUserContent: boolean } {
     const raw = readWorkspaceStorageSnapshot(identity);
-    if (!raw) return { entities: 0, relationships: 0, messages: 0, chatSessions: 0, otherItems: 0, preferencesChanged: false, hasContent: false };
+    if (!raw) return { entities: 0, relationships: 0, messages: 0, chatSessions: 0, otherItems: 0, preferencesChanged: false, hasContent: false, hasRealUserContent: false };
     try {
         const state = (JSON.parse(raw) as { state?: Record<string, unknown> }).state || {};
         const entitiesValue = state.entities;
-        const entities = Array.isArray(entitiesValue)
-            ? entitiesValue.length
+        const rawEntities: unknown[] = Array.isArray(entitiesValue)
+            ? entitiesValue
             : state.kernelEntities && typeof state.kernelEntities === 'object'
-                ? Object.keys(state.kernelEntities as Record<string, unknown>).length
-                : 0;
+                ? Object.values(state.kernelEntities as Record<string, unknown>)
+                : [];
+        const entities = rawEntities.length;
+        const realEntities = rawEntities.filter(e => e && typeof e === 'object' && !isLegacySyntheticEntity(e as { id?: string; metadata?: Record<string, unknown> })).length;
         const relationships = Array.isArray(state.relationships) ? state.relationships.length : 0;
         const messages = Array.isArray(state.messages)
             ? state.messages.filter(message => !(message && typeof message === 'object'
@@ -96,9 +99,11 @@ export function summarizeWorkspaceStorageSnapshot(identity: string, defaultSetti
         const otherItems = otherArrayCount + customBranches + branchQueues + unsentDrafts + (state.dailyBriefing ? 1 : 0);
         const preferencesChanged = state.settings !== undefined && defaultSettings !== undefined
             && canonicalJson(state.settings) !== canonicalJson(defaultSettings);
-        return { entities, relationships, messages, chatSessions, otherItems, preferencesChanged, hasContent: entities + relationships + messages + chatSessions + otherItems > 0 || preferencesChanged };
+        const hasContent = entities + relationships + messages + chatSessions + otherItems > 0 || preferencesChanged;
+        const hasRealUserContent = realEntities + relationships + messages + chatSessions + otherItems > 0;
+        return { entities, relationships, messages, chatSessions, otherItems, preferencesChanged, hasContent, hasRealUserContent };
     } catch {
-        return { entities: 0, relationships: 0, messages: 0, chatSessions: 0, otherItems: 0, preferencesChanged: false, hasContent: false };
+        return { entities: 0, relationships: 0, messages: 0, chatSessions: 0, otherItems: 0, preferencesChanged: false, hasContent: false, hasRealUserContent: false };
     }
 }
 

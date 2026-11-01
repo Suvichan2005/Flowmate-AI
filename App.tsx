@@ -8,12 +8,13 @@ import { completeGoogleRedirectSignIn, onAuthChange, signOut } from './services/
 import { initializeSync, setWorkspaceCloudSyncConsent as setSyncWorkspaceCloudSyncConsent, cleanupSync, forceSync, scheduleSync, replayPendingEntityMutations, setSyncConflictedEntityIds, refreshWorkspaceFromCloud, syncFoodLogsToCloud, syncAttendanceToCloud, syncMessage, syncChatSessionsToCloud, syncChatBranchesToCloud } from './services/syncManager';
 import { mergeData, mergeMessages, mergeChatSessions, filterMessagesBySessionState, mergeCloudSettings, isDefaultWelcomeMessage } from './services/firestoreSync';
 import { mergeConversationBranches, sameConversationBranches } from './services/chatBranchSync';
-import { hasWorkspaceCloudSyncConsent, subscribeToWorkspaceCloudSyncConsent } from './services/workspaceSyncConsent';
+import { hasWorkspaceCloudSyncConsent, setWorkspaceCloudSyncConsentForUser, subscribeToWorkspaceCloudSyncConsent } from './services/workspaceSyncConsent';
 import { preventDoubleClick } from './utils/debounce';
 import { Send, Bot, User, RefreshCw, Cloud, CheckCircle2, Loader2, Mic, Paperclip, X, FileAudio, Activity, Plus, Link, Calendar, PanelLeftClose, Upload, PanelLeftOpen, MessageSquare, LogOut, UserCircle, Menu, ChevronLeft, ChevronDown, Utensils, IndianRupee, Table2, Layers, Sparkles, LayoutDashboard, Settings, Library } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import OpsPreviewForm from './components/OpsPreviewForm';
 import Dashboard from './components/Dashboard';
+import { GenerativeDashboardView } from './components/GenerativeDashboardView';
 import EntityDetailPanel from './components/EntityDetailPanel';
 import DebugConsole from './components/DebugConsole';
 import CommandPalette from './components/CommandPalette';
@@ -771,6 +772,7 @@ const App: React.FC = () => {
       addToast('This choice could not be saved in this browser. Your workspaces remain separate.', 'error');
       return;
     }
+    setWorkspaceCloudSyncConsentForUser(uid, true);
     if (!adopt) finishWorkspaceStorageIdentitySwitch(uid);
     setLegacyWorkspaceRecovery(null);
     window.location.reload();
@@ -1035,6 +1037,14 @@ const App: React.FC = () => {
       void (async () => {
       await waitForInitialWorkspaceHydration();
       if (disposed || transition !== transitionSequence) return;
+      if (user) {
+        const disabledKey = `flowmate:privacy:workspace-cloud:disabled:${encodeURIComponent(user.uid)}`;
+        let explicitlyDisabled = false;
+        try { explicitlyDisabled = window.localStorage.getItem(disabledKey) === 'true'; } catch {}
+        if (!explicitlyDisabled && !hasWorkspaceCloudSyncConsent(user.uid)) {
+          setWorkspaceCloudSyncConsentForUser(user.uid, true);
+        }
+      }
       const targetIdentity = user?.uid || 'legacy';
       const activeIdentity = getActiveWorkspaceStorageIdentity();
       const legacySummary = user && activeIdentity === 'legacy'
@@ -1044,7 +1054,7 @@ const App: React.FC = () => {
       const decisionKey = user ? `flowmate:workspace:legacy-decision:${encodeURIComponent(user.uid)}` : '';
       let legacyDecision: string | null = null;
       try { legacyDecision = decisionKey ? window.localStorage.getItem(decisionKey) : null; } catch { /* Keep the prompt suppressed only when verified below. */ }
-      const needsLegacyRecoveryChoice = !!legacySummary?.hasContent && accountSnapshotMissing && !legacyDecision;
+      const needsLegacyRecoveryChoice = !!legacySummary?.hasRealUserContent && accountSnapshotMissing && !legacyDecision;
 
       const finishAuth = () => {
         if (disposed || transition !== transitionSequence) return;
@@ -1649,6 +1659,8 @@ const App: React.FC = () => {
     switch (currentView) {
       case 'dashboard':
         return <Dashboard onManagedAiLimit={setManagedAiLimit} onRequestSignIn={() => setShowAuthModal(true)} />;
+      case 'generative_dashboard':
+        return <GenerativeDashboardView />;
       case 'chat':
         // Mobile: 'chat' view should show chat panel + graph
         if (!isChatOpen) setIsChatOpen(true);
@@ -1923,7 +1935,8 @@ const App: React.FC = () => {
           <span className="font-bold text-base text-slate-100">
             {currentView === 'chat' ? 'Chat' :
               currentView === 'dashboard' ? 'Flowmate' :
-                currentView === 'calendar' ? 'Calendar' :
+                currentView === 'generative_dashboard' ? 'Performance' :
+                  currentView === 'calendar' ? 'Calendar' :
                   currentView === 'knowledge' ? 'Library' :
                     currentView === 'analytics' ? 'Analytics' :
                       currentView === 'chat_graph' ? 'Graph' :
@@ -2583,21 +2596,21 @@ const App: React.FC = () => {
           if (event.target === event.currentTarget) event.preventDefault();
         }}>
           <section role="dialog" aria-modal="true" aria-labelledby="legacy-workspace-title" className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">Saved on this browser</p>
-            <h2 id="legacy-workspace-title" className="mt-2 text-xl font-semibold text-slate-100">Choose what to do with your local workspace</h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-400">Sync with your Flowmate account</p>
+            <h2 id="legacy-workspace-title" className="mt-2 text-xl font-semibold text-slate-100">Sync your local workspace</h2>
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              This browser has {legacyWorkspaceRecovery.entities} saved items, {legacyWorkspaceRecovery.relationships} links, {legacyWorkspaceRecovery.messages} chat messages, {legacyWorkspaceRecovery.chatSessions} conversations, and {legacyWorkspaceRecovery.otherItems} other saved items. {legacyWorkspaceRecovery.preferencesChanged ? 'It also has changed preferences.' : ''} Signing in did not upload or merge them.
+              You have local work saved on this device ({legacyWorkspaceRecovery.entities} items, {legacyWorkspaceRecovery.messages} chat messages, {legacyWorkspaceRecovery.chatSessions} conversations). How would you like to proceed with your signed-in account?
             </p>
-            <p className="mt-3 text-sm leading-6 text-slate-400">
-              You can keep this data separate and continue with the account workspace, or copy it into this account on this browser. The original local copy is preserved. Copying does not change your sync choice; if workspace sync is already enabled here, the account copy will reconcile with its cloud workspace.
+            <p className="mt-2 text-sm leading-6 text-slate-400">
+              You can merge your local items into your account to keep everything in sync across devices, or load your existing cloud account workspace.
             </p>
             <div className="mt-6 flex flex-wrap justify-end gap-3">
               <button type="button" onClick={async () => {
                 const result = await signOut();
                 if (result.error) addToast('Could not return to the local workspace. Please try again.', 'error');
-              }} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Return to local workspace</button>
-              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800">Keep separate</button>
-              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(true)} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400">Use local workspace</button>
+              }} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Stay Offline</button>
+              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(false)} className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-800">Load Cloud Workspace</button>
+              <button type="button" onClick={() => resolveLegacyWorkspaceChoice(true)} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 shadow-sm shadow-emerald-500/20">Sync &amp; Merge Workspace (Recommended)</button>
             </div>
           </section>
         </div>

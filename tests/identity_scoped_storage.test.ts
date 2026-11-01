@@ -26,7 +26,7 @@ describe('identity-scoped workspace storage', () => {
     expect(await asyncStorage.getItem('flowmate-storage')).toBeNull();
     finishWorkspaceStorageIdentitySwitch();
 
-    expect(summarizeWorkspaceStorageSnapshot('legacy')).toEqual({ entities: 1, relationships: 0, messages: 0, chatSessions: 0, otherItems: 0, preferencesChanged: false, hasContent: true });
+    expect(summarizeWorkspaceStorageSnapshot('legacy')).toEqual({ entities: 1, relationships: 0, messages: 0, chatSessions: 0, otherItems: 0, preferencesChanged: false, hasContent: true, hasRealUserContent: true });
     expect(JSON.parse(readWorkspaceStorageSnapshot('account-a')!).state.entities).toEqual([{ id: 'a' }]);
     expect(readWorkspaceStorageSnapshot('account-b')).toBeNull();
   });
@@ -94,7 +94,7 @@ describe('identity-scoped workspace storage', () => {
       settings: { theme: 'light' },
     } }));
     expect(summarizeWorkspaceStorageSnapshot('legacy', { theme: 'light' })).toEqual({
-      entities: 0, relationships: 0, messages: 0, chatSessions: 0, otherItems: 0, preferencesChanged: false, hasContent: false,
+      entities: 0, relationships: 0, messages: 0, chatSessions: 0, otherItems: 0, preferencesChanged: false, hasContent: false, hasRealUserContent: false,
     });
   });
 
@@ -104,5 +104,14 @@ describe('identity-scoped workspace storage', () => {
       foodLogs: [{ id: 'meal' }], unsentDrafts: { main: { text: 'draft' } },
     } }));
     expect(summarizeWorkspaceStorageSnapshot('legacy')).toMatchObject({ relationships: 1, otherItems: 2, hasContent: true });
+  });
+  it('does not mistake synthetic demo entities for real user content', async () => {
+    await asyncStorage.setItem('flowmate-storage', JSON.stringify({ state: {
+      entities: [{ id: 'goal-recruiter-portfolio' }, { id: 'demo-task-1' }],
+      relationships: [], messages: [], chatSessions: [],
+    } }));
+    const summary = summarizeWorkspaceStorageSnapshot('legacy');
+    expect(summary.entities).toBe(2);
+    expect(summary.hasRealUserContent).toBe(false);
   });
 });

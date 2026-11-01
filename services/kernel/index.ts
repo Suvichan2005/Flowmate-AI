@@ -18,14 +18,17 @@ export * from './storePersistenceAdapter';
 export * from './recurrence';
 export * from './commitment';
 export * from './reminders';
+export * from './dynamicSchemaRegistry';
 
 import { SchemaRegistry } from './schemaRegistry';
 import { CapabilityRegistry } from './capabilityRegistry';
 import { registerSystemSchemas, registerInfrastructureSchemas, registerSystemCapabilities } from './bootstrap';
+import { dynamicSchemaRegistry } from './dynamicSchemaRegistry';
 
 export const schemaRegistry = new SchemaRegistry();
 registerSystemSchemas(schemaRegistry);
 registerInfrastructureSchemas(schemaRegistry);
+dynamicSchemaRegistry.setGlobalRegistry(schemaRegistry);
 
 export const capabilityRegistry = new CapabilityRegistry();
 registerSystemCapabilities(capabilityRegistry);

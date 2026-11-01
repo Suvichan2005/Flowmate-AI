@@ -96,10 +96,25 @@ export function projectKernelToLegacyEntity(
       ? attrs.end_time
       : (kernel.validity?.valid_until || null);
   const duration = typeof attrs.duration_minutes === 'number' ? attrs.duration_minutes : null;
-  const recurrence: RecurrenceType =
-    typeof attrs.cadence_rrule === 'string'
-      ? (attrs.cadence_rrule as RecurrenceType)
-      : null;
+  let recurrence: RecurrenceType = null;
+  if (typeof attrs.recurrence === 'string') {
+    const upper = attrs.recurrence.toUpperCase();
+    if (upper === 'DAILY' || upper === 'WEEKLY' || upper === 'MONTHLY' || upper === 'YEARLY') {
+      recurrence = upper as RecurrenceType;
+    }
+  }
+  if (!recurrence && typeof attrs.cadence_rrule === 'string') {
+    if (attrs.cadence_rrule.includes('FREQ=DAILY')) recurrence = 'DAILY';
+    else if (attrs.cadence_rrule.includes('FREQ=WEEKLY')) recurrence = 'WEEKLY';
+    else if (attrs.cadence_rrule.includes('FREQ=MONTHLY')) recurrence = 'MONTHLY';
+    else if (attrs.cadence_rrule.includes('FREQ=YEARLY')) recurrence = 'YEARLY';
+    else {
+      const upper = attrs.cadence_rrule.toUpperCase();
+      if (upper === 'DAILY' || upper === 'WEEKLY' || upper === 'MONTHLY' || upper === 'YEARLY') {
+        recurrence = upper as RecurrenceType;
+      }
+    }
+  };
 
   const description =
     typeof attrs.notes === 'string'

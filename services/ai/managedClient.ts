@@ -87,6 +87,26 @@ export const getManagedLiveRelayEndpoint = (): string => {
 
 export const hasManagedAiIdentity = (): boolean => Boolean(isFirebaseConfigured() && getManagedAiEndpoint());
 
+async function fetchWithManagedAuthRetry(
+  user: { getIdToken: (force?: boolean) => Promise<string> },
+  doFetch: (token: string, appCheckToken: string | null) => Promise<Response>,
+): Promise<Response> {
+  const [initialToken, appCheckToken] = await Promise.all([
+    user.getIdToken(false),
+    getFirebaseAppCheckToken(),
+  ]);
+  const response = await doFetch(initialToken, appCheckToken);
+  if (response.status === 401) {
+    try {
+      const freshToken = await user.getIdToken(true);
+      return await doFetch(freshToken, appCheckToken);
+    } catch {
+      return response;
+    }
+  }
+  return response;
+}
+
 export async function generateManagedContent(
   contents: unknown[],
   config: Record<string, unknown>,
@@ -104,23 +124,23 @@ export async function generateManagedContent(
   const user = await getManagedAiUser();
   const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
   if (!user || !projectId) throw new ManagedAiError('AUTH_REQUIRED', 401);
-  const token = await user.getIdToken(user.emailVerified);
-  const appCheckToken = await getFirebaseAppCheckToken();
-  const headers: Record<string, string> = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-  if (appCheckToken) headers['X-Firebase-AppCheck'] = appCheckToken;
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      turnId,
-      callId,
-      contents,
-      config,
-      model: options.model,
-      reasoningLevel: options.reasoningLevel,
-      purpose: options.purpose || 'chat',
-    }),
-    signal,
+  const response = await fetchWithManagedAuthRetry(user, async (token, appCheckToken) => {
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    if (appCheckToken) headers['X-Firebase-AppCheck'] = appCheckToken;
+    return fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        turnId,
+        callId,
+        contents,
+        config,
+        model: options.model,
+        reasoningLevel: options.reasoningLevel,
+        purpose: options.purpose || 'chat',
+      }),
+      signal,
+    });
   });
   let payload: unknown;
   try { payload = await response.json(); } catch { throw new ManagedAiError('GENERATION_FAILED', response.status || 502); }
@@ -140,11 +160,11 @@ export async function getManagedModelOptions(): Promise<{ models: ManagedModelOp
   if (!user) throw new ManagedAiError('AUTH_REQUIRED', 401);
   const endpoint = getManagedAiEndpoint();
   if (!endpoint) throw new ManagedAiError('MANAGED_AI_NOT_CONFIGURED', 503);
-  const token = await user.getIdToken(user.emailVerified);
-  const appCheckToken = await getFirebaseAppCheckToken();
-  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
-  if (appCheckToken) headers['X-Firebase-AppCheck'] = appCheckToken;
-  const response = await fetch(`${endpoint}/models`, { headers, cache: 'no-store' });
+  const response = await fetchWithManagedAuthRetry(user, async (token, appCheckToken) => {
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+    if (appCheckToken) headers['X-Firebase-AppCheck'] = appCheckToken;
+    return fetch(`${endpoint}/models`, { headers, cache: 'no-store' });
+  });
   let payload: unknown;
   try { payload = await response.json(); } catch { throw new ManagedAiError('MODEL_CATALOG_UNAVAILABLE', response.status || 503); }
   if (!response.ok || !payload || typeof payload !== 'object' || !Array.isArray((payload as { models?: unknown }).models)) {
@@ -170,17 +190,18 @@ export async function createManagedLiveSession(
   if (!user) throw new ManagedAiError('AUTH_REQUIRED', 401);
   const endpoint = getManagedLiveRelayEndpoint();
   if (!endpoint) throw new ManagedAiError('MANAGED_AI_NOT_CONFIGURED', 503);
-  const [token, appCheckToken] = await Promise.all([user.getIdToken(user.emailVerified), getFirebaseAppCheckToken()]);
-  if (!appCheckToken) throw new ManagedAiError('APP_CHECK_REQUIRED', 401);
-  const response = await fetch(`${endpoint}/session`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'X-Firebase-AppCheck': appCheckToken,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ model, reasoningLevel, systemInstruction, tools }),
-    cache: 'no-store',
+  const response = await fetchWithManagedAuthRetry(user, async (token, appCheckToken) => {
+    if (!appCheckToken) throw new ManagedAiError('APP_CHECK_REQUIRED', 401);
+    return fetch(`${endpoint}/session`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Firebase-AppCheck': appCheckToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model, reasoningLevel, systemInstruction, tools }),
+      cache: 'no-store',
+    });
   });
   let payload: unknown;
   try { payload = await response.json(); }
@@ -210,11 +231,11 @@ export async function getManagedAiUsage(): Promise<ManagedAiUsage> {
   if (!user) throw new ManagedAiError('AUTH_REQUIRED', 401);
   const endpoint = getManagedAiEndpoint();
   if (!endpoint) throw new ManagedAiError('MANAGED_AI_NOT_CONFIGURED', 503);
-  const token = await user.getIdToken(user.emailVerified);
-  const appCheckToken = await getFirebaseAppCheckToken();
-  const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
-  if (appCheckToken) headers['X-Firebase-AppCheck'] = appCheckToken;
-  const response = await fetch(`${endpoint}/usage`, { headers, cache: 'no-store' });
+  const response = await fetchWithManagedAuthRetry(user, async (token, appCheckToken) => {
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+    if (appCheckToken) headers['X-Firebase-AppCheck'] = appCheckToken;
+    return fetch(`${endpoint}/usage`, { headers, cache: 'no-store' });
+  });
   let payload: unknown;
   try { payload = await response.json(); } catch { throw new ManagedAiError('USAGE_READ_UNAVAILABLE', response.status || 503); }
   const cost = payload && typeof payload === 'object' && 'cost' in payload ? (payload as { cost?: Partial<ManagedAiUsage['cost']> }).cost : undefined;

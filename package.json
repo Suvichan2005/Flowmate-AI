@@ -14,7 +14,7 @@
     "check:citations": "node scripts/check_citation_integrity.mjs",
     "check:invariants": "node scripts/run_all_invariants.mjs",
     "check:types": "tsc --noEmit",
-    "release:scan": "node scripts/release_artifact_scan.mjs",
+    "release:scan": "node scripts/release_artifact_scan.mjs --directory dist --firebase-key-env VITE_FIREBASE_API_KEY",
     "test:release": "vitest run --maxWorkers=2",
     "check:themes": "node scripts/check_theme_colors.mjs"
   },

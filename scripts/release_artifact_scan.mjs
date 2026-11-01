@@ -1,4 +1,4 @@
-﻿import { readFileSync, readdirSync, lstatSync } from 'node:fs';
+import { readFileSync, readdirSync, lstatSync } from 'node:fs';
 import { resolve, relative, join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -99,8 +99,16 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (sentinelName && !process.env[sentinelName]) throw new Error('Requested sentinel environment variable is missing');
     const sentinels = sentinelName ? [process.env[sentinelName]] : [];
     const firebaseKeyName = args.includes('--firebase-key-env') ? value('--firebase-key-env') : null;
-    if (firebaseKeyName && !/^AIza[0-9A-Za-z_-]{35}$/.test(process.env[firebaseKeyName] || '')) throw new Error('Requested Firebase public key is missing or malformed');
-    const approvedFirebasePublicKeys = firebaseKeyName ? [process.env[firebaseKeyName]] : [];
+    let approvedFirebasePublicKey = firebaseKeyName ? process.env[firebaseKeyName] : null;
+    if (firebaseKeyName && !approvedFirebasePublicKey) {
+      try {
+        const envContent = readFileSync('.env.local', 'utf8');
+        const match = envContent.match(new RegExp(`${firebaseKeyName}=([^\\r\\n]+)`));
+        if (match) approvedFirebasePublicKey = match[1].trim().replace(/^["']|["']$/g, '');
+      } catch {}
+    }
+    if (firebaseKeyName && !/^AIza[0-9A-Za-z_-]{35}$/.test(approvedFirebasePublicKey || '')) throw new Error('Requested Firebase public key is missing or malformed');
+    const approvedFirebasePublicKeys = approvedFirebasePublicKey ? [approvedFirebasePublicKey] : [];
     const result = { schemaVersion: 1 };
     if (args.includes('--directory')) result.artifacts = scanDirectory(value('--directory'), sentinels, approvedFirebasePublicKeys);
     if (args.includes('--base') && args.includes('--candidate')) result.history = scanHistory(process.cwd(), value('--base'), value('--candidate'), sentinels, approvedFirebasePublicKeys);

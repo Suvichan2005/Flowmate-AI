@@ -47,6 +47,7 @@ describe('Navigation accessibility and active route semantics', () => {
       { label: 'Calendar', view: 'calendar' },
       { label: 'Analytics', view: 'analytics' },
       { label: 'Library', view: 'knowledge' },
+      { label: 'Performance', view: 'generative_dashboard' },
       { label: 'Settings', view: 'settings' },
     ];
 

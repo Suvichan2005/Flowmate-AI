@@ -891,14 +891,8 @@ export async function saveChatSessions(userId: string, sessions: ChatSession[]):
         });
         return true;
     } catch (error) {
-        console.warn('[FirestoreSync] Chat sessions transaction failed, attempting direct merge:', error);
-        try {
-            await setDoc(ref, { sessions: sanitizeForFirestore(sessions), updatedAt: serverTimestamp() }, { merge: true });
-            return true;
-        } catch (directErr) {
-            console.error('[FirestoreSync] Chat sessions direct save failed:', directErr);
-            return false;
-        }
+        console.warn('[FirestoreSync] Chat sessions transaction failed:', error);
+        return false;
     }
 }
 
@@ -920,14 +914,8 @@ export async function saveChatBranches(userId: string, branches: ConversationBra
         });
         return true;
     } catch (error) {
-        console.warn('[FirestoreSync] Chat branches transaction failed, attempting direct merge:', error);
-        try {
-            await setDoc(ref, { branches: sanitizeForFirestore(branches), updatedAt: serverTimestamp() }, { merge: true });
-            return true;
-        } catch (directErr) {
-            console.error('[FirestoreSync] Chat branches direct save failed:', directErr);
-            return false;
-        }
+        console.warn('[FirestoreSync] Chat branches transaction failed:', error);
+        return false;
     }
 }
 
