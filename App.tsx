@@ -208,6 +208,7 @@ const App: React.FC = () => {
     const state = useStore.getState(); state.setDraftAttachment(state.activeBranchId, attachment);
   };
   const [isChatOpen, setIsChatOpen] = useState(true);
+  const safeEntities = useMemo(() => getActiveEntities(entities), [entities]);
   const [isDragging, setIsDragging] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authInitialMode, setAuthInitialMode] = useState<'signin' | 'signup'>('signin');
@@ -1547,8 +1548,6 @@ const App: React.FC = () => {
       </>
     );
   }
-
-  const safeEntities = useMemo(() => getActiveEntities(entities), [entities]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
