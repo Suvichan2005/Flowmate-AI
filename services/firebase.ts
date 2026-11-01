@@ -232,10 +232,19 @@ export const getManagedAiUser = async (): Promise<User | null> => {
 };
 
 /** Returns a short-lived App Check token when this app has been configured. */
-export const getFirebaseAppCheckToken = async (): Promise<string | null> => {
+export const getFirebaseAppCheckToken = async (forceRefresh = false): Promise<string | null> => {
     if (!appCheck) return null;
-    try { return (await getAppCheckToken(appCheck, false)).token; }
-    catch { return null; }
+    try {
+        const result = await getAppCheckToken(appCheck, forceRefresh);
+        return result.token;
+    } catch {
+        try {
+            const fallback = await getAppCheckToken(appCheck, true);
+            return fallback.token;
+        } catch {
+            return null;
+        }
+    }
 };
 
 // Calendar OAuth access tokens are short lived and must never persist across

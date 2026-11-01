@@ -122,6 +122,34 @@ export function upgradeLegacyEntityToKernel(doc: Record<string, unknown>): Entit
   if (typeof doc.end_time === 'string') attributes.end_time = doc.end_time;
   if (typeof doc.duration_minutes === 'number') attributes.duration_minutes = doc.duration_minutes;
   if (typeof doc.recurrence === 'string') attributes.cadence_rrule = doc.recurrence;
+  if (typeof doc.rrule === 'string') {
+    attributes.rrule = doc.rrule;
+    attributes.cadence_rrule = doc.rrule;
+  } else if (isRecord(doc.metadata) && typeof doc.metadata.rrule === 'string') {
+    attributes.rrule = doc.metadata.rrule;
+    attributes.cadence_rrule = doc.metadata.rrule;
+  }
+  if (typeof doc.date === 'string') attributes.date = doc.date;
+  else if (isRecord(doc.metadata) && typeof doc.metadata.date === 'string') attributes.date = doc.metadata.date;
+
+  if (schemaId === 'system/event') {
+    if (!attributes.start_time && attributes.deadline) {
+      attributes.start_time = attributes.deadline;
+      if (!attributes.end_time) {
+        try {
+          const d = new Date(attributes.deadline as string);
+          attributes.end_time = new Date(d.getTime() + 60 * 60 * 1000).toISOString();
+        } catch {
+          attributes.end_time = attributes.deadline;
+        }
+      }
+    } else if (!attributes.start_time && attributes.date) {
+      const dt = String(attributes.date);
+      attributes.start_time = dt.includes('T') ? dt : `${dt}T09:00:00.000Z`;
+      attributes.end_time = dt.includes('T') ? dt : `${dt}T10:00:00.000Z`;
+      attributes.all_day = true;
+    }
+  }
   if (typeof doc.description === 'string' && doc.description) attributes.notes = doc.description;
   if (typeof doc.content === 'string') attributes.content = doc.content;
   if (typeof doc.category === 'string') attributes.category = doc.category;

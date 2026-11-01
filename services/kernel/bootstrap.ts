@@ -150,6 +150,13 @@ export const SYSTEM_TASK_SCHEMA: SchemaDefinition = {
       description: 'RFC 5545 recurrence rule or cadence specification',
       required: false,
     },
+    rrule: {
+      name: 'rrule',
+      type: 'string',
+      label: 'Recurrence Rule (Alias)',
+      description: 'RFC 5545 recurrence rule (alias of cadence_rrule)',
+      required: false,
+    },
     scheduling_certainty: {
       name: 'scheduling_certainty',
       type: 'enum',
@@ -275,6 +282,27 @@ export const SYSTEM_EVENT_SCHEMA: SchemaDefinition = {
       type: 'string',
       label: 'Cadence RRULE',
       description: 'RRULE string for recurring events',
+      required: false,
+    },
+    rrule: {
+      name: 'rrule',
+      type: 'string',
+      label: 'Recurrence Rule (Alias)',
+      description: 'RRULE string for recurring events (alias of cadence_rrule)',
+      required: false,
+    },
+    deadline: {
+      name: 'deadline',
+      type: 'datetime',
+      label: 'Event Deadline / Date',
+      description: 'Specific deadline or date timestamp associated with this event',
+      required: false,
+    },
+    date: {
+      name: 'date',
+      type: 'string',
+      label: 'Event Date',
+      description: 'Calendar date for all-day or dated events',
       required: false,
     },
     color_hex: {

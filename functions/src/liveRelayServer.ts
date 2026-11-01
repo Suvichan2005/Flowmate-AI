@@ -29,6 +29,14 @@ const MAX_TOOL_RESPONSES = 5;
 const MAX_SESSION_AGE_MS = LIVE_SESSION_MAX_DURATION_MS + 30_000;
 const TICKET_TTL_MS = 30_000;
 const activeRelays = new Set<RelaySession>();
+interface SyncClient {
+  socket: WebSocket;
+  uid: string;
+  deviceId: string;
+  connectedAt: number;
+}
+const syncRooms = new Map<string, Set<SyncClient>>();
+const syncSockets = new WebSocketServer({ noServer: true, maxPayload: 524_288 });
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 const uidRef = (uid: string) => createHash('sha256').update(uid).digest('hex').slice(0, 20);
 const now = () => Date.now();
@@ -484,6 +492,10 @@ export function startLiveRelayServer(port = Number(process.env.PORT || 8080)) {
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
     res.setHeader('Cache-Control', 'no-store');
     if (req.method === 'OPTIONS') { res.statusCode = 204; res.end(); return; }
+    if (req.url === '/sync-status' && req.method === 'GET') {
+      json(res, 200, { status: 'ok', service: 'flowmate-sync-relay', activeRooms: syncRooms.size, timestamp: new Date().toISOString() }, origin);
+      return;
+    }
     if (req.url !== '/session' || req.method !== 'POST') { fail(res, 404, 'NOT_FOUND', origin); return; }
     void createTicket(req, res, origin).catch(error => {
       const failure = error instanceof RequestFailure ? error : new RequestFailure('LIVE_RELAY_UNAVAILABLE', 503);
@@ -496,7 +508,74 @@ export function startLiveRelayServer(port = Number(process.env.PORT || 8080)) {
     void (async () => {
       const requestUrl = new URL(req.url || '/', `https://${req.headers.host || 'invalid'}`);
       const origin = req.headers.origin || '';
-      if (requestUrl.pathname !== '/ws' || !allowedOrigins().has(origin)) throw new RequestFailure('APP_ORIGIN_NOT_ALLOWED', 403);
+      if (!allowedOrigins().has(origin)) throw new RequestFailure('APP_ORIGIN_NOT_ALLOWED', 403);
+      if (requestUrl.pathname === '/sync-ws' || requestUrl.pathname === '/sync') {
+        const token = requestUrl.searchParams.get('token') || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : '');
+        const deviceId = requestUrl.searchParams.get('deviceId') || ('device-' + randomBytes(4).toString('hex'));
+        if (!token) throw new RequestFailure('AUTH_REQUIRED', 401);
+        let uid: string;
+        try {
+          const decoded = await getAuth().verifyIdToken(token, false);
+          uid = decoded.uid;
+        } catch {
+          throw new RequestFailure('AUTH_REQUIRED', 401);
+        }
+        syncSockets.handleUpgrade(req, socket, head, ws => {
+          let room = syncRooms.get(uid);
+          if (!room) {
+            room = new Set<SyncClient>();
+            syncRooms.set(uid, room);
+          }
+          const client: SyncClient = { socket: ws, uid, deviceId, connectedAt: Date.now() };
+          room.add(client);
+          ws.send(JSON.stringify({
+            type: 'sync_connected',
+            deviceId,
+            activePeers: room.size - 1,
+            serverTime: new Date().toISOString(),
+          }));
+          for (const peer of room) {
+            if (peer.socket !== ws && peer.socket.readyState === WebSocket.OPEN) {
+              peer.socket.send(JSON.stringify({ type: 'peer_joined', deviceId, serverTime: new Date().toISOString() }));
+            }
+          }
+          ws.on('message', raw => {
+            try {
+              const frame = JSON.parse(raw.toString('utf8'));
+              if (!frame || typeof frame !== 'object') return;
+              if (frame.type === 'ping') {
+                if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+                return;
+              }
+              const currentRoom = syncRooms.get(uid);
+              if (!currentRoom) return;
+              const payload = JSON.stringify({ ...frame, senderDeviceId: deviceId, relayTimestamp: new Date().toISOString() });
+              for (const peer of currentRoom) {
+                if (peer.socket !== ws && peer.socket.readyState === WebSocket.OPEN) {
+                  peer.socket.send(payload);
+                }
+              }
+            } catch {}
+          });
+          const cleanup = () => {
+            const currentRoom = syncRooms.get(uid);
+            if (!currentRoom) return;
+            currentRoom.delete(client);
+            if (currentRoom.size === 0) syncRooms.delete(uid);
+            else {
+              for (const peer of currentRoom) {
+                if (peer.socket.readyState === WebSocket.OPEN) {
+                  peer.socket.send(JSON.stringify({ type: 'peer_left', deviceId, serverTime: new Date().toISOString() }));
+                }
+              }
+            }
+          };
+          ws.on('close', cleanup);
+          ws.on('error', cleanup);
+        });
+        return;
+      }
+      if (requestUrl.pathname !== '/ws') throw new RequestFailure('NOT_FOUND', 404);
       const ticket = await consumeTicket(requestUrl.searchParams.get('ticket') || '', origin);
       sockets.handleUpgrade(req, socket, head, ws => {
         const setupTimeout = setTimeout(() => { sendWsError(ws, 'LIVE_SETUP_TIMEOUT'); }, 10_000);
@@ -533,6 +612,12 @@ export function startLiveRelayServer(port = Number(process.env.PORT || 8080)) {
     const timeout = setTimeout(() => process.exit(1), 8_000);
     timeout.unref();
     for (const relay of activeRelays) sendWsError(relay.socket, 'LIVE_SERVICE_SHUTTING_DOWN', 1012);
+    for (const room of syncRooms.values()) {
+      for (const client of room) {
+        try { client.socket.close(1012, 'service-shutdown'); } catch {}
+      }
+    }
+    syncRooms.clear();
     void Promise.all([...activeRelays].map(relay => finishRelay(relay, 'error'))).finally(() => {
       clearTimeout(timeout);
       process.exit(0);

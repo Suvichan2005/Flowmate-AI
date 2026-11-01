@@ -1,4 +1,5 @@
 import AppearanceSettings from './AppearanceSettings';
+import { SyncSettings } from './SyncSettings';
 import React, { useRef, useState, useEffect } from 'react';
 import { useFocusTrap } from '../utils/accessibility';
 import { useStore } from '../store';

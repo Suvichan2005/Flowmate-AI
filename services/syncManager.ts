@@ -45,7 +45,7 @@ import type {
     ChatSession,
     ConversationBranch,
 } from '../types';
-import { canonicalJson, globalPendingMutationQueue } from './sync';
+import { canonicalJson, globalPendingMutationQueue, globalSyncCoordinator } from './sync';
 
 // Sync state
 let syncUserId: string | null = null;
@@ -200,6 +200,21 @@ export const initializeSync = (
     onSyncMetadataChange = syncMetadataCallback || null;
     workspaceCloudSyncEnabled = hasWorkspaceCloudSyncConsent;
     cloudBaselineReady = false;
+    globalSyncCoordinator.initialize(userId);
+    globalSyncCoordinator.onRemoteMutation(mutation => {
+        if (!onRemoteDataChange || !workspaceCloudSyncEnabled || isDemoModeActive) return;
+        if (mutation.entityKind === 'message' && mutation.data) {
+            onRemoteDataChange({
+                entities: [], relationships: [], universalTags: [],
+                messages: [mutation.data as unknown as Message],
+            });
+        } else if (mutation.entityKind === 'entity' && mutation.data) {
+            onRemoteDataChange({
+                entities: [mutation.data as unknown as Entity],
+                relationships: [], universalTags: [],
+            });
+        }
+    });
 
     if (workspaceCloudSyncEnabled) activateWorkspaceSync(true);
     else stopRealtimeSync();
@@ -678,6 +693,12 @@ export const mergeMessagesWithLocal = (
  * Does NOT debounce — messages are written as they arrive.
  */
 export const syncMessage = async (message: Message): Promise<boolean> => {
+    globalSyncCoordinator.enqueueMutation({
+        entityKind: 'message',
+        op: 'upsert',
+        entityId: message.id,
+        data: message as unknown as Record<string, unknown>,
+    });
     const userId = syncUserId;
     if (!userId || !canWriteWorkspace()) {
         return false;
@@ -725,6 +746,12 @@ export const syncAttendanceToCloud = async (data: {
  * Sync chat sessions to Firestore
  */
 export const syncChatSessionsToCloud = async (sessions: ChatSession[]): Promise<boolean> => {
+    globalSyncCoordinator.enqueueMutation({
+        entityKind: 'chat_session',
+        op: 'upsert',
+        entityId: 'sessions',
+        data: { sessions: sessions as unknown as Record<string, unknown>[] },
+    });
     const userId = syncUserId;
     if (!userId || !canWriteWorkspace()) return false;
     return saveChatSessions(userId, sessions);
@@ -732,6 +759,12 @@ export const syncChatSessionsToCloud = async (sessions: ChatSession[]): Promise<
 
 /** Persist branch metadata only after the authorized workspace has a server baseline. */
 export const syncChatBranchesToCloud = async (branches: ConversationBranch[]): Promise<boolean> => {
+    globalSyncCoordinator.enqueueMutation({
+        entityKind: 'chat_branch',
+        op: 'upsert',
+        entityId: 'branches',
+        data: { branches: branches as unknown as Record<string, unknown>[] },
+    });
     const userId = syncUserId;
     const capturedToken = syncSessionToken;
     if (!userId || !canWriteWorkspace()) return false;
@@ -803,3 +836,4 @@ export const isSyncActive = () => !!syncUserId && workspaceCloudSyncEnabled;
  * Get current sync user ID
  */
 export const getSyncUserId = () => workspaceCloudSyncEnabled ? syncUserId : null;
+
