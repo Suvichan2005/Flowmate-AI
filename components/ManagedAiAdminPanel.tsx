@@ -116,7 +116,20 @@ export default function ManagedAiAdminPanel() {
           }} />
           Managed Live voice enabled
         </label>
-        <p className="text-xs text-slate-500 sm:col-span-2">Access mode: {overview.managedMode === 'test' ? 'TEST — only exact server-allowlisted identities can use managed AI.' : overview.managedMode === 'general' ? 'GENERAL — eligible guest and verified accounts can use managed AI.' : 'DISABLED — no identities can use managed AI.'} Live uses a server-owned provider connection with a 5-minute maximum, capped audio input and output, and a $0.50 reserved exposure. It remains independently gated from Chat and Briefing. {overview.liveEnableReady ? 'The current server policy is ready to enable it.' : overview.liveEnabled ? 'It is currently enabled.' : 'Enable managed access and configure the approved budget policy before enabling Live.'}</p>
+        {overview.enabled && (
+          <div className="flex flex-wrap items-center gap-4 sm:col-span-2 p-2.5 rounded-lg border border-slate-800 bg-slate-950/60 text-xs">
+            <span className="font-semibold text-slate-300">Access Mode:</span>
+            <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+              <input type="radio" name="managedMode" value="general" checked={overview.managedMode === 'general'} disabled={busy} onChange={() => void mutate({ action: 'setMode', mode: 'general' })} />
+              General (Guests & verified users with monthly limits + privileged)
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+              <input type="radio" name="managedMode" value="test" checked={overview.managedMode === 'test'} disabled={busy} onChange={() => void mutate({ action: 'setMode', mode: 'test' })} />
+              Test (Allowlisted test UIDs & privileged accounts only)
+            </label>
+          </div>
+        )}
+        <p className="text-xs text-slate-500 sm:col-span-2">Access mode: {overview.managedMode === 'test' ? 'TEST — only server-allowlisted test identities and privileged accounts can use managed AI.' : overview.managedMode === 'general' ? 'GENERAL — eligible guests (30 turns) and verified accounts (150 turns) can use managed AI.' : 'DISABLED — no identities can use managed AI.'} Live uses a server-owned provider connection with a 5-minute maximum, capped audio input and output, and a $0.50 reserved exposure. It remains independently gated from Chat and Briefing. {overview.liveEnableReady ? 'The current server policy is ready to enable it.' : overview.liveEnabled ? 'It is currently enabled.' : 'To enable Live: turn on Managed AI, set Project, User, and Per-Turn budgets to at least $0.50.'}</p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 text-sm">

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { useStore } from './store';
 import { getActiveEntities, getActiveChatSessions, isChatSessionActive } from './store/helpers';
 import { orchestrateMessage, generateContextualSuggestions, getInstantContextualSuggestions, type ContextualSuggestion } from './services/ai';
@@ -1548,7 +1548,7 @@ const App: React.FC = () => {
     );
   }
 
-  const safeEntities = getActiveEntities(entities);
+  const safeEntities = useMemo(() => getActiveEntities(entities), [entities]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();

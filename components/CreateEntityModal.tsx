@@ -40,6 +40,11 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
     // Habit-specific fields
     const [habitType, setHabitType] = useState<'GOOD' | 'BAD'>('GOOD');
     const [frequencyGoal, setFrequencyGoal] = useState<'DAILY' | 'WEEKLY'>('DAILY');
+    const [parentId, setParentId] = useState<string>('');
+
+    const availableParents = useMemo(() => {
+        return entities.filter(e => !e.metadata?.deleted && (e.kind === EntityKind.GOAL || e.kind === EntityKind.PROJECT || e.kind === EntityKind.CONTEXT));
+    }, [entities]);
 
     // Real-Time Calendar Conflict Grounding (Priority D)
     const candidateSlot: CandidateSlot | null = useMemo(() => {
@@ -136,15 +141,26 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
             status: EntityStatus.ACTIVE
         };
 
+        if (parentId) {
+            payload.parent_id = parentId;
+        }
+
         if (date) {
             let isoDate;
             if (isAllDay) {
                 isoDate = new Date(date + 'T00:00:00').toISOString();
                 if (kind === EntityKind.EVENT) {
-                    payload.metadata = { ...(payload.metadata || {}), is_all_day: true };
+                    payload.all_day = true;
+                    payload.is_all_day = true;
+                    payload.metadata = { ...(payload.metadata || {}), all_day: true, is_all_day: true };
                 }
             } else {
                 isoDate = new Date(date).toISOString();
+                if (kind === EntityKind.EVENT) {
+                    payload.all_day = false;
+                    payload.is_all_day = false;
+                    payload.metadata = { ...(payload.metadata || {}), all_day: false, is_all_day: false };
+                }
             }
 
             if (kind === EntityKind.EVENT) {
@@ -162,15 +178,20 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
             }
         }
 
-        // Add habit metadata if HABIT kind
+        // Add habit metadata if HABIT kind with clean schema attributes
         if (kind === EntityKind.HABIT) {
             payload.metadata = {
                 ...payload.metadata,
                 habit_type: habitType,
-                frequency_goal: frequencyGoal,
-                total_completions: 0,
+                frequency_period: frequencyGoal === 'WEEKLY' ? 'WEEK' : 'DAY',
+                frequency_goal: 1,
+                streak_current: 0,
+                streak_best: 0,
                 current_streak: 0,
-                best_streak: 0
+                best_streak: 0,
+                total_completions: 0,
+                target_count: 1,
+                current_count: 0
             };
         }
 
@@ -419,6 +440,24 @@ const CreateEntityModal: React.FC<CreateEntityModalProps> = ({ onClose, initialD
                             />
                         </div>
                     </div>
+
+                    {availableParents.length > 0 && [EntityKind.TASK, EntityKind.PROJECT, EntityKind.NOTE, EntityKind.EVENT].includes(kind) && (
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">Parent Item (Connects in Graph)</label>
+                            <select
+                                value={parentId}
+                                onChange={(e) => setParentId(e.target.value)}
+                                className="w-full bg-slate-950 border border-slate-700 text-slate-100 rounded-lg py-2 px-3 focus:ring-2 focus:ring-indigo-500/50 outline-none text-xs"
+                            >
+                                <option value="">None (Standalone)</option>
+                                {availableParents.map(p => (
+                                    <option key={p.id} value={p.id}>
+                                        [{p.kind}] {p.title}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
 
                     <button
                         type="submit"

@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isManagedAiEnabledForIdentity, sanitizeUsageMetadata } from '../lib/ledger.js';
 
-test('test mode enables only explicitly listed identities, including against privileged bypass', () => {
+test('test mode enables explicitly listed test identities and verified privileged identities', () => {
   const control = { enabled: true, mode: 'test', allowedTestUids: ['synthetic-uid'] };
   assert.equal(isManagedAiEnabledForIdentity(control, 'synthetic-uid', false), true);
   assert.equal(isManagedAiEnabledForIdentity(control, 'other-uid', false), false);
-  assert.equal(isManagedAiEnabledForIdentity(control, 'privileged-uid', true), false);
+  assert.equal(isManagedAiEnabledForIdentity(control, 'privileged-uid', true), true);
   assert.equal(isManagedAiEnabledForIdentity({ ...control, enabled: false }, 'synthetic-uid', false), false);
   assert.equal(isManagedAiEnabledForIdentity({ ...control, mode: 'general' }, 'other-uid', false), true);
 });

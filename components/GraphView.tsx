@@ -95,12 +95,19 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
             }))
             .map(e => {
                 const previous = priorNodes.get(e.id);
+                if (previous) {
+                    previous.kind = e.kind || EntityKind.NOTE;
+                    previous.title = e.title || 'Untitled';
+                    previous.status = e.status;
+                    previous.priority = e.priority;
+                    previous.metadata = e.metadata;
+                    return previous;
+                }
                 return {
                     ...e,
                     id: e.id,
                     kind: e.kind || EntityKind.NOTE,
                     title: e.title || 'Untitled',
-                    ...(previous ? { x: previous.x, y: previous.y, vx: previous.vx, vy: previous.vy, fx: previous.fx, fy: previous.fy } : {}),
                 };
             });
 
@@ -241,13 +248,13 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
         }
         if (!svgRef.current || !containerRef.current) return;
 
-        // Resize handling
+        // Resize handling with safe dimension fallbacks
         const container = containerRef.current;
-        let width = container.clientWidth;
-        let height = container.clientHeight;
+        let width = container.clientWidth > 0 ? container.clientWidth : (container.parentElement?.clientWidth || 800);
+        let height = container.clientHeight > 0 ? container.clientHeight : (container.parentElement?.clientHeight || 600);
 
         const svg = d3.select(svgRef.current);
-        if (width > 0 && height > 0) svg.attr("viewBox", [0, 0, width, height]);
+        svg.attr("viewBox", [0, 0, width, height]);
 
         // --- Adjacency Matrix for Highlighting ---
         const linkedByIndex: Record<string, boolean> = {};
@@ -511,7 +518,16 @@ const GraphView: React.FC<GraphViewProps> = ({ entities, relationships }) => {
         // only for the first graph mount and otherwise preserves user zoom/pan.
         if (isNewGraph) svg.call(zoom.transform as any, initialTransform);
         else g.attr("transform", initialTransform.toString());
-        simulation.alpha(0.3).restart();
+
+        const prevNodeIds = (simulationRef.current?.nodes() || []).map((n: any) => n.id).sort().join(',');
+        const currNodeIds = nodes.map((n: any) => n.id).sort().join(',');
+        const structureChanged = isNewGraph || prevNodeIds !== currNodeIds;
+
+        if (structureChanged || simulation.alpha() < 0.05) {
+            simulation.alpha(structureChanged ? 0.3 : 0.1).restart();
+        } else {
+            simulation.restart();
+        }
     }, [nodes, optimizedLinks, perfConfig]);
 
     useEffect(() => () => {

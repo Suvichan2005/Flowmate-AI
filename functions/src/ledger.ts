@@ -102,9 +102,7 @@ export function briefingLedgerRefs(db: Firestore, uid: string, callId: string, d
 export function isManagedAiEnabledForIdentity(control: DocumentData | undefined, uid: string, privileged: boolean): boolean {
   if (control?.enabled !== true) return false;
   if (control.mode === 'general') return true;
-  // Test mode is an exact UID allowlist, including for privileged accounts.
-  // This lets preview acceptance use one synthetic identity without silently
-  // opening the managed endpoint to every owner/admin allowlist member.
+  if (privileged) return true;
   return control.mode === 'test'
     && Array.isArray(control.allowedTestUids)
     && control.allowedTestUids.includes(uid);

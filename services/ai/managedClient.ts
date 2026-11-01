@@ -74,10 +74,16 @@ export const getManagedAiEndpoint = (): string => {
     : '';
 };
 
-export const getManagedLiveRelayEndpoint = (): string =>
-  import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true'
-    ? ''
-    : (import.meta.env.VITE_MANAGED_LIVE_RELAY_ENDPOINT || '').trim().replace(/\/$/, '');
+export const getManagedLiveRelayEndpoint = (): string => {
+  if (import.meta.env.VITE_USE_FIREBASE_EMULATORS === 'true') return '';
+  const configured = import.meta.env.VITE_MANAGED_LIVE_RELAY_ENDPOINT;
+  if (configured !== undefined && configured.trim() !== '') return configured.trim().replace(/\/$/, '');
+  const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
+  if (projectId === 'flowmate-ai') {
+    return 'https://managed-live-relay-preview-297013476805.asia-south1.run.app';
+  }
+  return '';
+};
 
 export const hasManagedAiIdentity = (): boolean => Boolean(isFirebaseConfigured() && getManagedAiEndpoint());
 

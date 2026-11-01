@@ -2380,6 +2380,37 @@ export const useStore = create<FlowmateState>()(
                                         parent_id: resolvedParentId  // New: direct parent reference
                                     };
                                     newEntities.push(entity);
+                                    if (resolvedParentId) {
+                                        const relExists = newRelationships.some(r => r.from === entity.id && r.to === resolvedParentId);
+                                        if (!relExists) {
+                                            newRelationships.push({
+                                                id: uuidv4(),
+                                                from: entity.id,
+                                                to: resolvedParentId,
+                                                type: RelationshipType.PART_OF,
+                                                meta: { created_with_entity: true },
+                                                created_at: now
+                                            });
+                                        }
+                                    }
+                                    if (entity.canonical_tags && entity.canonical_tags.length > 0) {
+                                        for (const tag of entity.canonical_tags) {
+                                            const matchingTag = newEntities.find(e => (e.kind === EntityKind.TAG || e.kind === EntityKind.CONTEXT) && e.title.toLowerCase() === tag.toLowerCase() && e.id !== entity.id);
+                                            if (matchingTag) {
+                                                const relExists = newRelationships.some(r => r.from === entity.id && r.to === matchingTag.id);
+                                                if (!relExists) {
+                                                    newRelationships.push({
+                                                        id: uuidv4(),
+                                                        from: entity.id,
+                                                        to: matchingTag.id,
+                                                        type: RelationshipType.TAGGED_WITH,
+                                                        meta: { auto_tagged: true },
+                                                        created_at: now
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
                                     const rawPayload = (op.payload && typeof op.payload === 'object' ? op.payload : {}) as Record<string, unknown>;
                                     const kernelInput: Record<string, unknown> = {
                                         ...entity,

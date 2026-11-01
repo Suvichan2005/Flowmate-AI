@@ -385,6 +385,25 @@ export async function handleManagedAiAdmin(
       res.status(200).json({ enabled: body.enabled });
       return true;
     }
+    if (body.action === 'setMode' && Object.keys(body).every(key => ['action', 'mode'].includes(key)) && (body.mode === 'general' || body.mode === 'test')) {
+      const controlRef = db.doc('system/managedAi');
+      const audit = db.collection('managedAiAdminAudit').doc(randomUUID());
+      await db.runTransaction(async transaction => {
+        const timestamp = Timestamp.now();
+        transaction.set(controlRef, {
+          mode: body.mode,
+          updatedAt: timestamp,
+          updatedBy: identity.uid,
+        }, { merge: true });
+        transaction.create(audit, {
+          actorUid: identity.uid,
+          action: 'managed_ai_mode_' + body.mode,
+          createdAt: timestamp,
+        });
+      });
+      res.status(200).json({ mode: body.mode });
+      return true;
+    }
     if (body.action === 'setLiveEnabled' && Object.keys(body).every(key => ['action', 'enabled'].includes(key)) && typeof body.enabled === 'boolean') {
       if (body.enabled) {
         const [budget, managedControl] = await Promise.all([

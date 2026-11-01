@@ -169,6 +169,38 @@ export function upgradeLegacyEntityToKernel(doc: Record<string, unknown>): Entit
 
   // Flatten and normalize metadata (excluding lifecycle, subtasks, and provenance envelope fields)
   if (isRecord(doc.metadata)) {
+    // Normalizations for legacy / modal metadata fields
+    if (doc.metadata.is_all_day !== undefined || doc.metadata.all_day !== undefined) {
+      const isAllDay = Boolean(doc.metadata.is_all_day ?? doc.metadata.all_day);
+      attributes.all_day = isAllDay;
+      attributes.is_all_day = isAllDay;
+    }
+    if (doc.metadata.current_streak !== undefined || doc.metadata.streak_current !== undefined) {
+      const curStreak = Number(doc.metadata.streak_current ?? doc.metadata.current_streak) || 0;
+      attributes.streak_current = curStreak;
+      attributes.current_streak = curStreak;
+    }
+    if (doc.metadata.best_streak !== undefined || doc.metadata.streak_best !== undefined) {
+      const bStreak = Number(doc.metadata.streak_best ?? doc.metadata.best_streak) || 0;
+      attributes.streak_best = bStreak;
+      attributes.best_streak = bStreak;
+    }
+    if (doc.metadata.frequency_goal !== undefined) {
+      if (typeof doc.metadata.frequency_goal === 'string') {
+        const freq = String(doc.metadata.frequency_goal).toUpperCase();
+        attributes.frequency_period = freq === 'WEEKLY' ? 'WEEK' : 'DAY';
+        attributes.frequency_goal = 1;
+      } else if (typeof doc.metadata.frequency_goal === 'number') {
+        attributes.frequency_goal = doc.metadata.frequency_goal;
+      }
+    }
+    if (doc.metadata.frequency_period !== undefined) {
+      attributes.frequency_period = String(doc.metadata.frequency_period).toUpperCase();
+    }
+    if (doc.metadata.gcal_id !== undefined) {
+      attributes.gcal_id = String(doc.metadata.gcal_id);
+    }
+
     for (const [key, val] of Object.entries(doc.metadata)) {
       if (
         key === '_provenance' ||
