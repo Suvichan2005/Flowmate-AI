@@ -1012,7 +1012,7 @@ const EntityLogListWidget: React.FC<{
 
   const matchingEntities = useMemo(() => {
     return Object.values(kernelEntities)
-      .filter(e => e.schema_id === config.schemaId && e.lifecycle.deleted_at === null)
+      .filter(e => e.schema_id === config.schemaId && !e.lifecycle?.deleted_at)
       .sort((a, b) => {
         const aT = Date.parse(String(a.attributes.logged_at || a.lifecycle.created_at)) || 0;
         const bT = Date.parse(String(b.attributes.logged_at || b.lifecycle.created_at)) || 0;
